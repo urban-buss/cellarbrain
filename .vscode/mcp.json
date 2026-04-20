@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "cellarbrain": {
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "cellarbrain", "-d", "${workspaceFolder}/output", "mcp"],
+      "env": {}
+    }
+  }
+}
