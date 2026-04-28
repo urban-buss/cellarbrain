@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Cellarbrain: ETL",
+      "type": "python",
+      "request": "launch",
+      "module": "cellarbrain",
+      "args": [
+        "etl",
+        "raw/export-wines.csv",
+        "raw/export-bottles-stored.csv",
+        "raw/export-bottles-gone.csv",
+        "-o",
+        "${workspaceFolder}/output"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Cellarbrain: MCP server",
+      "type": "python",
+      "request": "launch",
+      "module": "cellarbrain",
+      "args": ["mcp"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "Cellarbrain: Query sample",
+      "type": "python",
+      "request": "launch",
+      "module": "cellarbrain",
+      "args": [
+        "query",
+        "SELECT * FROM wine LIMIT 5"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ]
+}

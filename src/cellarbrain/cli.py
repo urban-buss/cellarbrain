@@ -150,7 +150,7 @@ def run(
 ) -> bool:
     """Execute the ETL pipeline. Returns True if validation passes."""
     if settings is None:
-        settings = Settings()
+        settings = load_settings()
     out = pathlib.Path(output_dir)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     run_id = incremental.next_run_id(out)

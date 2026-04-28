@@ -20,6 +20,9 @@ raw/
 output/
 output_*/
 
+# Temp test output
+tmp_test_output/
+
 # Analysis
 analysis/
 

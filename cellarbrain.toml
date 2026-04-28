@@ -252,6 +252,7 @@ USD = 0.88
 GBP = 1.11
 AUD = 0.56
 CAD = 0.62
+RON = 0.18
 
 # --- Sommelier (AI Food-Wine Pairing) --------------------------------------
 # Requires optional dependencies: pip install cellarbrain[sommelier]
