@@ -1,0 +1,18 @@
+<td colspan="6">
+    <table>
+        <thead><tr><th>Time</th><th>Type</th><th>Name</th><th>Status</th><th>Duration</th></tr></thead>
+        <tbody>
+        {% for ev in events %}
+        <tr>
+            <td class="mono">{{ ev.started_at.strftime("%H:%M:%S") if ev.started_at else "—" }}</td>
+            <td><span class="badge">{{ ev.event_type }}</span></td>
+            <td>{{ ev.name }}</td>
+            <td><span class="badge {% if ev.status == 'ok' %}badge-ok{% else %}badge-error{% endif %}">{{ ev.status }}</span></td>
+            <td>{{ ev.duration_ms }} ms</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No events.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</td>

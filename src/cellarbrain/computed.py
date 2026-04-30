@@ -6,10 +6,17 @@ Pure functions — no I/O, no side effects.  Computes ``full_name``,
 
 from __future__ import annotations
 
+import fnmatch
 from decimal import Decimal
 
-from .settings import CurrencyConfig, PriceTier, Settings, _default_classification_short, _default_price_tiers
-
+from .settings import (
+    CellarRule,
+    CurrencyConfig,
+    PriceTier,
+    Settings,
+    _default_classification_short,
+    _default_price_tiers,
+)
 
 # ---------------------------------------------------------------------------
 # Classification abbreviation map  (§3.4)
@@ -43,6 +50,7 @@ def shorten_classification(
 # ---------------------------------------------------------------------------
 # Grape-type helpers  (§4)
 # ---------------------------------------------------------------------------
+
 
 def compute_grape_type(grapes: list[dict]) -> str:
     """Classify a wine's grape composition.
@@ -110,6 +118,7 @@ def compute_grape_summary(grapes: list[dict]) -> str | None:
 # ---------------------------------------------------------------------------
 # Grape-ambiguity detection  (§3.3a)
 # ---------------------------------------------------------------------------
+
 
 def build_grape_ambiguous_names(
     wines: list[dict],
@@ -294,15 +303,105 @@ def compute_price_tier(
     return "unknown"
 
 
+# ---------------------------------------------------------------------------
+# Volume-normalised pricing
+# ---------------------------------------------------------------------------
+
+_FORMAT_LABELS: dict[int, str] = {
+    187: "Piccolo",
+    375: "Half Bottle",
+    500: "500 mL",
+    750: "Standard",
+    1000: "1 L",
+    1500: "Magnum",
+    3000: "Jéroboam",
+    4500: "Rehoboam",
+    5000: "5 L",
+    6000: "Methuselah",
+    9000: "Salmanazar",
+    12000: "Balthazar",
+    15000: "Nebuchadnezzar",
+    18000: "Melchior",
+}
+
+
+def compute_bottle_format(volume_ml: int) -> str:
+    """Map volume in mL to a human-readable bottle format label.
+
+    Examples:
+        750   → "Standard"
+        375   → "Half Bottle"
+        1500  → "Magnum"
+        3000  → "Jéroboam"
+        2250  → "2250 mL"
+    """
+    return _FORMAT_LABELS.get(volume_ml, f"{volume_ml} mL")
+
+
+def compute_price_per_750ml(
+    price: Decimal | None,
+    volume_ml: int,
+) -> Decimal | None:
+    """Normalise a price to its 750 mL equivalent.
+
+    Formula: price × (750 / volume_ml), rounded to 2 decimal places.
+
+    Returns None when price is None.
+
+    Examples:
+        (Decimal("25.00"), 375)  → Decimal("50.00")   — half-bottle is 2× per unit
+        (Decimal("25.00"), 750)  → Decimal("25.00")   — standard, no change
+        (Decimal("80.00"), 1500) → Decimal("40.00")   — magnum is cheaper per unit
+        (Decimal("45.00"), 500)  → Decimal("67.50")
+        (None,             750)  → None
+    """
+    if price is None:
+        return None
+    return (price * 750 / volume_ml).quantize(Decimal("0.01"))
+
+
+# ---------------------------------------------------------------------------
+# Cellar classification  (rule-based)
+# ---------------------------------------------------------------------------
+
+DEFAULT_CLASSIFICATION = "onsite"
+
+
+def classify_cellar(
+    cellar_name: str | None,
+    rules: tuple[CellarRule, ...],
+) -> str:
+    """Classify a cellar name using ordered rules. First match wins.
+
+    Returns one of: ``"onsite"``, ``"offsite"``, ``"in_transit"``.
+    Returns ``"onsite"`` for ``None`` cellar names or when no rule matches.
+
+    Examples:
+        ("03 Schmidhof 2", prefix_rules)   → "offsite"
+        ("99 Orders", prefix_rules)         → "in_transit"
+        ("01 Home Cellar", prefix_rules)    → "onsite"
+        (None, prefix_rules)                → "onsite"
+        ("Unknown place", ())               → "onsite"
+    """
+    if cellar_name is None:
+        return DEFAULT_CLASSIFICATION
+    for rule in rules:
+        if fnmatch.fnmatchcase(cellar_name, rule.pattern):
+            return rule.classification
+    return DEFAULT_CLASSIFICATION
+
+
 def compute_is_onsite(
     cellar_name: str | None,
-    offsite_cellars: tuple[str, ...],
+    offsite_cellars: tuple[str, ...] = (),
     in_transit_cellars: tuple[str, ...] = (),
+    *,
+    rules: tuple[CellarRule, ...] | None = None,
 ) -> bool:
     """Return whether a bottle is physically onsite (accessible).
 
-    A bottle is NOT onsite if its cellar is in *offsite_cellars*
-    or *in_transit_cellars*.
+    When *rules* is provided, delegates to ``classify_cellar()``.
+    Otherwise falls back to the legacy membership-test logic.
 
     Examples:
         ("Main cellar", ())                          → True
@@ -310,26 +409,33 @@ def compute_is_onsite(
         (None, ("Remote storage",))                  → True
         ("Orders", (), ("Orders",))                  → False
     """
+    if rules is not None:
+        return classify_cellar(cellar_name, rules) == "onsite"
     if cellar_name is None:
         return True
     if cellar_name in offsite_cellars:
         return False
-    if cellar_name in in_transit_cellars:
-        return False
-    return True
+    return cellar_name not in in_transit_cellars
 
 
 def compute_is_in_transit(
     cellar_name: str | None,
-    in_transit_cellars: tuple[str, ...],
+    in_transit_cellars: tuple[str, ...] = (),
+    *,
+    rules: tuple[CellarRule, ...] | None = None,
 ) -> bool:
     """Return whether a bottle is in transit (ordered, not yet received).
+
+    When *rules* is provided, delegates to ``classify_cellar()``.
+    Otherwise falls back to the legacy membership-test logic.
 
     Examples:
         ("Main cellar", ())                                           → False
         ("99 Orders & Subscriptions", ("99 Orders & Subscriptions",)) → True
         (None, ("99 Orders & Subscriptions",))                        → False
     """
+    if rules is not None:
+        return classify_cellar(cellar_name, rules) == "in_transit"
     if cellar_name is None:
         return False
     return cellar_name in in_transit_cellars
@@ -367,9 +473,12 @@ def convert_to_default_currency(
     rate = rates.get(source_currency)
     if rate is None:
         raise ValueError(
-            f"No exchange rate configured for {source_currency!r} → "
-            f"{default_currency!r}. "
-            f"Add it to [currency.rates] in cellarbrain.toml."
+            f"ETL failed: no exchange rate configured for currency "
+            f"{source_currency!r}. "
+            f"To fix: call the MCP tool `currency_rates` with "
+            f'action="set", currency="{source_currency}", rate=<rate>. '
+            f"The rate should express: 1 {source_currency} = ? "
+            f"{default_currency}. After setting the rate, retry the ETL."
         )
     return (price * Decimal(str(rate))).quantize(Decimal("0.01"))
 
@@ -377,6 +486,7 @@ def convert_to_default_currency(
 # ---------------------------------------------------------------------------
 # Pipeline integration  (§6.2–6.3)
 # ---------------------------------------------------------------------------
+
 
 def enrich_wines(
     wines: list[dict],
@@ -450,8 +560,10 @@ def enrich_wines(
         currency = settings.currency if settings else CurrencyConfig()
         for w in wines:
             w["drinking_status"] = compute_drinking_status(
-                w.get("drink_from"), w.get("drink_until"),
-                w.get("optimal_from"), w.get("optimal_until"),
+                w.get("drink_from"),
+                w.get("drink_until"),
+                w.get("optimal_from"),
+                w.get("optimal_until"),
                 current_year,
             )
             w["age_years"] = compute_age_years(w.get("vintage"), current_year)
@@ -462,9 +574,9 @@ def enrich_wines(
                 currency.default,
                 currency.rates,
             )
-            w["list_currency"] = (
-                currency.default
-                if w.get("original_list_price") is not None
-                else None
-            )
-            w["price_tier"] = compute_price_tier(w.get("list_price"), tiers)
+            w["list_currency"] = currency.default if w.get("original_list_price") is not None else None
+            # Volume-normalised pricing — must happen before price_tier
+            price_750 = compute_price_per_750ml(w.get("list_price"), w["volume_ml"])
+            w["price_per_750ml"] = price_750
+            w["bottle_format"] = compute_bottle_format(w["volume_ml"])
+            w["price_tier"] = compute_price_tier(price_750, tiers)

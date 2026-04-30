@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -22,15 +21,23 @@ _REASON = "Raw CSV files not present in raw/ directory"
 @pytest.mark.skipif(_SKIP, reason=_REASON)
 class TestIntegration:
     def test_full_pipeline(self, tmp_path):
-        ok = run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path),
-                 bottles_gone_csv=str(BOTTLES_GONE_CSV))
+        ok = run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path), bottles_gone_csv=str(BOTTLES_GONE_CSV))
         assert ok, "Validation failed — check pipeline output"
 
         # Verify all entity + tracking parquet files exist
         expected = [
-            "winery", "appellation", "grape", "cellar", "provider",
-            "wine", "wine_grape", "bottle", "tasting", "pro_rating",
-            "etl_run", "change_log",
+            "winery",
+            "appellation",
+            "grape",
+            "cellar",
+            "provider",
+            "wine",
+            "wine_grape",
+            "bottle",
+            "tasting",
+            "pro_rating",
+            "etl_run",
+            "change_log",
         ]
         for name in expected:
             assert (tmp_path / f"{name}.parquet").exists(), f"Missing {name}.parquet"
@@ -40,18 +47,20 @@ class TestIntegration:
         assert wines_dir.is_dir(), "Missing wines/ directory"
         assert (wines_dir / "cellar").is_dir(), "Missing wines/cellar/ directory"
         assert (wines_dir / "archive").is_dir(), "Missing wines/archive/ directory"
-        md_files = list(wines_dir.glob("**/*.md"))
-        assert len(md_files) == 484, f"Expected 484 dossier files, got {len(md_files)}"
+        md_files = list((wines_dir / "cellar").glob("*.md")) + list((wines_dir / "archive").glob("*.md"))
+        wine_count = pq.read_metadata(tmp_path / "wine.parquet").num_rows
+        assert len(md_files) == wine_count, f"Expected {wine_count} dossier files, got {len(md_files)}"
 
     def test_sync_after_full(self, tmp_path):
         """Incremental sync on the same CSVs should produce zero changes."""
-        run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path),
-            bottles_gone_csv=str(BOTTLES_GONE_CSV))
-        ok = run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path),
-                 sync_mode=True, bottles_gone_csv=str(BOTTLES_GONE_CSV))
+        run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path), bottles_gone_csv=str(BOTTLES_GONE_CSV))
+        ok = run(
+            str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path), sync_mode=True, bottles_gone_csv=str(BOTTLES_GONE_CSV)
+        )
         assert ok
 
         import pyarrow.parquet as pq
+
         runs = pq.read_table(tmp_path / "etl_run.parquet").to_pydict()
         assert len(runs["run_id"]) == 2
         assert runs["run_type"] == ["full", "incremental"]
@@ -81,8 +90,7 @@ def etl_output(tmp_path_factory):
     if _SKIP:
         pytest.skip(_REASON)
     out = tmp_path_factory.mktemp("e2e")
-    ok = run(str(WINES_CSV), str(BOTTLES_CSV), str(out),
-             bottles_gone_csv=str(BOTTLES_GONE_CSV))
+    ok = run(str(WINES_CSV), str(BOTTLES_CSV), str(out), bottles_gone_csv=str(BOTTLES_GONE_CSV))
     assert ok, "ETL pipeline failed during E2E fixture setup"
     return out
 
@@ -98,8 +106,12 @@ class TestCLIEndToEnd:
 
     def test_etl_subcommand(self, tmp_path):
         argv = [
-            "etl", str(WINES_CSV), str(BOTTLES_CSV), str(BOTTLES_GONE_CSV),
-            "-o", str(tmp_path),
+            "etl",
+            str(WINES_CSV),
+            str(BOTTLES_CSV),
+            str(BOTTLES_GONE_CSV),
+            "-o",
+            str(tmp_path),
         ]
         with pytest.raises(SystemExit) as exc_info:
             main(argv)
@@ -111,31 +123,27 @@ class TestCLIEndToEnd:
         assert exc_info.value.code == 0
 
     def test_query_select_wines(self, etl_output, capsys):
-        main(["-d", str(etl_output), "query",
-              "SELECT count(*) AS n FROM wines"])
+        main(["-d", str(etl_output), "query", "SELECT count(*) AS n FROM wines"])
         out = capsys.readouterr().out
-        assert "484" in out
+        wine_count = pq.read_metadata(etl_output / "wine.parquet").num_rows
+        assert str(wine_count) in out
 
     def test_query_join(self, etl_output, capsys):
-        main(["-d", str(etl_output), "query",
-              "SELECT name, winery_name FROM wines LIMIT 5"])
+        main(["-d", str(etl_output), "query", "SELECT wine_name, winery_name FROM wines LIMIT 5"])
         out = capsys.readouterr().out
         assert "|" in out  # Markdown table
 
     def test_query_csv_format(self, etl_output, capsys):
-        main(["-d", str(etl_output), "query",
-              "SELECT wine_id, name FROM wines LIMIT 3",
-              "--format", "csv"])
+        main(["-d", str(etl_output), "query", "SELECT wine_id, wine_name FROM wines LIMIT 3", "--format", "csv"])
         out = capsys.readouterr().out
         assert "wine_id" in out  # CSV header
         lines = [l for l in out.strip().split("\n") if l.strip()]
         assert len(lines) == 4  # header + 3 rows
 
     def test_query_json_format(self, etl_output, capsys):
-        main(["-d", str(etl_output), "query",
-              "SELECT wine_id, name FROM wines LIMIT 2",
-              "--format", "json"])
+        main(["-d", str(etl_output), "query", "SELECT wine_id, wine_name FROM wines LIMIT 2", "--format", "json"])
         import json
+
         out = capsys.readouterr().out
         data = json.loads(out)
         assert len(data) == 2
@@ -148,10 +156,20 @@ class TestCLIEndToEnd:
         assert "| wines" in out
         assert "Drinking Window" in out
 
-    @pytest.mark.parametrize("dimension", [
-        "country", "region", "category", "vintage", "winery",
-        "grape", "cellar", "provider", "status",
-    ])
+    @pytest.mark.parametrize(
+        "dimension",
+        [
+            "country",
+            "region",
+            "category",
+            "vintage",
+            "winery",
+            "grape",
+            "cellar",
+            "provider",
+            "status",
+        ],
+    )
     def test_stats_all_dimensions(self, etl_output, capsys, dimension):
         main(["-d", str(etl_output), "stats", "--by", dimension])
         out = capsys.readouterr().out
@@ -175,8 +193,7 @@ class TestCLIEndToEnd:
         out = capsys.readouterr().out
         # All wines should have pending sections after fresh ETL
         assert "wine_id" in out
-        lines = [l for l in out.strip().split("\n")
-                 if l.startswith("|") and "---" not in l and "wine_id" not in l]
+        lines = [l for l in out.strip().split("\n") if l.startswith("|") and "---" not in l and "wine_id" not in l]
         assert len(lines) <= 5
 
 
@@ -196,13 +213,17 @@ class TestMCPEndToEnd:
     @pytest.fixture()
     def server(self):
         from cellarbrain import mcp_server
+
+        mcp_server._mcp_settings = None  # force re-read from env
+        mcp_server.invalidate_connections()
         return mcp_server
 
     # -- query_cellar --
 
-    def test_query_cellar_wine_count(self, server):
+    def test_query_cellar_wine_count(self, server, etl_output):
         result = server.query_cellar("SELECT count(*) AS n FROM wines")
-        assert "484" in result
+        wine_count = pq.read_metadata(etl_output / "wine.parquet").num_rows
+        assert str(wine_count) in result
 
     def test_query_cellar_complex_join(self, server):
         result = server.query_cellar("""
@@ -276,7 +297,9 @@ class TestMCPEndToEnd:
 
     def test_update_dossier_protected_section(self, server):
         result = server.update_dossier(
-            wine_id=1, section="identity", content="bad",
+            wine_id=1,
+            section="identity",
+            content="bad",
         )
         assert result.startswith("Error:")
 
@@ -285,8 +308,7 @@ class TestMCPEndToEnd:
     def test_pending_research_returns_results(self, server):
         result = server.pending_research(limit=10)
         assert "wine_id" in result
-        lines = [l for l in result.strip().split("\n")
-                 if l.startswith("|") and "---" not in l and "wine_id" not in l]
+        lines = [l for l in result.strip().split("\n") if l.startswith("|") and "---" not in l and "wine_id" not in l]
         assert 1 <= len(lines) <= 10
 
     # -- prompts --

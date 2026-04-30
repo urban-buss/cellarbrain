@@ -17,10 +17,7 @@ def load_model(model_dir: str | Path):
     """
     model_path = Path(model_dir)
     if not model_path.exists():
-        raise ModelNotTrainedError(
-            f"Sommelier model not found at {model_path}. "
-            "Run `cellarbrain train-model` first."
-        )
+        raise ModelNotTrainedError(f"Sommelier model not found at {model_path}. Run `cellarbrain train-model` first.")
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:

@@ -1,0 +1,46 @@
+{% if grouped %}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; margin-bottom:1.5rem;">
+    <div class="chart-container" style="height:300px;">
+        <canvas id="stats-chart"></canvas>
+    </div>
+    <div style="overflow-x:auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ group_by|replace("_", " ")|title }}</th>
+                    <th style="text-align:right;">Wines</th>
+                    <th style="text-align:right;">Bottles</th>
+                    <th style="text-align:right;">Value</th>
+                    <th style="text-align:right;">Avg Price</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in grouped %}
+                <tr>
+                    <td>{{ row.label }}</td>
+                    <td style="text-align:right;">{{ row.wines }}</td>
+                    <td style="text-align:right;">{{ row.bottles }}</td>
+                    <td style="text-align:right;">{{ "{:,.0f}".format(row.value or 0) }}</td>
+                    <td style="text-align:right;">{{ row.avg_price|int if row.avg_price else "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function() {
+    var labels = {{ (grouped[:8] | map(attribute='label') | list) | tojson }};
+    var data = {{ (grouped[:8] | map(attribute='bottles') | list) | tojson }};
+    {% if grouped|length > 8 %}
+    var otherSum = {{ grouped[8:] | sum(attribute='bottles') }};
+    labels.push('Other');
+    data.push(otherSum);
+    {% endif %}
+    renderDoughnutChart('stats-chart', labels, data);
+})();
+</script>
+{% else %}
+<p style="color:var(--pico-muted-color);">No data available for this grouping.</p>
+{% endif %}

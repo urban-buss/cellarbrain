@@ -3,8 +3,8 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from cellarbrain.writer import write_all
 from cellarbrain.validate import validate
+from cellarbrain.writer import write_all
 
 _NOW = datetime(2025, 1, 1, 0, 0, 0)
 
@@ -78,14 +78,17 @@ def _make_minimal_dataset():
                 "drinking_status": "unknown",
                 "age_years": 5,
                 "price_tier": "unknown",
+                "bottle_format": "Standard",
+                "price_per_750ml": None,
+                "format_group_id": None,
+                "food_tags": None,
                 "is_deleted": False,
                 "etl_run_id": 1,
                 "updated_at": _NOW,
             }
         ],
         "wine_grape": [
-            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-             "etl_run_id": 1, "updated_at": _NOW}
+            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW}
         ],
         "bottle": [
             {
@@ -216,6 +219,7 @@ class TestValidateDataQuality:
         """A deleted wine with a broken winery FK should not fail FK checks."""
         entities = _make_minimal_dataset()
         import copy
+
         deleted_wine = copy.deepcopy(entities["wine"][0])
         deleted_wine["wine_id"] = 99
         deleted_wine["winery_id"] = 999  # orphaned FK — but is_deleted
@@ -254,63 +258,100 @@ class TestValidateSoftDelete:
 # Price observation validation
 # ---------------------------------------------------------------------------
 
+
 class TestValidatePriceObservation:
     def _write_with_prices(self, tmp_path, price_rows):
         """Write a minimal dataset plus year-partitioned price observations."""
         entities = _make_minimal_dataset()
         entities["tracked_wine"] = [
             {
-                "tracked_wine_id": 1, "winery_id": 1, "wine_name": "Test",
-                "category": "red", "appellation_id": 1,
+                "tracked_wine_id": 1,
+                "winery_id": 1,
+                "wine_name": "Test",
+                "category": "red",
+                "appellation_id": 1,
                 "dossier_path": "tracked/0001-test.md",
-                "is_deleted": False, "etl_run_id": 1, "updated_at": _NOW,
+                "is_deleted": False,
+                "etl_run_id": 1,
+                "updated_at": _NOW,
             },
         ]
         write_all(entities, tmp_path)
         from cellarbrain.writer import write_partitioned_parquet
+
         write_partitioned_parquet("price_observation", price_rows, tmp_path)
 
     def test_valid_price_passes(self, tmp_path):
-        self._write_with_prices(tmp_path, [
-            {
-                "observation_id": 1, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop",
-                "retailer_url": None, "price": Decimal("45.00"),
-                "currency": "CHF", "price_chf": Decimal("45.00"),
-                "in_stock": True, "observed_at": _NOW,
-                "observation_source": "agent", "notes": None,
-            },
-        ])
+        self._write_with_prices(
+            tmp_path,
+            [
+                {
+                    "observation_id": 1,
+                    "tracked_wine_id": 1,
+                    "vintage": 2020,
+                    "bottle_size_ml": 750,
+                    "retailer_name": "Shop",
+                    "retailer_url": None,
+                    "price": Decimal("45.00"),
+                    "currency": "CHF",
+                    "price_chf": Decimal("45.00"),
+                    "in_stock": True,
+                    "observed_at": _NOW,
+                    "observation_source": "agent",
+                    "notes": None,
+                },
+            ],
+        )
         result = validate(tmp_path)
         price_checks = [c for c in result.checks if "price_observation" in c["name"]]
         assert all(c["passed"] for c in price_checks), result.summary()
 
     def test_orphan_tracked_wine_id(self, tmp_path):
-        self._write_with_prices(tmp_path, [
-            {
-                "observation_id": 1, "tracked_wine_id": 999, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop",
-                "retailer_url": None, "price": Decimal("45.00"),
-                "currency": "CHF", "price_chf": Decimal("45.00"),
-                "in_stock": True, "observed_at": _NOW,
-                "observation_source": "agent", "notes": None,
-            },
-        ])
+        self._write_with_prices(
+            tmp_path,
+            [
+                {
+                    "observation_id": 1,
+                    "tracked_wine_id": 999,
+                    "vintage": 2020,
+                    "bottle_size_ml": 750,
+                    "retailer_name": "Shop",
+                    "retailer_url": None,
+                    "price": Decimal("45.00"),
+                    "currency": "CHF",
+                    "price_chf": Decimal("45.00"),
+                    "in_stock": True,
+                    "observed_at": _NOW,
+                    "observation_source": "agent",
+                    "notes": None,
+                },
+            ],
+        )
         result = validate(tmp_path)
         failed = [c["name"] for c in result.checks if not c["passed"]]
         assert "FK price_observation.tracked_wine_id → tracked_wine" in failed
 
     def test_negative_price(self, tmp_path):
-        self._write_with_prices(tmp_path, [
-            {
-                "observation_id": 1, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop",
-                "retailer_url": None, "price": Decimal("-5.00"),
-                "currency": "CHF", "price_chf": Decimal("-5.00"),
-                "in_stock": True, "observed_at": _NOW,
-                "observation_source": "agent", "notes": None,
-            },
-        ])
+        self._write_with_prices(
+            tmp_path,
+            [
+                {
+                    "observation_id": 1,
+                    "tracked_wine_id": 1,
+                    "vintage": 2020,
+                    "bottle_size_ml": 750,
+                    "retailer_name": "Shop",
+                    "retailer_url": None,
+                    "price": Decimal("-5.00"),
+                    "currency": "CHF",
+                    "price_chf": Decimal("-5.00"),
+                    "in_stock": True,
+                    "observed_at": _NOW,
+                    "observation_source": "agent",
+                    "notes": None,
+                },
+            ],
+        )
         result = validate(tmp_path)
         failed = [c["name"] for c in result.checks if not c["passed"]]
         assert "price_observation.price >= 0" in failed

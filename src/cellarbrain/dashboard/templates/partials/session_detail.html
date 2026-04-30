@@ -1,0 +1,25 @@
+<td colspan="6">
+    <table>
+        <thead><tr><th>Turn ID</th><th>Started</th><th>Calls</th><th>Total (ms)</th><th>Agent</th><th></th></tr></thead>
+        <tbody>
+        {% for t in turns %}
+        <tr>
+            <td class="mono">{{ t.turn_id[:12] }}…</td>
+            <td class="mono">{{ t.started.strftime("%H:%M:%S") if t.started else "—" }}</td>
+            <td>{{ t.calls }}</td>
+            <td>{{ t.total_ms }}</td>
+            <td>{{ t.agent or "—" }}</td>
+            <td>
+                <button class="outline secondary" style="font-size:0.7rem; padding:0.1rem 0.3rem;"
+                        hx-get="/sessions/{{ session_id }}/{{ t.turn_id }}" hx-target="#turn-{{ t.turn_id[:12] }}" hx-swap="innerHTML">
+                    Events
+                </button>
+            </td>
+        </tr>
+        <tr id="turn-{{ t.turn_id[:12] }}"></tr>
+        {% else %}
+        <tr><td colspan="6">No turns found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</td>

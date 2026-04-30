@@ -16,7 +16,6 @@ Two layers:
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Full views — all columns (internal + advanced agent queries)
 # ---------------------------------------------------------------------------
@@ -60,6 +59,11 @@ SELECT
     w.age_years,
     w.list_price AS price,
     w.price_tier,
+    w.bottle_format,
+    w.price_per_750ml,
+    w.format_group_id,
+    w.food_tags,
+    w.food_groups,
     w.comment,
     w.winemaking_notes,
     w.is_favorite,
@@ -117,12 +121,13 @@ WHERE NOT w.is_deleted
 ORDER BY w.wine_id
 """
 
-# Slim wines view — 20 agent-friendly columns from wines_full.
+# Slim wines view — 23 agent-friendly columns from wines_full.
 WINES_VIEW_SQL = """\
 SELECT wine_id, wine_name, vintage, winery_name,
        category, country, region, subregion,
        primary_grape, blend_type,
-       drinking_status, price_tier, price,
+       drinking_status, price_tier, price, price_per_750ml,
+       volume_ml, bottle_format, format_group_id,
        CONCAT_WS(', ',
            NULLIF(subcategory, ''),
            NULLIF(sweetness, ''),
@@ -159,6 +164,8 @@ SELECT
     w.drinking_status,
     w.age_years,
     w.price_tier,
+    w.bottle_format,
+    w.price_per_750ml AS list_price_per_750ml,
     w.volume_ml,
     w.is_favorite,
     b.status,
@@ -168,6 +175,10 @@ SELECT
     b.purchase_date,
     b.acquisition_type,
     b.purchase_price AS price,
+    CASE WHEN w.volume_ml > 0
+         THEN ROUND(b.purchase_price * 750.0 / w.volume_ml, 2)
+         ELSE NULL
+    END AS price_per_750ml,
     b.purchase_comment,
     b.output_date,
     b.output_type,
@@ -184,10 +195,11 @@ WHERE NOT w.is_deleted
 ORDER BY b.bottle_id
 """
 
-# Slim bottles view — 17 agent-friendly columns from bottles_full.
+# Slim bottles view — 20 agent-friendly columns from bottles_full.
 BOTTLES_VIEW_SQL = """\
 SELECT bottle_id, wine_id, wine_name, vintage, winery_name, category,
        country, region, primary_grape, drinking_status, price_tier, price,
+       price_per_750ml, volume_ml, bottle_format,
        status, cellar_name, shelf,
        output_date, output_type
 FROM bottles_full
@@ -257,6 +269,7 @@ SELECT
     po.price,
     po.currency,
     po.price_chf,
+    ROUND(po.price_chf * 750.0 / po.bottle_size_ml, 2) AS price_per_750ml,
     po.in_stock,
     po.observed_at,
     po.observation_source,
@@ -268,7 +281,9 @@ ORDER BY po.observed_at DESC
 """
 
 LATEST_PRICES_VIEW_SQL = """\
-SELECT po.* FROM price_observation po
+SELECT po.*,
+       ROUND(po.price_chf * 750.0 / po.bottle_size_ml, 2) AS price_per_750ml
+FROM price_observation po
 INNER JOIN (
     SELECT tracked_wine_id, vintage, bottle_size_ml, retailer_name,
            MAX(observed_at) AS max_at

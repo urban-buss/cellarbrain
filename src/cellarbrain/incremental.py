@@ -16,7 +16,7 @@ import logging
 import pathlib
 import struct
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -33,10 +33,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 ENTITY_ORDER: list[str] = [
-    "winery", "appellation", "grape", "cellar", "provider",
+    "winery",
+    "appellation",
+    "grape",
+    "cellar",
+    "provider",
     "tracked_wine",
     "wine",
-    "wine_grape", "bottle", "tasting", "pro_rating",
+    "wine_grape",
+    "bottle",
+    "tasting",
+    "pro_rating",
 ]
 
 PK_FIELD: dict[str, str | None] = {
@@ -47,7 +54,7 @@ PK_FIELD: dict[str, str | None] = {
     "provider": "provider_id",
     "tracked_wine": "tracked_wine_id",
     "wine": "wine_id",
-    "wine_grape": None,          # composite PK
+    "wine_grape": None,  # composite PK
     "bottle": "bottle_id",
     "tasting": "tasting_id",
     "pro_rating": "rating_id",
@@ -62,8 +69,16 @@ NATURAL_KEY_FIELDS: dict[str, list[str]] = {
     "tracked_wine": ["winery_id", "wine_name"],
     "wine": ["winery_id", "name", "vintage", "is_non_vintage"],
     "wine_grape": ["wine_id", "grape_id"],
-    "bottle": ["wine_id", "cellar_id", "shelf", "bottle_number",
-               "purchase_date", "provider_id", "status", "output_date"],
+    "bottle": [
+        "wine_id",
+        "cellar_id",
+        "shelf",
+        "bottle_number",
+        "purchase_date",
+        "provider_id",
+        "status",
+        "output_date",
+    ],
     "tasting": ["wine_id", "tasting_date"],
     "pro_rating": ["wine_id", "source", "score"],
 }
@@ -81,7 +96,18 @@ FK_REFS: dict[str, dict[str, str]] = {
     "pro_rating": {"wine_id": "wine"},
 }
 
-_META_FIELDS = frozenset({"etl_run_id", "updated_at", "dossier_path", "is_deleted"})
+_META_FIELDS = frozenset(
+    {
+        "etl_run_id",
+        "updated_at",
+        "dossier_path",
+        "is_deleted",
+        "food_tags",
+        "food_groups",
+        "format_group_id",
+        "wine_slug",
+    }
+)
 
 # Entity types that are soft-deleted (row retained with is_deleted=True) instead
 # of being permanently removed from Parquet on sync.
@@ -92,6 +118,7 @@ _SOFT_DELETE_ENTITIES = frozenset({"wine", "tracked_wine"})
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _values_equal(a: object, b: object) -> bool:
     """Compare two field values, handling float32 precision from Parquet."""
     if isinstance(a, float) and isinstance(b, float):
@@ -100,6 +127,7 @@ def _values_equal(a: object, b: object) -> bool:
         b32 = struct.unpack("f", struct.pack("f", b))[0]
         return a32 == b32
     return a == b
+
 
 def compute_file_hash(path: str | pathlib.Path) -> str:
     """Return hex SHA-256 digest of a file."""
@@ -125,10 +153,7 @@ def _table_to_dicts(path: pathlib.Path) -> list[dict]:
 
 def load_existing(output_dir: pathlib.Path) -> dict[str, list[dict]]:
     """Load all existing entity Parquet files."""
-    return {
-        et: _table_to_dicts(output_dir / f"{et}.parquet")
-        for et in ENTITY_ORDER
-    }
+    return {et: _table_to_dicts(output_dir / f"{et}.parquet") for et in ENTITY_ORDER}
 
 
 def load_etl_runs(output_dir: pathlib.Path) -> list[dict]:
@@ -152,6 +177,7 @@ def _next_change_id(output_dir: pathlib.Path) -> int:
 # ---------------------------------------------------------------------------
 # ID stabilisation
 # ---------------------------------------------------------------------------
+
 
 def _stabilize_entity(
     new_rows: list[dict],
@@ -219,7 +245,7 @@ def _stabilize_entity(
         # Determine which old IDs were consumed by exact NK matching
         consumed_old: set[int] = set()
         for nk_key, old_ids in old_nk_to_ids.items():
-            consumed_old.update(old_ids[:nk_counter.get(nk_key, 0)])
+            consumed_old.update(old_ids[: nk_counter.get(nk_key, 0)])
 
         # Index unconsumed old rows by partial key
         old_by_pk_map = {r[pk]: r for r in old_rows}
@@ -261,7 +287,9 @@ def _stabilize_entity(
                             continue
                         old_name = str(old_by_pk_map[old_id].get("name") or "")
                         score = difflib.SequenceMatcher(
-                            None, new_name, old_name,
+                            None,
+                            new_name,
+                            old_name,
                         ).ratio()
                         if score >= ic.rename_threshold and score > best_score:
                             best_score = score
@@ -277,6 +305,7 @@ def _stabilize_entity(
 # ---------------------------------------------------------------------------
 # Change detection
 # ---------------------------------------------------------------------------
+
 
 def _diff_rows(
     new_rows: list[dict],
@@ -294,10 +323,7 @@ def _diff_rows(
     nk_fields = NATURAL_KEY_FIELDS[entity_type]
 
     # Fields to compare (everything except meta)
-    compare_fields = [
-        f for f in (new_rows[0] if new_rows else {})
-        if f not in _META_FIELDS
-    ]
+    compare_fields = [f for f in (new_rows[0] if new_rows else {}) if f not in _META_FIELDS]
 
     # Group old rows by natural key (preserve order for positional matching)
     old_groups: dict[tuple, list[dict]] = defaultdict(list)
@@ -319,29 +345,30 @@ def _diff_rows(
             # INSERT
             row["etl_run_id"] = run_id
             row["updated_at"] = now
-            changes.append({
-                "run_id": run_id,
-                "entity_type": entity_type,
-                "entity_id": row.get(pk) if pk else None,
-                "change_type": "insert",
-                "changed_fields": None,
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": entity_type,
+                    "entity_id": row.get(pk) if pk else None,
+                    "change_type": "insert",
+                    "changed_fields": None,
+                }
+            )
         else:
-            changed = [
-                f for f in compare_fields
-                if f != pk and not _values_equal(row.get(f), old_row.get(f))
-            ]
+            changed = [f for f in compare_fields if f != pk and not _values_equal(row.get(f), old_row.get(f))]
             if changed:
                 # UPDATE
                 row["etl_run_id"] = run_id
                 row["updated_at"] = now
-                changes.append({
-                    "run_id": run_id,
-                    "entity_type": entity_type,
-                    "entity_id": row.get(pk) if pk else None,
-                    "change_type": "update",
-                    "changed_fields": json.dumps(changed),
-                })
+                changes.append(
+                    {
+                        "run_id": run_id,
+                        "entity_type": entity_type,
+                        "entity_id": row.get(pk) if pk else None,
+                        "change_type": "update",
+                        "changed_fields": json.dumps(changed),
+                    }
+                )
             else:
                 # UNCHANGED — preserve existing metadata
                 row["etl_run_id"] = old_row.get("etl_run_id", run_id)
@@ -352,13 +379,15 @@ def _diff_rows(
                     row["is_deleted"] = False
                     row["etl_run_id"] = run_id
                     row["updated_at"] = now
-                    changes.append({
-                        "run_id": run_id,
-                        "entity_type": entity_type,
-                        "entity_id": row.get(pk) if pk else None,
-                        "change_type": "update",
-                        "changed_fields": json.dumps(["is_deleted"]),
-                    })
+                    changes.append(
+                        {
+                            "run_id": run_id,
+                            "entity_type": entity_type,
+                            "entity_id": row.get(pk) if pk else None,
+                            "change_type": "update",
+                            "changed_fields": json.dumps(["is_deleted"]),
+                        }
+                    )
 
     # DELETES — old rows beyond what the new side consumed.
     # For soft-delete entities, collect candidates; tombstones are appended
@@ -367,13 +396,15 @@ def _diff_rows(
     for nk, group in old_groups.items():
         consumed = nk_counter.get(nk, 0)
         for old_row in group[consumed:]:
-            changes.append({
-                "run_id": run_id,
-                "entity_type": entity_type,
-                "entity_id": old_row.get(pk) if pk else None,
-                "change_type": "delete",
-                "changed_fields": None,
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": entity_type,
+                    "entity_id": old_row.get(pk) if pk else None,
+                    "change_type": "delete",
+                    "changed_fields": None,
+                }
+            )
             if entity_type in _SOFT_DELETE_ENTITIES:
                 _tombstone_candidates.append((old_row, old_row.get(pk)))
 
@@ -397,9 +428,12 @@ def _diff_rows(
                         old_row = old_by_pk[eid]
                         new_row = new_by_pk[eid]
                         changed = [
-                            f for f in compare_fields
-                            if f != pk and not _values_equal(
-                                new_row.get(f), old_row.get(f),
+                            f
+                            for f in compare_fields
+                            if f != pk
+                            and not _values_equal(
+                                new_row.get(f),
+                                old_row.get(f),
                             )
                         ]
                         c["change_type"] = "rename"
@@ -426,6 +460,7 @@ def _diff_rows(
 # ---------------------------------------------------------------------------
 # Winery rename detection (structural heuristic)
 # ---------------------------------------------------------------------------
+
 
 def _detect_winery_renames(
     new_wineries: list[dict],
@@ -469,6 +504,7 @@ def _detect_winery_renames(
 # Public entry points
 # ---------------------------------------------------------------------------
 
+
 def sync(
     new_entities: dict[str, list[dict]],
     output_dir: pathlib.Path,
@@ -498,7 +534,10 @@ def sync(
         old_rows = existing.get(entity_type, [])
 
         remapped, remap = _stabilize_entity(
-            new_rows, old_rows, entity_type, id_remappings,
+            new_rows,
+            old_rows,
+            entity_type,
+            id_remappings,
             identity_config=identity_config,
         )
 
@@ -524,7 +563,11 @@ def sync(
             id_remappings[entity_type] = remap
 
         annotated, changes = _diff_rows(
-            remapped, old_rows, entity_type, run_id, now,
+            remapped,
+            old_rows,
+            entity_type,
+            run_id,
+            now,
         )
 
         # Ensure every active row for soft-delete entities carries is_deleted=False.
@@ -581,13 +624,15 @@ def annotate_full_load(
             # Mark all new rows as active for soft-delete entities.
             if entity_type in _SOFT_DELETE_ENTITIES:
                 row.setdefault("is_deleted", False)
-            all_changes.append({
-                "run_id": run_id,
-                "entity_type": entity_type,
-                "entity_id": row.get(pk) if pk else None,
-                "change_type": "insert",
-                "changed_fields": None,
-            })
+            all_changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": entity_type,
+                    "entity_id": row.get(pk) if pk else None,
+                    "change_type": "insert",
+                    "changed_fields": None,
+                }
+            )
         annotated[entity_type] = rows
 
     # Carry forward existing tombstones not present in the new data.
@@ -599,9 +644,7 @@ def annotate_full_load(
         existing_rows = _table_to_dicts(output_dir / f"{entity_type}.parquet")
         new_ids: set = {r[pk] for r in annotated.get(entity_type, []) if pk}
         for old_row in existing_rows:
-            if old_row.get("is_deleted") and (
-                pk is None or old_row.get(pk) not in new_ids
-            ):
+            if old_row.get("is_deleted") and (pk is None or old_row.get(pk) not in new_ids):
                 annotated[entity_type].append(old_row)
 
     for i, ch in enumerate(all_changes, start=start_cid):
@@ -613,6 +656,7 @@ def annotate_full_load(
 # ---------------------------------------------------------------------------
 # Slug-based wine classification (28a)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WineMatch:
@@ -659,9 +703,9 @@ def _match_by_fingerprint(
     # Cascading partial match
     for field_idx in range(5):
         partial = [
-            (wid, d) for wid, d in candidates
-            if fp_index.get(wid, ("",) * 5)[field_idx] == csv_fp[field_idx]
-               and csv_fp[field_idx]
+            (wid, d)
+            for wid, d in candidates
+            if fp_index.get(wid, ("",) * 5)[field_idx] == csv_fp[field_idx] and csv_fp[field_idx]
         ]
         if len(partial) == 1:
             return partial[0][0]
@@ -751,6 +795,18 @@ def _compute_slug_from_wine(w: dict) -> str:
     return wine_slug(winery, name, year)
 
 
+_FORMAT_SUFFIXES = ("-half", "-magnum", "-jeroboam", "-double-magnum", "-imperiale", "-nebuchadnezzar")
+
+
+def _strip_format_suffix(slug: str) -> str:
+    """Remove format suffix from a wine slug to get the base slug."""
+    for suffix in _FORMAT_SUFFIXES:
+        if slug.endswith(suffix):
+            return slug[: -len(suffix)]
+    # Handle truncated suffixes (slug hit 60-char limit mid-suffix)
+    return slug.rstrip("-")
+
+
 def classify_wines(
     wines_rows: list[dict],
     existing_wines: list[dict],
@@ -760,9 +816,12 @@ def classify_wines(
     Returns (matches, deletions).
     """
     # 1. Build slug index from existing wine.parquet
+    #    Strip format suffixes so format-variant wines share the same
+    #    lookup key as the base slug computed from CSV rows.
     slug_index: dict[str, list[tuple[int, bool]]] = defaultdict(list)
     for w in existing_wines:
         s = w.get("wine_slug") or _compute_slug_from_wine(w)
+        s = _strip_format_suffix(s)
         slug_index[s].append((w["wine_id"], w.get("is_deleted", False)))
     for s in slug_index:
         slug_index[s].sort(key=lambda t: t[0])
@@ -791,12 +850,15 @@ def classify_wines(
 
     for i, row in enumerate(wines_rows):
         slug = wine_slug(
-            row.get("winery"), row.get("wine_name"), row.get("vintage_raw"),
+            row.get("winery"),
+            row.get("wine_name"),
+            row.get("vintage_raw"),
         )
         csv_fp = wine_fingerprint(row)
         # Normalise category and price in the CSV fingerprint to match
         # the stored format (category slug, decimal string).
         from . import parsers, vinocell_parsers
+
         cat_slug = ""
         try:
             cat_slug = vinocell_parsers.parse_category(csv_fp[3]) if csv_fp[3] else ""
@@ -811,14 +873,8 @@ def classify_wines(
         csv_fp_norm = (csv_fp[0], csv_fp[1], csv_fp[2], cat_slug, price_str)
 
         existing_group = slug_index.get(slug, [])
-        active = [
-            (wid, d) for wid, d in existing_group
-            if not d and wid not in consumed_ids
-        ]
-        deleted = [
-            (wid, d) for wid, d in existing_group
-            if d and wid not in consumed_ids
-        ]
+        active = [(wid, d) for wid, d in existing_group if not d and wid not in consumed_ids]
+        deleted = [(wid, d) for wid, d in existing_group if d and wid not in consumed_ids]
 
         matched_wid = _match_by_fingerprint(active, csv_fp_norm, fp_index)
         if matched_wid is not None:
@@ -841,11 +897,13 @@ def classify_wines(
     deletions: list[WineDeletion] = []
     for w in existing_wines:
         if w["wine_id"] not in all_consumed:
-            deletions.append(WineDeletion(
-                w["wine_id"],
-                w.get("wine_slug") or "",
-                w.get("is_deleted", False),
-            ))
+            deletions.append(
+                WineDeletion(
+                    w["wine_id"],
+                    w.get("wine_slug") or "",
+                    w.get("is_deleted", False),
+                )
+            )
 
     # 6. Rename detection post-pass
     existing_by_id = {w["wine_id"]: w for w in existing_wines}
@@ -853,7 +911,9 @@ def classify_wines(
     for nm, dd in rename_pairs:
         logger.debug(
             "Rename detected: %r -> %r (wine_id=%d)",
-            dd.slug, nm.slug, dd.wine_id,
+            dd.slug,
+            nm.slug,
+            dd.wine_id,
         )
         nm.wine_id = dd.wine_id
         nm.status = "renamed"
@@ -866,8 +926,10 @@ def classify_wines(
         counts[m.status] = counts.get(m.status, 0) + 1
     logger.info(
         "classify_wines: %d matched, %d new, %d revived, %d renamed, %d deleted",
-        counts.get("existing", 0), counts.get("new", 0),
-        counts.get("revived", 0), counts.get("renamed", 0),
+        counts.get("existing", 0),
+        counts.get("new", 0),
+        counts.get("revived", 0),
+        counts.get("renamed", 0),
         len(deletions),
     )
 
@@ -896,10 +958,7 @@ def annotate_classified_wines(
     """
     old_by_id = {w["wine_id"]: w for w in existing_wines}
 
-    compare_fields = [
-        f for f in (wines[0] if wines else {})
-        if f not in _META_FIELDS
-    ]
+    compare_fields = [f for f in (wines[0] if wines else {}) if f not in _META_FIELDS]
 
     changes: list[dict] = []
 
@@ -908,64 +967,78 @@ def annotate_classified_wines(
             wine["is_deleted"] = False
             wine["etl_run_id"] = run_id
             wine["updated_at"] = now
-            changes.append({
-                "run_id": run_id,
-                "entity_type": "wine",
-                "entity_id": match.wine_id,
-                "change_type": "insert",
-                "changed_fields": None,
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": "wine",
+                    "entity_id": match.wine_id,
+                    "change_type": "insert",
+                    "changed_fields": None,
+                }
+            )
 
         elif match.status == "revived":
             wine["is_deleted"] = False
             wine["etl_run_id"] = run_id
             wine["updated_at"] = now
-            changes.append({
-                "run_id": run_id,
-                "entity_type": "wine",
-                "entity_id": match.wine_id,
-                "change_type": "update",
-                "changed_fields": json.dumps(["is_deleted"]),
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": "wine",
+                    "entity_id": match.wine_id,
+                    "change_type": "update",
+                    "changed_fields": json.dumps(["is_deleted"]),
+                }
+            )
 
         elif match.status == "renamed":
             old = old_by_id.get(match.wine_id, {})
             changed = [
-                f for f in compare_fields
-                if f != "wine_id" and not _values_equal(
-                    wine.get(f), old.get(f),
+                f
+                for f in compare_fields
+                if f != "wine_id"
+                and not _values_equal(
+                    wine.get(f),
+                    old.get(f),
                 )
             ]
             wine["is_deleted"] = False
             wine["etl_run_id"] = run_id
             wine["updated_at"] = now
-            changes.append({
-                "run_id": run_id,
-                "entity_type": "wine",
-                "entity_id": match.wine_id,
-                "change_type": "rename",
-                "changed_fields": json.dumps(changed) if changed else None,
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": "wine",
+                    "entity_id": match.wine_id,
+                    "change_type": "rename",
+                    "changed_fields": json.dumps(changed) if changed else None,
+                }
+            )
 
         else:  # existing
             old = old_by_id.get(match.wine_id, {})
             changed = [
-                f for f in compare_fields
-                if f != "wine_id" and not _values_equal(
-                    wine.get(f), old.get(f),
+                f
+                for f in compare_fields
+                if f != "wine_id"
+                and not _values_equal(
+                    wine.get(f),
+                    old.get(f),
                 )
             ]
             if changed:
                 wine["is_deleted"] = False
                 wine["etl_run_id"] = run_id
                 wine["updated_at"] = now
-                changes.append({
-                    "run_id": run_id,
-                    "entity_type": "wine",
-                    "entity_id": match.wine_id,
-                    "change_type": "update",
-                    "changed_fields": json.dumps(changed),
-                })
+                changes.append(
+                    {
+                        "run_id": run_id,
+                        "entity_type": "wine",
+                        "entity_id": match.wine_id,
+                        "change_type": "update",
+                        "changed_fields": json.dumps(changed),
+                    }
+                )
             else:
                 wine["is_deleted"] = old.get("is_deleted", False)
                 wine["etl_run_id"] = old.get("etl_run_id", run_id)
@@ -985,16 +1058,19 @@ def annotate_classified_wines(
                 remap = fk_remappings.get(ref_type)
                 if remap and tombstone.get(fk_field) is not None:
                     tombstone[fk_field] = remap.get(
-                        tombstone[fk_field], tombstone[fk_field],
+                        tombstone[fk_field],
+                        tombstone[fk_field],
                     )
         wines.append(tombstone)
         if not d.was_already_deleted:
-            changes.append({
-                "run_id": run_id,
-                "entity_type": "wine",
-                "entity_id": d.wine_id,
-                "change_type": "delete",
-                "changed_fields": None,
-            })
+            changes.append(
+                {
+                    "run_id": run_id,
+                    "entity_type": "wine",
+                    "entity_id": d.wine_id,
+                    "change_type": "delete",
+                    "changed_fields": None,
+                }
+            )
 
     return wines, changes

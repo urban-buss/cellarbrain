@@ -12,10 +12,10 @@ import re
 
 from .parsers import normalize_quotes, parse_tasting_date
 
-
 # ---------------------------------------------------------------------------
 # Opening-time parser
 # ---------------------------------------------------------------------------
+
 
 def parse_opening_time(raw: str | None) -> int | None:
     """'1h00min' → 60 (minutes)"""
@@ -31,9 +31,7 @@ def parse_opening_time(raw: str | None) -> int | None:
 # Tasting & rating parsers
 # ---------------------------------------------------------------------------
 
-_TASTING_RE = re.compile(
-    r"^(\d{1,2} \w+ \d{4})\s*-\s*(.*?)(?:\s*-\s*(\d+\.\d+)/(\d+))?\s*$"
-)
+_TASTING_RE = re.compile(r"^(\d{1,2} \w+ \d{4})\s*-\s*(.*?)(?:\s*-\s*(\d+\.\d+)/(\d+))?\s*$")
 
 
 def parse_tasting_line(raw: str | None) -> dict | None:
@@ -58,9 +56,7 @@ def parse_tasting_line(raw: str | None) -> dict | None:
     }
 
 
-_PRO_RATING_WINE_RE = re.compile(
-    r"^(.+?)\s*-\s*(\d+\.\d+)/(\d+)(?:\s*-\s*(.*))?$"
-)
+_PRO_RATING_WINE_RE = re.compile(r"^(.+?)\s*-\s*(\d+\.\d+)/(\d+)(?:\s*-\s*(.*))?$")
 
 
 def parse_pro_rating_wine(raw: str | None) -> dict | None:
@@ -85,9 +81,7 @@ def parse_pro_rating_wine(raw: str | None) -> dict | None:
     }
 
 
-_PRO_RATING_BOTTLE_RE = re.compile(
-    r"^(.+?):\s*(\d+\.\d+)/(\d+)$"
-)
+_PRO_RATING_BOTTLE_RE = re.compile(r"^(.+?):\s*(\d+\.\d+)/(\d+)$")
 
 
 def parse_pro_rating_bottle(raw: str | None) -> dict | None:

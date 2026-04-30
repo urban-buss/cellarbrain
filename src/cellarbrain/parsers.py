@@ -11,17 +11,18 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 
-
 # ---------------------------------------------------------------------------
 # Typographic quote normalisation
 # ---------------------------------------------------------------------------
 
-_QUOTE_MAP = str.maketrans({
-    "\u2018": "'",   # LEFT SINGLE QUOTATION MARK  → apostrophe
-    "\u2019": "'",   # RIGHT SINGLE QUOTATION MARK → apostrophe
-    "\u201C": '"',   # LEFT DOUBLE QUOTATION MARK  → double quote
-    "\u201D": '"',   # RIGHT DOUBLE QUOTATION MARK → double quote
-})
+_QUOTE_MAP = str.maketrans(
+    {
+        "\u2018": "'",  # LEFT SINGLE QUOTATION MARK  → apostrophe
+        "\u2019": "'",  # RIGHT SINGLE QUOTATION MARK → apostrophe
+        "\u201c": '"',  # LEFT DOUBLE QUOTATION MARK  → double quote
+        "\u201d": '"',  # RIGHT DOUBLE QUOTATION MARK → double quote
+    }
+)
 
 
 def normalize_quotes(s: str) -> str:
@@ -68,6 +69,7 @@ def parse_grapes(raw: str | None) -> list[tuple[str, float | None]]:
 # Unit-stripping parsers
 # ---------------------------------------------------------------------------
 
+
 def parse_alcohol(raw: str | None) -> float | None:
     """'14.5 %' → 14.5"""
     if not raw:
@@ -75,7 +77,7 @@ def parse_alcohol(raw: str | None) -> float | None:
     try:
         return float(raw.replace("%", "").strip())
     except (ValueError, TypeError):
-        raise ValueError(f"Cannot parse alcohol: {raw!r}")
+        raise ValueError(f"Cannot parse alcohol: {raw!r}") from None
 
 
 def parse_acidity(raw: str | None) -> float | None:
@@ -85,7 +87,7 @@ def parse_acidity(raw: str | None) -> float | None:
     try:
         return float(raw.replace("g/l", "").strip())
     except (ValueError, TypeError):
-        raise ValueError(f"Cannot parse acidity: {raw!r}")
+        raise ValueError(f"Cannot parse acidity: {raw!r}") from None
 
 
 def parse_sugar(raw: str | None) -> float | None:
@@ -95,7 +97,7 @@ def parse_sugar(raw: str | None) -> float | None:
     try:
         return float(raw.replace("g/l", "").strip())
     except (ValueError, TypeError):
-        raise ValueError(f"Cannot parse sugar: {raw!r}")
+        raise ValueError(f"Cannot parse sugar: {raw!r}") from None
 
 
 _VOLUME_MAP: dict[str, int] = {
@@ -141,12 +143,13 @@ def parse_ageing_months(raw: str | None) -> int | None:
     try:
         return int(raw.lower().replace("months", "").replace("month", "").strip())
     except (ValueError, TypeError):
-        raise ValueError(f"Cannot parse ageing months: {raw!r}")
+        raise ValueError(f"Cannot parse ageing months: {raw!r}") from None
 
 
 # ---------------------------------------------------------------------------
 # Date parsers
 # ---------------------------------------------------------------------------
+
 
 def parse_eu_date(raw: str | None) -> date | None:
     """'16.08.2024' (DD.MM.YYYY) → date(2024, 8, 16)"""
@@ -155,7 +158,7 @@ def parse_eu_date(raw: str | None) -> date | None:
     try:
         return datetime.strptime(raw.strip(), "%d.%m.%Y").date()
     except ValueError:
-        raise ValueError(f"Cannot parse date: {raw!r} (expected DD.MM.YYYY format)")
+        raise ValueError(f"Cannot parse date: {raw!r} (expected DD.MM.YYYY format)") from None
 
 
 def parse_tasting_date(raw: str) -> date:
@@ -164,14 +167,14 @@ def parse_tasting_date(raw: str) -> date:
         return datetime.strptime(raw.strip(), "%d %B %Y").date()
     except ValueError:
         raise ValueError(
-            f"Cannot parse tasting date: {raw!r} "
-            f"(expected 'DD Month YYYY' format, e.g. '21 February 2024')"
-        )
+            f"Cannot parse tasting date: {raw!r} (expected 'DD Month YYYY' format, e.g. '21 February 2024')"
+        ) from None
 
 
 # ---------------------------------------------------------------------------
 # Generic helpers
 # ---------------------------------------------------------------------------
+
 
 def to_slug(raw: str | None) -> str | None:
     """Convert a display value to a lowercase slug.
@@ -190,7 +193,7 @@ def parse_decimal(raw: str | None) -> Decimal | None:
     try:
         return Decimal(raw.strip())
     except Exception:
-        raise ValueError(f"Cannot parse decimal: {raw!r}")
+        raise ValueError(f"Cannot parse decimal: {raw!r}") from None
 
 
 def parse_int(raw: str | None) -> int | None:
@@ -200,7 +203,7 @@ def parse_int(raw: str | None) -> int | None:
     try:
         return int(raw.strip())
     except (ValueError, TypeError):
-        raise ValueError(f"Cannot parse integer: {raw!r}")
+        raise ValueError(f"Cannot parse integer: {raw!r}") from None
 
 
 def parse_bool(raw: str | None) -> bool:

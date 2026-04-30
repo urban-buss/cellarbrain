@@ -17,8 +17,8 @@ from cellarbrain.vinocell_parsers import (
     parse_wine_name,
 )
 
-
 # ---- Unit-stripping parsers -------------------------------------------------
+
 
 class TestParseOpeningTime:
     def test_one_hour(self):
@@ -37,11 +37,10 @@ class TestParseOpeningTime:
 
 # ---- Tasting & rating parsers -----------------------------------------------
 
+
 class TestParseTastingLine:
     def test_full_line(self):
-        result = parse_tasting_line(
-            "21 February 2024 - Really nice wine - 16.00/20"
-        )
+        result = parse_tasting_line("21 February 2024 - Really nice wine - 16.00/20")
         assert result == {
             "date": date(2024, 2, 21),
             "note": "Really nice wine",
@@ -62,9 +61,7 @@ class TestParseTastingLine:
 
 class TestParseProRatingWine:
     def test_with_review(self):
-        result = parse_pro_rating_wine(
-            "Robert Parker - 95.00/100 - Excellent vintage"
-        )
+        result = parse_pro_rating_wine("Robert Parker - 95.00/100 - Excellent vintage")
         assert result == {
             "source": "Robert Parker",
             "score": 95.0,
@@ -100,6 +97,7 @@ class TestParseProRatingBottle:
 
 
 # ---- Enum / mapping parsers --------------------------------------------------
+
 
 class TestParseCategory:
     def test_red(self):
@@ -175,6 +173,7 @@ class TestParseOutputType:
 
 
 # ---- Wine-name cleaning -----------------------------------------------------
+
 
 class TestParseWineName:
     @pytest.mark.parametrize("raw", ["New wine", "new wine", "NEW WINE", "  New wine  "])

@@ -61,9 +61,6 @@ wine-stores/
 # Local config override
 vinocell.local.toml
 
-# Setup guides
-setup/
-
 # Ratings
 ratings/
 
@@ -72,7 +69,8 @@ models/sommelier/model/
 models/sommelier/food.index
 models/sommelier/food_ids.json
 
-# Locals
+# Locals and scripts
 local/
 .local/
 *.local.*
+scripts/

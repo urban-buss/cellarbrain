@@ -21,8 +21,8 @@ from cellarbrain.parsers import (
     to_slug,
 )
 
-
 # ---- Quote normalisation ---------------------------------------------------
+
 
 class TestNormalizeQuotes:
     def test_right_single_quote(self):
@@ -32,7 +32,7 @@ class TestNormalizeQuotes:
         assert normalize_quotes("\u2018hello\u2019") == "'hello'"
 
     def test_double_quotes(self):
-        assert normalize_quotes("\u201CHello\u201D") == '"Hello"'
+        assert normalize_quotes("\u201cHello\u201d") == '"Hello"'
 
     def test_no_quotes_unchanged(self):
         assert normalize_quotes("plain text") == "plain text"
@@ -46,14 +46,13 @@ class TestNormalizeQuotes:
 
 # ---- Grape blend parsing ---------------------------------------------------
 
+
 class TestParseGrapes:
     def test_single_grape_no_pct(self):
         assert parse_grapes("Nebbiolo") == [("Nebbiolo", None)]
 
     def test_single_grape_with_pct(self):
-        assert parse_grapes("Cabernet Sauvignon (100%)") == [
-            ("Cabernet Sauvignon", 100.0)
-        ]
+        assert parse_grapes("Cabernet Sauvignon (100%)") == [("Cabernet Sauvignon", 100.0)]
 
     def test_blend(self):
         result = parse_grapes("Merlot (80%), Cabernet Franc (20%)")
@@ -65,6 +64,7 @@ class TestParseGrapes:
 
 
 # ---- Unit-stripping parsers -------------------------------------------------
+
 
 class TestParseAlcohol:
     def test_normal(self):
@@ -120,8 +120,8 @@ class TestParseAgeingMonths:
         assert parse_ageing_months(None) is None
 
 
-
 # ---- Date parsers -----------------------------------------------------------
+
 
 class TestParseEuDate:
     def test_normal(self):
@@ -148,8 +148,8 @@ class TestParseTastingDate:
             parse_tasting_date("2024-02-21")
 
 
-
 # ---- Generic helpers ---------------------------------------------------------
+
 
 class TestToSlug:
     def test_normal(self):

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set active_nav = "sessions" %}
+
+{% block title %}Sessions — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Sessions{% endblock %}
+
+{% block content %}
+<table>
+    <thead>
+        <tr>
+            <th>Session ID</th>
+            <th>Started</th>
+            <th>Events</th>
+            <th>Turns</th>
+            <th>Errors</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for s in sessions %}
+    <tr>
+        <td class="mono truncate">{{ s.session_id[:12] }}…</td>
+        <td class="mono">{{ s.started.strftime("%Y-%m-%d %H:%M") if s.started else "—" }}</td>
+        <td>{{ s.events }}</td>
+        <td>{{ s.turns }}</td>
+        <td>{% if s.errors %}<span class="badge badge-error">{{ s.errors }}</span>{% else %}0{% endif %}</td>
+        <td>
+            <button class="outline secondary" style="font-size:0.7rem; padding:0.1rem 0.3rem;"
+                    hx-get="/sessions/{{ s.session_id }}" hx-target="#sess-{{ s.session_id[:12] }}" hx-swap="innerHTML">
+                Turns
+            </button>
+        </td>
+    </tr>
+    <tr id="sess-{{ s.session_id[:12] }}"></tr>
+    {% else %}
+    <tr><td colspan="6">No sessions in this period.</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -73,18 +73,53 @@ def run_etl(
 
 
 def clean_output(output_dir: Path) -> int:
-    """Remove all ``*.parquet`` files from *output_dir*. Returns count removed."""
+    """Remove Parquet files and dossier directories from *output_dir*.
+
+    Returns count of items removed (files + directories).
+    """
+    import shutil
+
     count = 0
     if output_dir.is_dir():
         for pq in output_dir.glob("*.parquet"):
             pq.unlink()
             count += 1
+        wines_dir = output_dir / "wines"
+        if wines_dir.is_dir():
+            shutil.rmtree(wines_dir)
+            count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Python executable resolution
+# ---------------------------------------------------------------------------
+
+
+def _get_venv_python() -> str:
+    """Return the project venv Python if available, else sys.executable.
+
+    When invoked via the Windows ``py`` launcher, ``sys.executable`` points to
+    the system Python which may lack optional dependencies.  This helper
+    resolves the project ``.venv`` to ensure subprocess calls use the correct
+    environment.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    for sub in ("Scripts", "bin"):
+        candidate = project_root / ".venv" / sub / "python.exe"
+        if candidate.exists():
+            return str(candidate)
+        candidate = candidate.with_suffix("")  # Unix: no .exe
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
 
 
 # ---------------------------------------------------------------------------
 # Pytest runner
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PytestResult:
@@ -105,8 +140,9 @@ class PytestResult:
 
 def run_pytest() -> PytestResult:
     """Run ``pytest --tb=short -q`` and parse the summary line."""
+    python = _get_venv_python()
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--tb=short", "-q"],
+        [python, "-m", "pytest", "--tb=short", "-q"],
         capture_output=True,
         text=True,
         timeout=600,
@@ -140,6 +176,7 @@ def run_pytest() -> PytestResult:
 # Server rebuild
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RebuildResult:
     """Result from rebuilding the server (pip install -e .)."""
@@ -151,8 +188,9 @@ class RebuildResult:
 
 def rebuild_server() -> RebuildResult:
     """Run ``pip install -e .`` and verify the CLI exe exists."""
+    python = _get_venv_python()
     proc = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
+        [python, "-m", "pip", "install", "-e", ".", "-q"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -185,6 +223,7 @@ def rebuild_server() -> RebuildResult:
 # ---------------------------------------------------------------------------
 # Stdout parsers — extract metrics from cli.run() printed output
 # ---------------------------------------------------------------------------
+
 
 def _parse_csv_counts(text: str) -> dict[str, int]:
     """Extract CSV row counts from stdout."""

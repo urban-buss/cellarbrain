@@ -21,8 +21,7 @@ def _import_faiss():
         import faiss
     except ImportError:
         raise ImportError(
-            "faiss-cpu is required for the sommelier module. "
-            "Install with: pip install cellarbrain[sommelier]"
+            "faiss-cpu is required for the sommelier module. Install with: pip install cellarbrain[sommelier]"
         ) from None
     return faiss
 
@@ -36,8 +35,7 @@ def load_index(index_path: str | Path):
     path = Path(index_path)
     if not path.exists():
         raise IndexNotFoundError(
-            f"FAISS index not found at {path}. "
-            "Run `cellarbrain rebuild-indexes` or `cellarbrain etl` first."
+            f"FAISS index not found at {path}. Run `cellarbrain rebuild-indexes` or `cellarbrain etl` first."
         )
     faiss = _import_faiss()
     return faiss.read_index(str(path))
@@ -47,10 +45,7 @@ def load_ids(ids_path: str | Path) -> list[str]:
     """Load an ID mapping (JSON list) from disk."""
     path = Path(ids_path)
     if not path.exists():
-        raise IndexNotFoundError(
-            f"ID mapping not found at {path}. "
-            "Run `cellarbrain rebuild-indexes` first."
-        )
+        raise IndexNotFoundError(f"ID mapping not found at {path}. Run `cellarbrain rebuild-indexes` first.")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -75,7 +70,9 @@ def build_index(
 
     logger.info("Encoding %d texts for FAISS index...", len(texts))
     embeddings = model.encode(
-        texts, normalize_embeddings=True, show_progress_bar=True,
+        texts,
+        normalize_embeddings=True,
+        show_progress_bar=True,
     )
     embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
 

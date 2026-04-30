@@ -15,10 +15,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Skip markers for optional deps
 # ---------------------------------------------------------------------------
+
 
 def _require_sommelier():
     pytest.importorskip("sentence_transformers")
@@ -32,6 +32,7 @@ def _require_base_model():
     """Skip if the local base model is not present."""
     _require_sommelier()
     import pathlib
+
     if not pathlib.Path(BASE_MODEL).exists():
         pytest.skip(f"Base model not found at {BASE_MODEL}")
 
@@ -47,11 +48,13 @@ def tiny_pairing_parquet(tmp_path):
     food_texts = [f"dish {i} with ingredients" for i in range(20)]
     wine_texts = [f"wine {i} from region {i % 5}" for i in range(20)]
     scores = [round(0.05 + (i / 20) * 0.9, 3) for i in range(20)]
-    table = pa.table({
-        "food_text": food_texts,
-        "wine_text": wine_texts,
-        "pairing_score": scores,
-    })
+    table = pa.table(
+        {
+            "food_text": food_texts,
+            "wine_text": wine_texts,
+            "pairing_score": scores,
+        }
+    )
     path = tmp_path / "pairings.parquet"
     pq.write_table(table, path)
     return str(path)
@@ -133,10 +136,7 @@ class TestTraining:
         assert model_dir.exists()
         assert (model_dir / "config.json").exists()
         # Model saved as safetensors or pytorch_model.bin
-        has_weights = (
-            (model_dir / "model.safetensors").exists()
-            or (model_dir / "pytorch_model.bin").exists()
-        )
+        has_weights = (model_dir / "model.safetensors").exists() or (model_dir / "pytorch_model.bin").exists()
         assert has_weights, "Expected model weights file"
 
     def test_train_returns_metrics(self, tmp_path, tiny_pairing_parquet):
@@ -218,7 +218,8 @@ class TestIndexBuild:
         loaded_ids = load_ids(ids_path)
 
         query_vec = model.encode(
-            ["grilled steak with peppercorn sauce"], normalize_embeddings=True,
+            ["grilled steak with peppercorn sauce"],
+            normalize_embeddings=True,
         )
         query_vec = np.ascontiguousarray(query_vec, dtype=np.float32)
         results = search_index(query_vec, index, loaded_ids, 3)
@@ -244,8 +245,8 @@ class TestIndexBuild:
 class TestEngine:
     def test_check_availability_no_model(self, tmp_path):
         """Returns error string when model directory does not exist."""
-        from cellarbrain.sommelier.engine import SommelierEngine
         from cellarbrain.settings import SommelierConfig
+        from cellarbrain.sommelier.engine import SommelierEngine
 
         cfg = SommelierConfig(model_dir=str(tmp_path / "nonexistent"))
         engine = SommelierEngine(cfg, str(tmp_path))
@@ -256,8 +257,8 @@ class TestEngine:
     def test_check_availability_ok(self, trained_model, tmp_path):
         """Returns None when model directory exists."""
         _require_base_model()
-        from cellarbrain.sommelier.engine import SommelierEngine
         from cellarbrain.settings import SommelierConfig
+        from cellarbrain.sommelier.engine import SommelierEngine
 
         cfg = SommelierConfig(model_dir=trained_model)
         engine = SommelierEngine(cfg, str(tmp_path))
@@ -290,39 +291,69 @@ def _make_wine_dataset(base_dir, wines_data=None):
     rid = 1
 
     wineries = [
-        {"winery_id": 1, "name": "Château Test",
-         "etl_run_id": rid, "updated_at": now},
-        {"winery_id": 2, "name": "Domaine Example",
-         "etl_run_id": rid, "updated_at": now},
+        {"winery_id": 1, "name": "Château Test", "etl_run_id": rid, "updated_at": now},
+        {"winery_id": 2, "name": "Domaine Example", "etl_run_id": rid, "updated_at": now},
     ]
     appellations = [
-        {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-         "subregion": None, "classification": None,
-         "etl_run_id": rid, "updated_at": now},
-        {"appellation_id": 2, "country": "Italy", "region": "Piedmont",
-         "subregion": None, "classification": None,
-         "etl_run_id": rid, "updated_at": now},
+        {
+            "appellation_id": 1,
+            "country": "France",
+            "region": "Bordeaux",
+            "subregion": None,
+            "classification": None,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
+        {
+            "appellation_id": 2,
+            "country": "Italy",
+            "region": "Piedmont",
+            "subregion": None,
+            "classification": None,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
 
     _wine_template = {
         "wine_slug": "placeholder",
-        "winery_id": 1, "name": "Wine",
-        "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
+        "winery_id": 1,
+        "name": "Wine",
+        "vintage": 2020,
+        "is_non_vintage": False,
+        "appellation_id": 1,
         "category": "Red wine",
         "_raw_classification": None,
-        "subcategory": None, "specialty": None,
-        "sweetness": None, "effervescence": None, "volume_ml": 750,
+        "subcategory": None,
+        "specialty": None,
+        "sweetness": None,
+        "effervescence": None,
+        "volume_ml": 750,
         "_raw_volume": None,
-        "container": None, "hue": None, "cork": None, "alcohol_pct": 14.0,
-        "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-        "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-        "opening_type": None, "opening_minutes": None,
-        "drink_from": None, "drink_until": None,
-        "optimal_from": None, "optimal_until": None,
-        "original_list_price": None, "original_list_currency": None,
-        "list_price": None, "list_currency": None,
-        "comment": None, "winemaking_notes": None,
-        "is_favorite": False, "is_wishlist": False,
+        "container": None,
+        "hue": None,
+        "cork": None,
+        "alcohol_pct": 14.0,
+        "acidity_g_l": None,
+        "sugar_g_l": None,
+        "ageing_type": None,
+        "ageing_months": None,
+        "farming_type": None,
+        "serving_temp_c": None,
+        "opening_type": None,
+        "opening_minutes": None,
+        "drink_from": None,
+        "drink_until": None,
+        "optimal_from": None,
+        "optimal_until": None,
+        "original_list_price": None,
+        "original_list_currency": None,
+        "list_price": None,
+        "list_currency": None,
+        "comment": None,
+        "winemaking_notes": None,
+        "is_favorite": False,
+        "is_wishlist": False,
         "tracked_wine_id": None,
         "full_name": "Château Test Wine 2020",
         "grape_type": "varietal",
@@ -333,83 +364,151 @@ def _make_wine_dataset(base_dir, wines_data=None):
         "drinking_status": "unknown",
         "age_years": 5,
         "price_tier": "unknown",
+        "bottle_format": "Standard",
+        "price_per_750ml": None,
+        "format_group_id": None,
+        "food_tags": None,
         "is_deleted": False,
-        "etl_run_id": rid, "updated_at": now,
+        "etl_run_id": rid,
+        "updated_at": now,
     }
 
     if wines_data is None:
         wines_data = [
-            {"wine_id": 1, "wine_slug": "chateau-test-merlot-2020",
-             "full_name": "Château Test Merlot 2020",
-             "primary_grape": "Merlot", "grape_summary": "Merlot",
-             "dossier_path": dossier_filename(1, "Château Test", "Merlot", 2020, False)},
-            {"wine_id": 2, "wine_slug": "chateau-test-cabernet-2019",
-             "winery_id": 1, "name": "Cabernet", "vintage": 2019,
-             "full_name": "Château Test Cabernet 2019",
-             "primary_grape": "Cabernet Sauvignon", "grape_summary": "Cabernet Sauvignon",
-             "dossier_path": dossier_filename(2, "Château Test", "Cabernet", 2019, False)},
-            {"wine_id": 3, "wine_slug": "domaine-example-nebbiolo-2018",
-             "winery_id": 2, "name": "Nebbiolo", "vintage": 2018,
-             "appellation_id": 2, "category": "Red wine",
-             "full_name": "Domaine Example Nebbiolo 2018",
-             "primary_grape": "Nebbiolo", "grape_summary": "Nebbiolo",
-             "dossier_path": dossier_filename(3, "Domaine Example", "Nebbiolo", 2018, False)},
+            {
+                "wine_id": 1,
+                "wine_slug": "chateau-test-merlot-2020",
+                "full_name": "Château Test Merlot 2020",
+                "primary_grape": "Merlot",
+                "grape_summary": "Merlot",
+                "dossier_path": dossier_filename(1, "Château Test", "Merlot", 2020, False),
+            },
+            {
+                "wine_id": 2,
+                "wine_slug": "chateau-test-cabernet-2019",
+                "winery_id": 1,
+                "name": "Cabernet",
+                "vintage": 2019,
+                "full_name": "Château Test Cabernet 2019",
+                "primary_grape": "Cabernet Sauvignon",
+                "grape_summary": "Cabernet Sauvignon",
+                "dossier_path": dossier_filename(2, "Château Test", "Cabernet", 2019, False),
+            },
+            {
+                "wine_id": 3,
+                "wine_slug": "domaine-example-nebbiolo-2018",
+                "winery_id": 2,
+                "name": "Nebbiolo",
+                "vintage": 2018,
+                "appellation_id": 2,
+                "category": "Red wine",
+                "full_name": "Domaine Example Nebbiolo 2018",
+                "primary_grape": "Nebbiolo",
+                "grape_summary": "Nebbiolo",
+                "dossier_path": dossier_filename(3, "Domaine Example", "Nebbiolo", 2018, False),
+            },
         ]
 
     wines = [{**_wine_template, **w} for w in wines_data]
 
     # Bottles: wine 1 has 2 stored, wine 2 has 1 consumed (0 stored), wine 3 has 1 stored
     bottles = [
-        {"bottle_id": 1, "wine_id": 1, "status": "stored",
-         "cellar_id": 1, "shelf": "A1", "bottle_number": 1,
-         "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
-         "acquisition_type": "purchase",
-         "original_purchase_price": Decimal("20.00"),
-         "original_purchase_currency": "CHF",
-         "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-         "purchase_comment": None,
-         "output_date": None, "output_type": None, "output_comment": None,
-         "is_onsite": True, "is_in_transit": False,
-         "etl_run_id": rid, "updated_at": now},
-        {"bottle_id": 2, "wine_id": 1, "status": "stored",
-         "cellar_id": 1, "shelf": "A2", "bottle_number": 2,
-         "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
-         "acquisition_type": "purchase",
-         "original_purchase_price": Decimal("20.00"),
-         "original_purchase_currency": "CHF",
-         "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-         "purchase_comment": None,
-         "output_date": None, "output_type": None, "output_comment": None,
-         "is_onsite": True, "is_in_transit": False,
-         "etl_run_id": rid, "updated_at": now},
-        {"bottle_id": 3, "wine_id": 2, "status": "consumed",
-         "cellar_id": None, "shelf": None, "bottle_number": None,
-         "provider_id": 1, "purchase_date": datetime(2022, 1, 1).date(),
-         "acquisition_type": "purchase",
-         "original_purchase_price": Decimal("30.00"),
-         "original_purchase_currency": "CHF",
-         "purchase_price": Decimal("30.00"), "purchase_currency": "CHF",
-         "purchase_comment": None,
-         "output_date": datetime(2024, 1, 1).date(),
-         "output_type": "consumed", "output_comment": None,
-         "is_onsite": False, "is_in_transit": False,
-         "etl_run_id": rid, "updated_at": now},
-        {"bottle_id": 4, "wine_id": 3, "status": "stored",
-         "cellar_id": 1, "shelf": "B1", "bottle_number": 1,
-         "provider_id": 1, "purchase_date": datetime(2023, 9, 1).date(),
-         "acquisition_type": "purchase",
-         "original_purchase_price": Decimal("50.00"),
-         "original_purchase_currency": "CHF",
-         "purchase_price": Decimal("50.00"), "purchase_currency": "CHF",
-         "purchase_comment": None,
-         "output_date": None, "output_type": None, "output_comment": None,
-         "is_onsite": True, "is_in_transit": False,
-         "etl_run_id": rid, "updated_at": now},
+        {
+            "bottle_id": 1,
+            "wine_id": 1,
+            "status": "stored",
+            "cellar_id": 1,
+            "shelf": "A1",
+            "bottle_number": 1,
+            "provider_id": 1,
+            "purchase_date": datetime(2023, 6, 1).date(),
+            "acquisition_type": "purchase",
+            "original_purchase_price": Decimal("20.00"),
+            "original_purchase_currency": "CHF",
+            "purchase_price": Decimal("20.00"),
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": None,
+            "output_type": None,
+            "output_comment": None,
+            "is_onsite": True,
+            "is_in_transit": False,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
+        {
+            "bottle_id": 2,
+            "wine_id": 1,
+            "status": "stored",
+            "cellar_id": 1,
+            "shelf": "A2",
+            "bottle_number": 2,
+            "provider_id": 1,
+            "purchase_date": datetime(2023, 6, 1).date(),
+            "acquisition_type": "purchase",
+            "original_purchase_price": Decimal("20.00"),
+            "original_purchase_currency": "CHF",
+            "purchase_price": Decimal("20.00"),
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": None,
+            "output_type": None,
+            "output_comment": None,
+            "is_onsite": True,
+            "is_in_transit": False,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
+        {
+            "bottle_id": 3,
+            "wine_id": 2,
+            "status": "consumed",
+            "cellar_id": None,
+            "shelf": None,
+            "bottle_number": None,
+            "provider_id": 1,
+            "purchase_date": datetime(2022, 1, 1).date(),
+            "acquisition_type": "purchase",
+            "original_purchase_price": Decimal("30.00"),
+            "original_purchase_currency": "CHF",
+            "purchase_price": Decimal("30.00"),
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": datetime(2024, 1, 1).date(),
+            "output_type": "consumed",
+            "output_comment": None,
+            "is_onsite": False,
+            "is_in_transit": False,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
+        {
+            "bottle_id": 4,
+            "wine_id": 3,
+            "status": "stored",
+            "cellar_id": 1,
+            "shelf": "B1",
+            "bottle_number": 1,
+            "provider_id": 1,
+            "purchase_date": datetime(2023, 9, 1).date(),
+            "acquisition_type": "purchase",
+            "original_purchase_price": Decimal("50.00"),
+            "original_purchase_currency": "CHF",
+            "purchase_price": Decimal("50.00"),
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": None,
+            "output_type": None,
+            "output_comment": None,
+            "is_onsite": True,
+            "is_in_transit": False,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
 
     cellars = [
-        {"cellar_id": 1, "name": "Cave", "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"cellar_id": 1, "name": "Cave", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
     providers = [
         {"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now},
@@ -418,15 +517,20 @@ def _make_wine_dataset(base_dir, wines_data=None):
         {"grape_id": 1, "name": "Merlot", "etl_run_id": rid, "updated_at": now},
     ]
     wine_grapes = [
-        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
 
     for name, rows in [
-        ("winery", wineries), ("appellation", appellations),
-        ("grape", grapes), ("wine", wines), ("wine_grape", wine_grapes),
-        ("bottle", bottles), ("cellar", cellars), ("provider", providers),
-        ("tasting", []), ("pro_rating", []),
+        ("winery", wineries),
+        ("appellation", appellations),
+        ("grape", grapes),
+        ("wine", wines),
+        ("wine_grape", wine_grapes),
+        ("bottle", bottles),
+        ("cellar", cellars),
+        ("provider", providers),
+        ("tasting", []),
+        ("pro_rating", []),
     ]:
         writer.write_parquet(name, rows, base_dir)
 
@@ -442,28 +546,37 @@ def wine_dataset(tmp_path):
 @pytest.fixture()
 def food_catalogue(tmp_path):
     """Create a small food catalogue Parquet for enrichment tests."""
-    table = pa.table({
-        "dish_id": ["food_1", "food_2", "food_3", "food_4", "food_5"],
-        "dish_name": [
-            "Grilled lamb chops with rosemary",
-            "Sashimi platter with wasabi",
-            "Margherita pizza with fresh basil",
-            "Chocolate fondant with vanilla ice cream",
-            "Caesar salad with parmesan croutons",
-        ],
-        "description": ["d1", "d2", "d3", "d4", "d5"],
-        "ingredients": [["lamb", "rosemary"], ["tuna", "wasabi"],
-                        ["mozzarella", "basil"], ["chocolate", "cream"],
-                        ["romaine", "parmesan"]],
-        "cuisine": ["French", "Japanese", "Italian", "French", "American"],
-        "weight_class": ["heavy", "light", "medium", "heavy", "light"],
-        "protein": ["lamb", "fish", "cheese", "none", "chicken"],
-        "cooking_method": ["grill", "raw", "bake", "bake", "toss"],
-        "flavour_profile": [
-            ["rich", "herby"], ["clean", "umami"], ["savoury", "tangy"],
-            ["sweet", "rich"], ["crisp", "savoury"],
-        ],
-    })
+    table = pa.table(
+        {
+            "dish_id": ["food_1", "food_2", "food_3", "food_4", "food_5"],
+            "dish_name": [
+                "Grilled lamb chops with rosemary",
+                "Sashimi platter with wasabi",
+                "Margherita pizza with fresh basil",
+                "Chocolate fondant with vanilla ice cream",
+                "Caesar salad with parmesan croutons",
+            ],
+            "description": ["d1", "d2", "d3", "d4", "d5"],
+            "ingredients": [
+                ["lamb", "rosemary"],
+                ["tuna", "wasabi"],
+                ["mozzarella", "basil"],
+                ["chocolate", "cream"],
+                ["romaine", "parmesan"],
+            ],
+            "cuisine": ["French", "Japanese", "Italian", "French", "American"],
+            "weight_class": ["heavy", "light", "medium", "heavy", "light"],
+            "protein": ["lamb", "fish", "cheese", "none", "chicken"],
+            "cooking_method": ["grill", "raw", "bake", "bake", "toss"],
+            "flavour_profile": [
+                ["rich", "herby"],
+                ["clean", "umami"],
+                ["savoury", "tangy"],
+                ["sweet", "rich"],
+                ["crisp", "savoury"],
+            ],
+        }
+    )
     path = tmp_path / "food_catalogue.parquet"
     pq.write_table(table, path)
     return str(path)
@@ -531,28 +644,47 @@ class TestETLHook:
         _make_wine_dataset(
             data_dir,
             wines_data=[
-                {"wine_id": 1, "wine_slug": "test-wine-1",
-                 "full_name": "Test Wine 1",
-                 "dossier_path": "cellar/0001.md"},
+                {
+                    "wine_id": 1,
+                    "wine_slug": "test-wine-1",
+                    "full_name": "Test Wine 1",
+                    "dossier_path": "cellar/0001.md",
+                },
             ],
         )
         # Overwrite bottle.parquet with a consumed-only bottle
         from cellarbrain import writer
+
         now = datetime(2025, 1, 1)
-        writer.write_parquet("bottle", [
-            {"bottle_id": 1, "wine_id": 1, "status": "consumed",
-             "cellar_id": None, "shelf": None, "bottle_number": None,
-             "provider_id": 1, "purchase_date": datetime(2023, 1, 1).date(),
-             "acquisition_type": "purchase",
-             "original_purchase_price": Decimal("10.00"),
-             "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("10.00"), "purchase_currency": "CHF",
-             "purchase_comment": None,
-             "output_date": datetime(2024, 1, 1).date(),
-             "output_type": "consumed", "output_comment": None,
-             "is_onsite": False, "is_in_transit": False,
-             "etl_run_id": 1, "updated_at": now},
-        ], data_dir)
+        writer.write_parquet(
+            "bottle",
+            [
+                {
+                    "bottle_id": 1,
+                    "wine_id": 1,
+                    "status": "consumed",
+                    "cellar_id": None,
+                    "shelf": None,
+                    "bottle_number": None,
+                    "provider_id": 1,
+                    "purchase_date": datetime(2023, 1, 1).date(),
+                    "acquisition_type": "purchase",
+                    "original_purchase_price": Decimal("10.00"),
+                    "original_purchase_currency": "CHF",
+                    "purchase_price": Decimal("10.00"),
+                    "purchase_currency": "CHF",
+                    "purchase_comment": None,
+                    "output_date": datetime(2024, 1, 1).date(),
+                    "output_type": "consumed",
+                    "output_comment": None,
+                    "is_onsite": False,
+                    "is_in_transit": False,
+                    "etl_run_id": 1,
+                    "updated_at": now,
+                },
+            ],
+            data_dir,
+        )
 
         model = load_model(trained_model)
         wine_dir = tmp_path / "sommelier_empty"
@@ -576,12 +708,17 @@ class TestEngineIntegration:
     """Integration tests for SommelierEngine with real model + indexes."""
 
     def test_suggest_wines_returns_scored_results(
-        self, trained_model, wine_index, food_index, wine_dataset, food_catalogue,
+        self,
+        trained_model,
+        wine_index,
+        food_index,
+        wine_dataset,
+        food_catalogue,
     ):
         """suggest_wines returns ScoredWine list with valid scores."""
         _require_base_model()
-        from cellarbrain.sommelier.engine import SommelierEngine
         from cellarbrain.settings import SommelierConfig
+        from cellarbrain.sommelier.engine import SommelierEngine
 
         idx_path, ids_path = wine_index
         food_idx, food_ids = food_index
@@ -604,12 +741,17 @@ class TestEngineIntegration:
             assert 0 <= r.score <= 1.0
 
     def test_suggest_foods_returns_scored_results(
-        self, trained_model, wine_index, food_index, wine_dataset, food_catalogue,
+        self,
+        trained_model,
+        wine_index,
+        food_index,
+        wine_dataset,
+        food_catalogue,
     ):
         """suggest_foods returns ScoredFood list with valid scores."""
         _require_base_model()
-        from cellarbrain.sommelier.engine import SommelierEngine
         from cellarbrain.settings import SommelierConfig
+        from cellarbrain.sommelier.engine import SommelierEngine
 
         idx_path, ids_path = wine_index
         food_idx, food_ids = food_index
@@ -617,6 +759,7 @@ class TestEngineIntegration:
         # Engine's wine index dir must be relative to data_dir
         # Copy food + wine indexes into wine_dataset / "sommelier"
         import shutil
+
         som_dir = wine_dataset / "sommelier"
         som_dir.mkdir(exist_ok=True)
         shutil.copy(idx_path, som_dir / "wine.index")
@@ -640,12 +783,16 @@ class TestEngineIntegration:
             assert 0 <= r.score <= 1.0
 
     def test_suggest_foods_unknown_wine_raises(
-        self, trained_model, food_index, wine_dataset, food_catalogue,
+        self,
+        trained_model,
+        food_index,
+        wine_dataset,
+        food_catalogue,
     ):
         """suggest_foods with non-existent wine_id raises ValueError."""
         _require_base_model()
-        from cellarbrain.sommelier.engine import SommelierEngine
         from cellarbrain.settings import SommelierConfig
+        from cellarbrain.sommelier.engine import SommelierEngine
 
         food_idx, food_ids = food_index
 
@@ -671,7 +818,6 @@ class TestRetrain:
     def test_retrain_from_existing_model(self, trained_model, tiny_pairing_parquet, tmp_path):
         """Retrain by loading an existing fine-tuned model as base_model."""
         _require_base_model()
-        from pathlib import Path
 
         from cellarbrain.sommelier.training import train_model
 
@@ -690,10 +836,7 @@ class TestRetrain:
         assert isinstance(metrics, dict)
         assert "eval_cosine_similarity" in metrics
         # Model dir still has weights
-        has_weights = (
-            (retrain_dir / "model.safetensors").exists()
-            or (retrain_dir / "pytorch_model.bin").exists()
-        )
+        has_weights = (retrain_dir / "model.safetensors").exists() or (retrain_dir / "pytorch_model.bin").exists()
         assert has_weights
 
     def test_retrained_model_still_encodes(self, trained_model, tiny_pairing_parquet, tmp_path):

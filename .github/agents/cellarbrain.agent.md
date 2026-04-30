@@ -28,6 +28,8 @@ The cellarbrain MCP server gives you structured access to the cellar database an
 | `find_wine` | ILIKE text search across wine name, winery, region, grape, vintage. Auto-expands German synonyms (e.g. Rotwein→red). Recognises intent queries: drinking status (ready to drink, too young), price (under 30, budget), ratings (top rated), stock (low stock, last bottle). Expands wine-style concepts (sparkling, dessert, fortified, sweet, natural) to concrete wine names. System concepts: tracked, favorite, wishlist. Soft-AND fallback: when strict AND returns 0 results and ≥2 text tokens exist, retries requiring at least one match and ranks by match count. |
 | `read_dossier` | Read a wine dossier; optional `sections` list filters to specific H2 sections (frontmatter + H1 always included) |
 | `update_dossier` | Write agent-owned sections in a dossier (section key + Markdown content) |
+| `batch_update_dossier` | Write the same section content to multiple wines at once. Returns per-wine success/failure summary. |
+| `get_format_siblings` | Get format variants (Standard, Magnum, etc.) for a wine in a format group. Returns Markdown table. |
 | `pending_research` | List per-vintage wines with empty agent sections, sorted by priority |
 | `pending_companion_research` | List tracked wines with pending companion dossier sections |
 | `reload_data` | Re-run ETL from CSV exports (only when asked) |

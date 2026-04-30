@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from . import parsers
-from . import vinocell_parsers
-from .markdown import _make_slug
+from . import parsers, vinocell_parsers
+from .slugify import make_slug
 
 if TYPE_CHECKING:
     from .incremental import WineMatch
@@ -32,6 +31,51 @@ def _wine_natural_key(row: dict) -> tuple:
     )
 
 
+def _wine_volume_key(row: dict) -> tuple:
+    """Derive a volume-aware key for disambiguating multi-format wines.
+
+    Returns a 4-tuple ``(winery, wine_name, vintage, volume)`` that
+    distinguishes e.g. a 750 mL standard bottle from a Magnum of the
+    same wine and vintage.
+    """
+    return (
+        parsers.normalize_quotes(row.get("winery") or ""),
+        parsers.normalize_quotes(row.get("wine_name") or ""),
+        row.get("vintage_raw") or "",
+        (row.get("volume_raw") or "").strip(),
+    )
+
+
+def _resolve_wine_id(
+    row: dict,
+    wine_lookup: dict[tuple, int],
+    wine_volume_lookup: dict[tuple, int] | None,
+) -> int | None:
+    """Look up the wine_id for a CSV row, preferring volume-aware match."""
+    if wine_volume_lookup is not None:
+        vol_key = _wine_volume_key(row)
+        if vol_key[3]:  # only try when volume_raw is present
+            wine_id = wine_volume_lookup.get(vol_key)
+            if wine_id is not None:
+                return wine_id
+    return wine_lookup.get(_wine_natural_key(row))
+
+
+def build_wine_volume_lookup(
+    wines_rows: list[dict],
+    wine_entities: list[dict],
+) -> dict[tuple, int]:
+    """Build a volume-aware lookup from raw CSV rows and built wine entities.
+
+    Returns ``{(winery, wine_name, vintage, volume) → wine_id}``.
+    """
+    lookup: dict[tuple, int] = {}
+    for row, wine in zip(wines_rows, wine_entities):
+        vk = _wine_volume_key(row)
+        lookup[vk] = wine["wine_id"]
+    return lookup
+
+
 def wine_slug(winery: str | None, name: str | None, year: str | None) -> str:
     """Generate a stable identity slug from raw CSV values.
 
@@ -47,7 +91,52 @@ def wine_slug(winery: str | None, name: str | None, year: str | None) -> str:
     # For identity slugs, always use "nv" when no vintage is present.
     if vintage is None:
         is_nv = True
-    return _make_slug(winery, name, vintage, is_nv)
+    return make_slug(winery, name, vintage, is_nv)
+
+
+# ---------------------------------------------------------------------------
+# Format-variant slug helpers
+# ---------------------------------------------------------------------------
+
+_FORMAT_SLUG_SUFFIX: dict[str, str] = {
+    "Half Bottle": "half",
+    "Magnum": "magnum",
+    "Jéroboam": "jeroboam",
+    "Double Magnum": "double-magnum",
+    "Impériale": "imperiale",
+    "Nebuchadnezzar": "nebuchadnezzar",
+}
+
+
+def wine_slug_with_format(
+    winery: str | None,
+    name: str | None,
+    year: str | None,
+    bottle_format: str | None,
+    has_format_siblings: bool,
+) -> str:
+    """Generate a slug with optional format suffix for multi-format wines.
+
+    The suffix is only appended when the wine has format siblings AND
+    the format is not Standard (750 mL).  Single-format wines always
+    get a clean slug regardless of their actual format.
+
+    Examples:
+        >>> wine_slug_with_format("Lageder", "COR", "2019", "Magnum", True)
+        'lageder-cor-2019-magnum'
+        >>> wine_slug_with_format("Lageder", "COR", "2019", "Standard", True)
+        'lageder-cor-2019'
+        >>> wine_slug_with_format("Lageder", "COR", "2019", "Magnum", False)
+        'lageder-cor-2019'
+    """
+    base = wine_slug(winery, name, year)
+    if not has_format_siblings or not bottle_format:
+        return base
+    suffix = _FORMAT_SLUG_SUFFIX.get(bottle_format)
+    if suffix is None:
+        return base  # Standard and unknown formats keep clean slug
+    combined = f"{base}-{suffix}"
+    return combined[:60]
 
 
 def wine_fingerprint(row: dict) -> tuple[str, str, str, str, str]:
@@ -68,6 +157,7 @@ def wine_fingerprint(row: dict) -> tuple[str, str, str, str, str]:
 # ---------------------------------------------------------------------------
 # Lookup entity builders
 # ---------------------------------------------------------------------------
+
 
 def build_wineries(wines_rows: list[dict]) -> tuple[list[dict], Lookup]:
     """Deduplicate winery names, assign IDs.
@@ -112,13 +202,15 @@ def build_appellations(wines_rows: list[dict]) -> tuple[list[dict], CompositeLoo
     entities = []
     lookup: CompositeLookup = {}
     for i, key in enumerate(sorted(seen, key=lambda t: tuple(s or "" for s in t)), start=1):
-        entities.append({
-            "appellation_id": i,
-            "country": key[0],
-            "region": key[1],
-            "subregion": key[2],
-            "classification": key[3],
-        })
+        entities.append(
+            {
+                "appellation_id": i,
+                "country": key[0],
+                "region": key[1],
+                "subregion": key[2],
+                "classification": key[3],
+            }
+        )
         lookup[key] = i
 
     return entities, lookup
@@ -158,11 +250,13 @@ def build_cellars(bottles_rows: list[dict]) -> tuple[list[dict], Lookup]:
     entities = []
     lookup: Lookup = {}
     for i, name in enumerate(sorted(names), start=1):
-        entities.append({
-            "cellar_id": i,
-            "name": name,
-            "sort_order": vinocell_parsers.parse_cellar_sort_order(name),
-        })
+        entities.append(
+            {
+                "cellar_id": i,
+                "name": name,
+                "sort_order": vinocell_parsers.parse_cellar_sort_order(name),
+            }
+        )
         lookup[name] = i
 
     return entities, lookup
@@ -181,7 +275,7 @@ def build_providers(
         p = row.get("provider")
         if p:
             names.add(p)
-    for row in (bottles_gone_rows or []):
+    for row in bottles_gone_rows or []:
         p = row.get("provider")
         if p:
             names.add(p)
@@ -198,6 +292,7 @@ def build_providers(
 # ---------------------------------------------------------------------------
 # Core entity builders
 # ---------------------------------------------------------------------------
+
 
 def build_wines(
     wines_rows: list[dict],
@@ -233,11 +328,11 @@ def build_wines(
             wine = {
                 "wine_id": wine_id,
                 "wine_slug": wine_slug(
-                    row.get("winery"), row.get("wine_name"), row.get("vintage_raw"),
+                    row.get("winery"),
+                    row.get("wine_name"),
+                    row.get("vintage_raw"),
                 ),
-                "winery_id": winery_lookup.get(
-                    parsers.normalize_quotes(row.get("winery") or "")
-                ),
+                "winery_id": winery_lookup.get(parsers.normalize_quotes(row.get("winery") or "")),
                 "name": vinocell_parsers.parse_wine_name(row.get("wine_name")),
                 "vintage": vintage,
                 "is_non_vintage": is_nv,
@@ -273,18 +368,20 @@ def build_wines(
                 "_raw_grapes": (row.get("grapes_raw") or "").strip() or None,
                 "is_favorite": parsers.parse_bool(row.get("is_favorite_raw")),
                 "is_wishlist": parsers.parse_bool(row.get("is_wishlist_raw")),
+                "food_tags": None,
+                "food_groups": None,
             }
         except ValueError as exc:
-            raise ValueError(
-                f"Wine row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}"
-            ) from exc
+            raise ValueError(f"Wine row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}") from exc
         entities.append(wine)
         if nk in wine_lookup:
             logger.warning(
                 "Duplicate wine natural key %r at row %d "
                 "(first seen as wine_id=%d). "
                 "The later entry will take precedence.",
-                nk, i, wine_lookup[nk],
+                nk,
+                i,
+                wine_lookup[nk],
             )
         wine_lookup[nk] = wine_id
 
@@ -295,12 +392,14 @@ def build_wine_grapes(
     wines_rows: list[dict],
     wine_lookup: dict[tuple, int],
     grape_lookup: Lookup,
+    *,
+    wine_volume_lookup: dict[tuple, int] | None = None,
 ) -> list[dict]:
     """Build wine_grape junction rows."""
     entities = []
     seen_wine_ids: set[int] = set()
     for row in wines_rows:
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None or wine_id in seen_wine_ids:
             continue
         seen_wine_ids.add(wine_id)
@@ -309,12 +408,14 @@ def build_wine_grapes(
             grape_id = grape_lookup.get(name)
             if grape_id is None:
                 continue
-            entities.append({
-                "wine_id": wine_id,
-                "grape_id": grape_id,
-                "percentage": pct,
-                "sort_order": order,
-            })
+            entities.append(
+                {
+                    "wine_id": wine_id,
+                    "grape_id": grape_id,
+                    "percentage": pct,
+                    "sort_order": order,
+                }
+            )
     return entities
 
 
@@ -323,16 +424,19 @@ def build_bottles(
     wine_lookup: dict[tuple, int],
     cellar_lookup: Lookup,
     provider_lookup: Lookup,
+    *,
+    wine_volume_lookup: dict[tuple, int] | None = None,
 ) -> list[dict]:
     """Build bottle entities from bottles CSV rows."""
     entities = []
     for i, row in enumerate(bottles_rows, start=1):
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Bottle row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
 
@@ -356,9 +460,7 @@ def build_bottles(
             }
         except ValueError as exc:
             nk = _wine_natural_key(row)
-            raise ValueError(
-                f"Bottle row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}"
-            ) from exc
+            raise ValueError(f"Bottle row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}") from exc
         entities.append(bottle)
     return entities
 
@@ -368,17 +470,20 @@ def build_bottles_gone(
     wine_lookup: dict[tuple, int],
     provider_lookup: Lookup,
     start_id: int = 1,
+    *,
+    wine_volume_lookup: dict[tuple, int] | None = None,
 ) -> list[dict]:
     """Build bottle entities from bottles-gone CSV rows."""
     entities = []
     next_id = start_id
     for i, row in enumerate(bottles_gone_rows, start=1):
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Bottles-gone row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
         try:
@@ -402,9 +507,7 @@ def build_bottles_gone(
             }
         except ValueError as exc:
             nk = _wine_natural_key(row)
-            raise ValueError(
-                f"Bottles-gone row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}"
-            ) from exc
+            raise ValueError(f"Bottles-gone row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}") from exc
         entities.append(bottle)
         next_id += 1
     return entities
@@ -413,6 +516,8 @@ def build_bottles_gone(
 def build_tastings(
     wines_rows: list[dict],
     wine_lookup: dict[tuple, int],
+    *,
+    wine_volume_lookup: dict[tuple, int] | None = None,
 ) -> list[dict]:
     """Parse tasting notes from wines field W51."""
     entities = []
@@ -421,12 +526,13 @@ def build_tastings(
         raw = row.get("tastings_raw")
         if not raw:
             continue
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Tasting row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
 
@@ -434,14 +540,16 @@ def build_tastings(
             parsed = vinocell_parsers.parse_tasting_line(line)
             if parsed:
                 tasting_id += 1
-                entities.append({
-                    "tasting_id": tasting_id,
-                    "wine_id": wine_id,
-                    "tasting_date": parsed["date"],
-                    "note": parsed["note"],
-                    "score": parsed["score"],
-                    "max_score": parsed["max_score"],
-                })
+                entities.append(
+                    {
+                        "tasting_id": tasting_id,
+                        "wine_id": wine_id,
+                        "tasting_date": parsed["date"],
+                        "note": parsed["note"],
+                        "score": parsed["score"],
+                        "max_score": parsed["max_score"],
+                    }
+                )
     return entities
 
 
@@ -450,6 +558,8 @@ def build_pro_ratings(
     bottles_rows: list[dict],
     wine_lookup: dict[tuple, int],
     bottles_gone_rows: list[dict] | None = None,
+    *,
+    wine_volume_lookup: dict[tuple, int] | None = None,
 ) -> list[dict]:
     """Parse professional ratings from wines W53 + bottles B49, deduplicated."""
     seen: set[tuple] = set()  # (wine_id, source, score) for dedup
@@ -461,12 +571,13 @@ def build_pro_ratings(
         raw = row.get("pro_ratings_raw")
         if not raw:
             continue
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Pro-rating (wines) row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
         for line in raw.split("\n"):
@@ -476,23 +587,26 @@ def build_pro_ratings(
                 if dedup_key not in seen:
                     seen.add(dedup_key)
                     rating_id += 1
-                    entities.append({
-                        "rating_id": rating_id,
-                        "wine_id": wine_id,
-                        **parsed,
-                    })
+                    entities.append(
+                        {
+                            "rating_id": rating_id,
+                            "wine_id": wine_id,
+                            **parsed,
+                        }
+                    )
 
     # Source 2: Bottle file — "pro_ratings_raw" (B49)
     for i, row in enumerate(bottles_rows, start=1):
         raw = row.get("pro_ratings_raw")
         if not raw:
             continue
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Pro-rating (bottles) row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
         parsed = vinocell_parsers.parse_pro_rating_bottle(raw)
@@ -501,23 +615,26 @@ def build_pro_ratings(
             if dedup_key not in seen:
                 seen.add(dedup_key)
                 rating_id += 1
-                entities.append({
-                    "rating_id": rating_id,
-                    "wine_id": wine_id,
-                    **parsed,
-                })
+                entities.append(
+                    {
+                        "rating_id": rating_id,
+                        "wine_id": wine_id,
+                        **parsed,
+                    }
+                )
 
     # Source 3: Bottles-gone file — "pro_ratings_raw" (same field)
     for i, row in enumerate(bottles_gone_rows or [], start=1):
         raw = row.get("pro_ratings_raw")
         if not raw:
             continue
-        wine_id = wine_lookup.get(_wine_natural_key(row))
+        wine_id = _resolve_wine_id(row, wine_lookup, wine_volume_lookup)
         if wine_id is None:
             nk = _wine_natural_key(row)
             logger.warning(
                 "Pro-rating (bottles-gone) row %d: no matching wine for %r. Skipped.",
-                i, nk,
+                i,
+                nk,
             )
             continue
         parsed = vinocell_parsers.parse_pro_rating_bottle(raw)
@@ -526,11 +643,13 @@ def build_pro_ratings(
             if dedup_key not in seen:
                 seen.add(dedup_key)
                 rating_id += 1
-                entities.append({
-                    "rating_id": rating_id,
-                    "wine_id": wine_id,
-                    **parsed,
-                })
+                entities.append(
+                    {
+                        "rating_id": rating_id,
+                        "wine_id": wine_id,
+                        **parsed,
+                    }
+                )
 
     return entities
 
@@ -539,32 +658,91 @@ def build_pro_ratings(
 # Dossier path assignment (must be called after all entities are built)
 # ---------------------------------------------------------------------------
 
+
 def assign_dossier_paths(entities: dict[str, list[dict]]) -> None:
     """Set ``dossier_path`` on every wine row.
 
     Wines with ≥1 stored bottle go to ``cellar/``, all others to ``archive/``.
-    Must be called after bottles have their final stable IDs and wine_id FKs.
+    Must be called after bottles have their final stable IDs and wine_id FKs,
+    and after :func:`update_format_slugs` has applied format suffixes.
     """
-    from .markdown import dossier_filename
-
     stored_wine_ids: set[int] = {
-        b["wine_id"]
-        for b in entities.get("bottle", [])
-        if b.get("status") == "stored" and not b.get("is_in_transit")
-    }
-    winery_name_by_id: dict[int, str] = {
-        w["winery_id"]: w["name"] for w in entities.get("winery", [])
+        b["wine_id"] for b in entities.get("bottle", []) if b.get("status") == "stored" and not b.get("is_in_transit")
     }
     for w in entities["wine"]:
-        fname = dossier_filename(
-            w["wine_id"],
-            winery_name_by_id.get(w.get("winery_id", -1)),
-            w.get("name"),
-            w.get("vintage"),
-            w.get("is_non_vintage", False),
-        )
+        slug = w.get("wine_slug") or ""
+        fname = f"{w['wine_id']:04d}-{slug}.md"
         subfolder = "cellar" if w["wine_id"] in stored_wine_ids else "archive"
         w["dossier_path"] = f"{subfolder}/{fname}"
+
+
+# ---------------------------------------------------------------------------
+# Format-group assignment (must be called before assign_dossier_paths)
+# ---------------------------------------------------------------------------
+
+
+def assign_format_groups(wines: list[dict]) -> None:
+    """Link format variants by setting ``format_group_id``.
+
+    Groups wines by ``(winery_id, name, vintage)``.  If a group has ≥2
+    members with *different* ``volume_ml`` values, the Standard (750 mL)
+    variant's ``wine_id`` becomes the group ID.  All members get
+    ``format_group_id`` set; single-format wines get ``None``.
+
+    Same-volume duplicates (NK collisions where both rows share the same
+    volume) are explicitly excluded — only genuine multi-format variants
+    are linked.
+    """
+    from collections import defaultdict
+
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for w in wines:
+        if w.get("is_deleted"):
+            w.setdefault("format_group_id", None)
+            continue
+        key = (w.get("winery_id"), w.get("name"), w.get("vintage"))
+        groups[key].append(w)
+
+    for members in groups.values():
+        if len(members) < 2:
+            for w in members:
+                w["format_group_id"] = None
+            continue
+
+        # Only group when volumes actually differ.
+        volumes = {w.get("volume_ml") for w in members}
+        if len(volumes) < 2:
+            for w in members:
+                w["format_group_id"] = None
+            continue
+
+        # Pick primary: prefer 750 mL, else smallest volume.
+        primary = next(
+            (w for w in members if w.get("volume_ml") == 750),
+            min(members, key=lambda w: w.get("volume_ml") or 0),
+        )
+        gid = primary["wine_id"]
+        for w in members:
+            w["format_group_id"] = gid
+
+
+def update_format_slugs(wines: list[dict]) -> None:
+    """Append a format suffix to ``wine_slug`` for non-primary format variants.
+
+    Must be called after :func:`assign_format_groups` has set
+    ``format_group_id`` on every wine.  Only non-Standard wines that
+    belong to a format group get their slug updated.
+    """
+    for w in wines:
+        if w.get("format_group_id") is None:
+            continue
+        bf = w.get("bottle_format") or ""
+        suffix = _FORMAT_SLUG_SUFFIX.get(bf)
+        if suffix is None:
+            continue  # Standard and unknown formats keep clean slug
+        base = w.get("wine_slug") or ""
+        combined = f"{base}-{suffix}"
+        w["wine_slug"] = combined[:60]
 
 
 # ---------------------------------------------------------------------------
@@ -608,17 +786,20 @@ def build_tracked_wines(
     lookup: dict[tuple[int, str], int] = {}
 
     for i, ((winery_id, wine_name), data) in enumerate(
-        sorted(groups.items()), start=TRACKED_WINE_ID_OFFSET,
+        sorted(groups.items()),
+        start=TRACKED_WINE_ID_OFFSET,
     ):
-        entities.append({
-            "tracked_wine_id": i,
-            "winery_id": winery_id,
-            "wine_name": wine_name,
-            "category": data["category"],
-            "appellation_id": data["appellation_id"],
-            "dossier_path": "",  # assigned later by assign_tracked_dossier_paths
-            "is_deleted": False,
-        })
+        entities.append(
+            {
+                "tracked_wine_id": i,
+                "winery_id": winery_id,
+                "wine_name": wine_name,
+                "category": data["category"],
+                "appellation_id": data["appellation_id"],
+                "dossier_path": "",  # assigned later by assign_tracked_dossier_paths
+                "is_deleted": False,
+            }
+        )
         lookup[(winery_id, wine_name)] = i
 
     return entities, lookup
@@ -649,15 +830,17 @@ def assign_tracked_dossier_paths(
     """
     from .companion_markdown import companion_dossier_slug
 
-    winery_name_by_id: dict[int, str] = {
-        w["winery_id"]: w["name"] for w in entities.get("winery", [])
-    }
+    winery_name_by_id: dict[int, str] = {w["winery_id"]: w["name"] for w in entities.get("winery", [])}
     subdir = getattr(
-        getattr(settings, "wishlist", None), "wishlist_subdir", "wishlist",
+        getattr(settings, "wishlist", None),
+        "wishlist_subdir",
+        "wishlist",
     )
     for tw in entities.get("tracked_wine", []):
         winery_name = winery_name_by_id.get(tw.get("winery_id"))
         slug = companion_dossier_slug(
-            tw["tracked_wine_id"], winery_name, tw["wine_name"],
+            tw["tracked_wine_id"],
+            winery_name,
+            tw["wine_name"],
         )
         tw["dossier_path"] = f"{subdir}/{slug}"

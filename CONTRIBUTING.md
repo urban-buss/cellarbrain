@@ -18,6 +18,18 @@ pip install -e ".[research]" pytest
 pytest
 ```
 
+### Smoke tests
+
+The ETL smoke pipeline exercises the full load → sync → verify → MCP cycle.
+Always invoke it with the **venv Python** (not the system `py` launcher):
+
+```bash
+python -m tests.smoke_helpers          # with venv activated
+# or explicitly:
+.venv/Scripts/python -m tests.smoke_helpers   # Windows
+.venv/bin/python -m tests.smoke_helpers       # macOS/Linux
+```
+
 ## Submitting changes
 
 1. Fork the repo and create a feature branch from `main`.

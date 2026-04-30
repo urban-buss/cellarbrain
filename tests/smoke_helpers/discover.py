@@ -8,7 +8,6 @@ from pathlib import Path
 
 from cellarbrain.settings import PathsConfig
 
-
 _FOLDER_RE = re.compile(r"^\d{6}$")
 
 _PATHS_DEFAULTS = PathsConfig()
@@ -27,10 +26,7 @@ def discover_raw_folders(raw_dir: Path) -> list[str]:
     """
     if not raw_dir.is_dir():
         return []
-    return sorted(
-        d.name for d in raw_dir.iterdir()
-        if d.is_dir() and _FOLDER_RE.match(d.name)
-    )
+    return sorted(d.name for d in raw_dir.iterdir() if d.is_dir() and _FOLDER_RE.match(d.name))
 
 
 def validate_folder(raw_dir: Path, folder: str) -> bool:
@@ -56,6 +52,7 @@ def get_environment() -> dict[str, str]:
     cb_version = "unknown"
     try:
         from importlib.metadata import version
+
         cb_version = version("cellarbrain")
     except Exception:
         pass

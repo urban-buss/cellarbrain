@@ -104,15 +104,25 @@ Every code change must include corresponding test updates. Never submit producti
 4. Add tests in `test_mcp_server.py` using a temp Parquet dataset.
 5. Update the tool table in `.github/agents/cellarbrain.agent.md`.
 
+### Adding an email ingestion feature
+1. Implement in `src/cellarbrain/email_poll/` — keep grouping, placement, imap, credentials, and etl_runner as separate sub-modules.
+2. Settings go in `IngestConfig` dataclass (`settings.py`).
+3. CLI subcommand is `ingest` in `cli.py`.
+4. Add tests in `tests/test_email_poll.py`.
+5. Optional deps: `imapclient` and `keyring` are in `[ingest]` extra.
+
 ### Running the project
 ```bash
 pip install -e .            # editable install
 pip install -e ".[sommelier]" # install ML dependencies (sentence-transformers, faiss-cpu)
+pip install -e ".[ingest]"  # install email ingestion dependencies (imapclient, keyring)
 pytest                      # unit tests (integration tests need raw/ CSVs)
 cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output
 cellarbrain -c cellarbrain.toml etl ...  # use custom config
 cellarbrain mcp                # start MCP server (reads CELLARBRAIN_CONFIG env var)
 cellarbrain recalc             # recompute calculated fields from existing Parquet
+cellarbrain ingest             # start IMAP polling daemon (needs [ingest] extra)
+cellarbrain ingest --once      # single poll cycle, then exit
 cellarbrain train-model        # fine-tune the sommelier pairing model (~3-5 min CPU)
 cellarbrain rebuild-indexes    # build FAISS food + wine indexes
 ```

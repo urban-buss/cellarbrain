@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import duckdb
 import pyarrow.parquet as pq
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
+
 
 class WineNotFoundError(Exception):
     """Wine ID does not exist or dossier file is missing."""
@@ -41,6 +42,7 @@ class TrackedWineNotFoundError(Exception):
 # Derived from default Settings.  Functions accept an optional ``settings``
 # parameter for runtime overrides.
 # ---------------------------------------------------------------------------
+
 
 def _build_agent_sections(settings: Settings) -> dict[str, tuple[str, str]]:
     """Build key → (heading, tag) mapping from Settings."""
@@ -101,6 +103,7 @@ def _all_heading_to_key(settings: Settings | None = None) -> dict[str, str]:
 # Dossier path resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_dossier_path(
     wine_id: int,
     data_dir: str | pathlib.Path,
@@ -115,9 +118,7 @@ def resolve_dossier_path(
     d = pathlib.Path(data_dir)
     wine_pq = d / "wine.parquet"
     if not wine_pq.exists():
-        raise WineNotFoundError(
-            f"wine.parquet not found in {d}. Run 'cellarbrain etl' first."
-        )
+        raise WineNotFoundError(f"wine.parquet not found in {d}. Run 'cellarbrain etl' first.")
 
     table = pq.read_table(wine_pq, columns=["wine_id", "dossier_path"])
     ids = table.column("wine_id").to_pylist()
@@ -128,13 +129,10 @@ def resolve_dossier_path(
             wines_dir = (d / "wines").resolve()
             full = (wines_dir / dpath).resolve()
             if not full.is_relative_to(wines_dir):
-                raise WineNotFoundError(
-                    f"Invalid dossier path for wine {wine_id}: path traversal detected."
-                )
+                raise WineNotFoundError(f"Invalid dossier path for wine {wine_id}: path traversal detected.")
             if not full.exists():
                 raise WineNotFoundError(
-                    f"Dossier file not found: {full}. "
-                    "The file may have been deleted or the ETL has not run."
+                    f"Dossier file not found: {full}. The file may have been deleted or the ETL has not run."
                 )
             return full
 
@@ -144,6 +142,7 @@ def resolve_dossier_path(
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
+
 
 def read_dossier(
     wine_id: int,
@@ -186,8 +185,7 @@ def read_dossier_sections(
     unknown = [s for s in sections if s not in valid_keys]
     if unknown:
         raise ValueError(
-            f"Unknown section(s): {', '.join(sorted(unknown))}. "
-            f"Valid keys: {', '.join(sorted(valid_keys))}"
+            f"Unknown section(s): {', '.join(sorted(unknown))}. Valid keys: {', '.join(sorted(valid_keys))}"
         )
 
     return _filter_sections(text, sections, settings)
@@ -265,11 +263,11 @@ def update_dossier(
     if section not in allowed:
         logger.warning(
             "Protected section write attempt — wine_id=%d section=%s",
-            wine_id, section,
+            wine_id,
+            section,
         )
         raise ProtectedSectionError(
-            f"Section {section!r} is not an allowed agent section. "
-            f"Allowed: {', '.join(sorted(allowed))}"
+            f"Section {section!r} is not an allowed agent section. Allowed: {', '.join(sorted(allowed))}"
         )
 
     if not content.strip():
@@ -287,13 +285,47 @@ def update_dossier(
 
     # Update frontmatter: move from pending → populated (or back if placeholder)
     text = _update_frontmatter_lists(
-        text, section, content, canonical_order=list(agent_sections.keys()),
+        text,
+        section,
+        content,
+        canonical_order=list(agent_sections.keys()),
     )
+
+    # Auto-derive food_tags and food_groups when writing food_pairings prose
+    if section == "food_pairings" and _should_auto_tag(settings, data_dir):
+        try:
+            cat_m = _FM_CATEGORY_RE.search(text)
+            wine_cat = cat_m.group(1) if cat_m else None
+            new_tags, new_groups = _auto_derive_food_data(
+                content,
+                data_dir,
+                settings,
+                wine_category=wine_cat,
+            )
+            if new_tags:
+                text = _merge_food_tags(text, new_tags)
+            if new_groups:
+                text = _merge_food_groups(text, new_groups)
+            if new_tags or new_groups:
+                logger.info(
+                    "Auto-derived %d food tag(s) and %d food group(s) for wine_id=%d",
+                    len(new_tags),
+                    len(new_groups),
+                    wine_id,
+                )
+        except Exception:
+            logger.debug(
+                "Food tag/group auto-derive failed for wine_id=%d — prose saved without tags",
+                wine_id,
+                exc_info=True,
+            )
 
     path.write_text(text, encoding="utf-8")
     logger.info(
         "Dossier updated — wine_id=%d section=%s agent=%s",
-        wine_id, section, agent_name,
+        wine_id,
+        section,
+        agent_name,
     )
     return f"Updated section '{section}' for wine #{wine_id}."
 
@@ -315,13 +347,14 @@ def _replace_agent_block(
 
     # Rebuild: heading + pre-fence + opening fence + NEW CONTENT + closing fence
     replacement = (
-        m.group(1)      # heading line
-        + m.group(2)    # any text between heading and opening fence
-        + m.group(3)    # opening fence
-        + new_content.rstrip("\n") + "\n\n"
-        + m.group(5)    # closing fence
+        m.group(1)  # heading line
+        + m.group(2)  # any text between heading and opening fence
+        + m.group(3)  # opening fence
+        + new_content.rstrip("\n")
+        + "\n\n"
+        + m.group(5)  # closing fence
     )
-    return text[:m.start()] + replacement + text[m.end():]
+    return text[: m.start()] + replacement + text[m.end() :]
 
 
 def _append_agent_log(
@@ -335,23 +368,15 @@ def _append_agent_log(
     fence_re = _build_fence_re(heading, tag)
     m = fence_re.search(text)
     if not m:
-        raise ProtectedSectionError(
-            "Could not find Agent Log section in the dossier."
-        )
+        raise ProtectedSectionError("Could not find Agent Log section in the dossier.")
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     log_entry = f"- **{now}** ({agent_name}): {entry}\n"
 
     # Insert the new entry just before the closing fence
     existing_content = m.group(4)
-    replacement = (
-        m.group(1)
-        + m.group(2)
-        + m.group(3)
-        + existing_content + log_entry + "\n"
-        + m.group(5)
-    )
-    return text[:m.start()] + replacement + text[m.end():]
+    replacement = m.group(1) + m.group(2) + m.group(3) + existing_content + log_entry + "\n" + m.group(5)
+    return text[: m.start()] + replacement + text[m.end() :]
 
 
 _PLACEHOLDER_SENTINEL = "*Not yet researched. Pending agent action.*"
@@ -409,7 +434,10 @@ def _update_frontmatter_lists(
     # Stable-sort both lists by canonical order so YAML stays deterministic
     if canonical_order:
         order_idx = {key: i for i, key in enumerate(canonical_order)}
-        _sort_key = lambda k: order_idx.get(k, len(order_idx))
+
+        def _sort_key(k: str) -> int:
+            return order_idx.get(k, len(order_idx))
+
         populated.sort(key=_sort_key)
         pending.sort(key=_sort_key)
 
@@ -422,13 +450,187 @@ def _update_frontmatter_lists(
     # Replace in text
     if pop_m:
         new_pop = f"agent_sections_populated:{_yaml_list(populated)}"
-        text = text[:pop_m.start()] + new_pop + text[pop_m.end():]
+        text = text[: pop_m.start()] + new_pop + text[pop_m.end() :]
 
     # Re-search for pending (positions may have shifted)
     pend_m = pend_re.search(text)
     if pend_m:
         new_pend = f"agent_sections_pending:{_yaml_list(pending)}"
-        text = text[:pend_m.start()] + new_pend + text[pend_m.end():]
+        text = text[: pend_m.start()] + new_pend + text[pend_m.end() :]
+
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Food tag auto-derive helpers
+# ---------------------------------------------------------------------------
+
+_FM_CATEGORY_RE = re.compile(r"^category:\s*(\S+)", re.MULTILINE)
+
+_FM_FOOD_TAGS_RE = re.compile(
+    r"^food_tags:\s*(?:\[]\s*\n|(\n(?:\s+-\s+.+\n)*))",
+    re.MULTILINE,
+)
+_FM_FOOD_GROUPS_RE = re.compile(
+    r"^food_groups:\s*(?:\[]\s*\n|(\n(?:\s+-\s+.+\n)*))",
+    re.MULTILINE,
+)
+
+
+def _should_auto_tag(
+    settings: Settings | None,
+    data_dir: str | pathlib.Path,
+) -> bool:
+    """Return True if auto food-tag derivation is enabled and possible."""
+    if settings and not settings.sommelier.auto_food_tags:
+        return False
+    catalogue_path = pathlib.Path(
+        settings.sommelier.food_catalogue if settings else "models/sommelier/food_catalogue.parquet"
+    )
+    if not catalogue_path.is_absolute():
+        catalogue_path = pathlib.Path(data_dir).parent / catalogue_path
+    return catalogue_path.exists()
+
+
+def _auto_derive_food_data(
+    prose: str,
+    data_dir: str | pathlib.Path,
+    settings: Settings | None = None,
+    wine_category: str | None = None,
+    wine_sweetness: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Extract food tags (dish IDs) and food groups from prose.
+
+    Parameters ``wine_category`` and ``wine_sweetness`` enable context-aware
+    filtering (e.g. excluding red_meat matches for dessert wines).
+
+    Returns (food_tags, food_groups) tuple.
+    """
+    from .sommelier.catalogue import (
+        deduplicate_variants,
+        derive_food_groups,
+        extract_food_candidates,
+        extract_food_groups,
+        merge_food_groups,
+        resolve_food_candidates,
+        validate_food_data,
+    )
+
+    candidates = extract_food_candidates(prose)
+    prose_groups = extract_food_groups(prose)
+
+    if not candidates and not prose_groups:
+        return [], []
+
+    catalogue_path = pathlib.Path(
+        settings.sommelier.food_catalogue if settings else "models/sommelier/food_catalogue.parquet"
+    )
+    if not catalogue_path.is_absolute():
+        catalogue_path = pathlib.Path(data_dir).parent / catalogue_path
+
+    food_tags: list[str] = []
+    dish_groups: list[str] = []
+    food_groups: list[str] = []
+
+    if candidates:
+        con = duckdb.connect()
+        try:
+            con.execute(f"CREATE TABLE food_catalogue AS SELECT * FROM read_parquet('{catalogue_path}')")
+            food_tags = resolve_food_candidates(
+                candidates,
+                con,
+                wine_category=wine_category,
+                wine_sweetness=wine_sweetness,
+            )
+            food_tags = deduplicate_variants(food_tags)
+            if food_tags:
+                dish_groups = derive_food_groups(food_tags, con)
+
+            # Merge dish-derived groups + prose-extracted groups by relevance score
+            food_groups = merge_food_groups(dish_groups, prose_groups)
+
+            # Post-derivation validation (safety net)
+            food_tags, food_groups = validate_food_data(
+                food_tags,
+                food_groups,
+                prose,
+                con,
+                wine_sweetness=wine_sweetness,
+            )
+        finally:
+            con.close()
+    else:
+        food_groups = merge_food_groups(dish_groups, prose_groups)
+
+    return food_tags, food_groups
+
+
+def _auto_derive_food_tags(
+    prose: str,
+    data_dir: str | pathlib.Path,
+    settings: Settings | None = None,
+) -> list[str]:
+    """Extract food references from prose and resolve to dish_id slugs."""
+    tags, _groups = _auto_derive_food_data(prose, data_dir, settings)
+    return tags
+
+
+def _merge_food_tags(text: str, new_tags: list[str]) -> str:
+    """Merge new food tags into the frontmatter, preserving existing ones (additive)."""
+    existing: list[str] = []
+    m = _FM_FOOD_TAGS_RE.search(text)
+    if m and m.group(1):
+        existing = re.findall(r"-\s+(\S+)", m.group(1))
+
+    merged = list(dict.fromkeys(existing + new_tags))  # dedupe, order preserved
+
+    def _yaml_list(items: list[str]) -> str:
+        if not items:
+            return " []\n"
+        return "\n" + "".join(f"  - {item}\n" for item in items)
+
+    new_block = f"food_tags:{_yaml_list(merged)}"
+    if m:
+        return text[: m.start()] + new_block + text[m.end() :]
+
+    # No food_tags field yet — insert before agent_sections_populated
+    pop_re = re.compile(r"^agent_sections_populated:", re.MULTILINE)
+    pop_m = pop_re.search(text)
+    if pop_m:
+        return text[: pop_m.start()] + new_block + text[pop_m.start() :]
+
+    return text
+
+
+def _merge_food_groups(text: str, new_groups: list[str]) -> str:
+    """Merge new food groups into the frontmatter, preserving existing ones (additive)."""
+    existing: list[str] = []
+    m = _FM_FOOD_GROUPS_RE.search(text)
+    if m and m.group(1):
+        existing = re.findall(r"-\s+(\S+)", m.group(1))
+
+    merged = list(dict.fromkeys(existing + new_groups))  # dedupe, order preserved
+
+    def _yaml_list(items: list[str]) -> str:
+        if not items:
+            return " []\n"
+        return "\n" + "".join(f"  - {item}\n" for item in items)
+
+    new_block = f"food_groups:{_yaml_list(merged)}"
+    if m:
+        return text[: m.start()] + new_block + text[m.end() :]
+
+    # No food_groups field yet — insert after food_tags (preferred) or before agent_sections_populated
+    ft_re = re.compile(r"^food_tags:.*?(?=\n\S|\Z)", re.MULTILINE | re.DOTALL)
+    ft_m = ft_re.search(text)
+    if ft_m:
+        insert_pos = ft_m.end()
+        return text[:insert_pos] + "\n" + new_block + text[insert_pos:]
+
+    pop_re = re.compile(r"^agent_sections_populated:", re.MULTILINE)
+    pop_m = pop_re.search(text)
+    if pop_m:
+        return text[: pop_m.start()] + new_block + text[pop_m.start() :]
 
     return text
 
@@ -437,9 +639,7 @@ def _update_frontmatter_lists(
 # Pending research
 # ---------------------------------------------------------------------------
 
-_FM_PENDING_RE = re.compile(
-    r"^agent_sections_pending:\s*\n((?:\s+-\s+.+\n)*)", re.MULTILINE
-)
+_FM_PENDING_RE = re.compile(r"^agent_sections_pending:\s*\n((?:\s+-\s+.+\n)*)", re.MULTILINE)
 _FM_WINE_ID_RE = re.compile(r"^wine_id:\s*(\d+)", re.MULTILINE)
 _FM_TRACKED_WINE_ID_RE = re.compile(r"^tracked_wine_id:\s*(\d+)", re.MULTILINE)
 
@@ -471,7 +671,7 @@ def pending_research(
     # the 20 % margin guards against future growth.
     pending_data: list[dict] = []
     for md_file in sorted(wines_dir.rglob("*.md")):
-        with open(md_file, "r", encoding="utf-8") as fh:
+        with open(md_file, encoding="utf-8") as fh:
             text = fh.read(1320)
 
         wid_m = _FM_WINE_ID_RE.search(text)
@@ -486,19 +686,18 @@ def pending_research(
         if not items:
             continue
 
-        pending_data.append({
-            "wine_id": wine_id,
-            "pending_count": len(items),
-            "pending_sections": ", ".join(items),
-            "path": str(md_file.relative_to(wines_dir)),
-        })
+        pending_data.append(
+            {
+                "wine_id": wine_id,
+                "pending_count": len(items),
+                "pending_sections": ", ".join(items),
+                "path": str(md_file.relative_to(wines_dir)),
+            }
+        )
 
     # Filter by specific section if requested
     if section:
-        pending_data = [
-            item for item in pending_data
-            if section in item["pending_sections"].split(", ")
-        ]
+        pending_data = [item for item in pending_data if section in item["pending_sections"].split(", ")]
 
     if not pending_data:
         return "*No wines with pending research sections.*"
@@ -574,6 +773,7 @@ def pending_research(
 # Companion dossier operations (tracked wines)
 # ---------------------------------------------------------------------------
 
+
 def resolve_companion_dossier_path(
     tracked_wine_id: int,
     data_dir: str | pathlib.Path,
@@ -589,8 +789,7 @@ def resolve_companion_dossier_path(
     tw_pq = d / "tracked_wine.parquet"
     if not tw_pq.exists():
         raise TrackedWineNotFoundError(
-            f"tracked_wine.parquet not found in {d}. "
-            "Run 'cellarbrain etl' with wishlist enabled first."
+            f"tracked_wine.parquet not found in {d}. Run 'cellarbrain etl' with wishlist enabled first."
         )
 
     table = pq.read_table(tw_pq, columns=["tracked_wine_id", "dossier_path"])
@@ -603,19 +802,15 @@ def resolve_companion_dossier_path(
             full = (wines_dir / dpath).resolve()
             if not full.is_relative_to(wines_dir):
                 raise TrackedWineNotFoundError(
-                    f"Invalid dossier path for tracked wine {tracked_wine_id}: "
-                    "path traversal detected."
+                    f"Invalid dossier path for tracked wine {tracked_wine_id}: path traversal detected."
                 )
             if not full.exists():
                 raise TrackedWineNotFoundError(
-                    f"Companion dossier not found: {full}. "
-                    "The file may have been deleted or the ETL has not run."
+                    f"Companion dossier not found: {full}. The file may have been deleted or the ETL has not run."
                 )
             return full
 
-    raise TrackedWineNotFoundError(
-        f"Tracked wine ID {tracked_wine_id} does not exist."
-    )
+    raise TrackedWineNotFoundError(f"Tracked wine ID {tracked_wine_id} does not exist.")
 
 
 def read_companion_dossier(
@@ -675,19 +870,17 @@ def update_companion_dossier(
     Only sections listed in ``ALLOWED_COMPANION_SECTIONS`` can be updated.
     Returns a confirmation message.
     """
-    companion_sections = (
-        _build_companion_sections(settings) if settings else COMPANION_SECTIONS
-    )
+    companion_sections = _build_companion_sections(settings) if settings else COMPANION_SECTIONS
     allowed = frozenset(companion_sections.keys())
 
     if section not in allowed:
         logger.warning(
             "Protected section write attempt — tracked_wine_id=%d section=%s",
-            tracked_wine_id, section,
+            tracked_wine_id,
+            section,
         )
         raise ProtectedSectionError(
-            f"Section {section!r} is not an allowed companion section. "
-            f"Allowed: {', '.join(sorted(allowed))}"
+            f"Section {section!r} is not an allowed companion section. Allowed: {', '.join(sorted(allowed))}"
         )
 
     if not content.strip():
@@ -699,13 +892,17 @@ def update_companion_dossier(
     heading, tag = companion_sections[section]
     text = _replace_agent_block(text, heading, tag, content)
     text = _update_frontmatter_lists(
-        text, section, content, canonical_order=list(companion_sections.keys()),
+        text,
+        section,
+        content,
+        canonical_order=list(companion_sections.keys()),
     )
 
     path.write_text(text, encoding="utf-8")
     logger.info(
         "Companion dossier updated — tracked_wine_id=%d section=%s",
-        tracked_wine_id, section,
+        tracked_wine_id,
+        section,
     )
     return f"Updated section '{section}' for tracked wine #{tracked_wine_id}."
 
@@ -727,7 +924,7 @@ def pending_companion_research(
 
     pending_data: list[dict] = []
     for md_file in sorted(wishlist_dir.glob("*.md")):
-        with open(md_file, "r", encoding="utf-8") as fh:
+        with open(md_file, encoding="utf-8") as fh:
             text = fh.read(1320)
 
         twid_m = _FM_TRACKED_WINE_ID_RE.search(text)
@@ -742,11 +939,13 @@ def pending_companion_research(
         if not items:
             continue
 
-        pending_data.append({
-            "tracked_wine_id": tracked_wine_id,
-            "pending_count": len(items),
-            "pending_sections": ", ".join(items),
-        })
+        pending_data.append(
+            {
+                "tracked_wine_id": tracked_wine_id,
+                "pending_count": len(items),
+                "pending_sections": ", ".join(items),
+            }
+        )
 
     if not pending_data:
         return "*No tracked wines with pending research sections.*"
@@ -771,9 +970,7 @@ def pending_companion_research(
     if winery_pq.exists():
         wt = pq.read_table(winery_pq, columns=["winery_id", "name"])
         for i in range(wt.num_rows):
-            winery_names[wt.column("winery_id")[i].as_py()] = (
-                wt.column("name")[i].as_py()
-            )
+            winery_names[wt.column("winery_id")[i].as_py()] = wt.column("name")[i].as_py()
 
     for item in pending_data:
         meta = tw_meta.get(item["tracked_wine_id"], {})

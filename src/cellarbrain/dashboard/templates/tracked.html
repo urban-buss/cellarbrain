@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% set active_nav = "tracked" %}
+
+{% block page_title %}Tracked Wines{% endblock %}
+
+{% block content %}
+{% if wines %}
+<div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Wine</th>
+                <th>Winery</th>
+                <th>Category</th>
+                <th>Region</th>
+                <th>Classification</th>
+                <th style="text-align:right;">Wines</th>
+                <th style="text-align:right;">Stored</th>
+                <th style="text-align:right;">On Order</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for w in wines %}
+            <tr>
+                <td><a href="/tracked/{{ w.tracked_wine_id }}">{{ w.wine_name }}</a></td>
+                <td>{{ w.winery_name or "" }}</td>
+                <td>{{ w.category or "" }}</td>
+                <td>{{ w.region or w.country or "" }}</td>
+                <td>{{ w.classification or "" }}</td>
+                <td style="text-align:right;">{{ w.wine_count }}</td>
+                <td style="text-align:right;">{{ w.bottles_stored }}</td>
+                <td style="text-align:right;">{{ w.bottles_on_order }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="color:var(--pico-muted-color);">
+    No tracked wines configured. Tracked wines are created via the ETL pipeline
+    when <code>tracked_wine.parquet</code> is present in the data directory.
+</p>
+{% endif %}
+{% endblock %}

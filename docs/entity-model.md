@@ -239,9 +239,14 @@ Column definitions from `writer.SCHEMAS`. Nullable = True means the column allow
 | drinking_status | string | No |
 | age_years | int16 | Yes |
 | price_tier | string | No |
+| bottle_format | string | No |
+| price_per_750ml | decimal(8,2) | Yes |
+| format_group_id | int32 | Yes |
 | is_deleted | bool | No |
 | etl_run_id | int32 | No |
 | updated_at | timestamp(µs) | No |
+
+`format_group_id` links wines that share the same identity (winery, name, vintage) but differ in bottle volume (e.g. Standard 750 mL and Magnum 1500 mL). The value is the `wine_id` of the Standard (or smallest) variant. `NULL` when the wine has no format siblings.
 
 #### wine_grape
 

@@ -11,11 +11,10 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-import unicodedata
-from datetime import datetime
 
 from .markdown import _extract_frontmatter_agent_fields
-from .settings import AgentSection, Settings
+from .settings import Settings
+from .slugify import companion_slug
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +43,8 @@ def _extract_agent_sections(content: str) -> dict[str, str]:
 # Slug / filename helpers
 # ---------------------------------------------------------------------------
 
-def _make_slug(
-    winery: str | None,
-    wine_name: str | None,
-    slug_max_length: int = 60,
-) -> str:
-    """Build a URL-safe slug from winery and wine name (no vintage)."""
-    parts: list[str] = []
-    if winery:
-        parts.append(winery)
-    if wine_name:
-        parts.append(wine_name)
-
-    raw = " ".join(parts)
-    nfkd = unicodedata.normalize("NFKD", raw)
-    ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_str.lower()).strip("-")
-    return slug[:slug_max_length].rstrip("-")
+# Backward-compat alias for any code importing the old private name.
+_make_slug = companion_slug
 
 
 def companion_dossier_slug(
@@ -70,7 +54,7 @@ def companion_dossier_slug(
     slug_max_length: int = 60,
 ) -> str:
     """Return the Markdown filename for a tracked wine companion dossier."""
-    slug = _make_slug(winery_name, wine_name, slug_max_length)
+    slug = companion_slug(winery_name, wine_name, slug_max_length)
     return f"{tracked_wine_id:05d}-{slug}.md"
 
 
@@ -90,6 +74,7 @@ def _find_existing_companion(
 # ---------------------------------------------------------------------------
 # YAML helpers (same style as markdown.py)
 # ---------------------------------------------------------------------------
+
 
 def _yaml_str(val: object) -> str:
     """Format a value for YAML frontmatter."""
@@ -114,6 +99,7 @@ def _yaml_list(label: str, items: list | tuple) -> str:
 # Render companion dossier
 # ---------------------------------------------------------------------------
 
+
 def render_companion_dossier(
     tracked_wine: dict,
     related_wines: list[dict],
@@ -123,19 +109,14 @@ def render_companion_dossier(
     existing_content: str | None = None,
 ) -> str:
     """Render a companion dossier for a tracked wine."""
-    preserved = (
-        _extract_agent_sections(existing_content) if existing_content else {}
-    )
+    preserved = _extract_agent_sections(existing_content) if existing_content else {}
 
     twid = tracked_wine["tracked_wine_id"]
     is_active = not tracked_wine.get("is_deleted", False)
 
     # Gather related wine data
     related_ids = [w["wine_id"] for w in related_wines]
-    vintages = sorted(
-        v for w in related_wines
-        if (v := w.get("vintage")) is not None
-    )
+    vintages = sorted(v for w in related_wines if (v := w.get("vintage")) is not None)
 
     # Appellation data
     country = appellation.get("country") if appellation else None
@@ -220,6 +201,7 @@ def render_companion_dossier(
 # Batch generation
 # ---------------------------------------------------------------------------
 
+
 def generate_companion_dossiers(
     entities: dict[str, list[dict]],
     output_dir: pathlib.Path,
@@ -276,7 +258,12 @@ def generate_companion_dossiers(
                 existing.rename(dest)
 
         content = render_companion_dossier(
-            tw, related, winery_name, appellation, settings, existing_content,
+            tw,
+            related,
+            winery_name,
+            appellation,
+            settings,
+            existing_content,
         )
         dest.write_text(content, encoding="utf-8")
         written.append(dest)
@@ -288,6 +275,7 @@ def generate_companion_dossiers(
 # ---------------------------------------------------------------------------
 # Price tracker helper
 # ---------------------------------------------------------------------------
+
 
 def render_price_tracker_section(
     tracked_wine_id: int,

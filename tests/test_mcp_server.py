@@ -3,158 +3,93 @@
 from __future__ import annotations
 
 import asyncio
-import os
-from datetime import datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 
 from cellarbrain import markdown, writer
-from cellarbrain.markdown import dossier_filename
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-def _now() -> datetime:
-    return datetime(2025, 1, 1)
+from dataset_factory import (
+    make_appellation,
+    make_bottle,
+    make_cellar,
+    make_change_log,
+    make_etl_run,
+    make_grape,
+    make_provider,
+    make_tracked_wine,
+    make_wine,
+    make_wine_grape,
+    make_winery,
+    write_dataset,
+)
 
 
 def _make_dataset(tmp_path):
     """Write a minimal Parquet + dossier dataset for MCP tests."""
-    now = _now()
-    rid = 1
+    from cellarbrain import companion_markdown
+    from cellarbrain.settings import Settings
 
-    wineries = [
-        {"winery_id": 1, "name": "Château MCP", "etl_run_id": rid, "updated_at": now},
-    ]
-    appellations = [
-        {
-            "appellation_id": 1, "country": "France", "region": "Bordeaux",
-            "subregion": None, "classification": None,
-            "etl_run_id": rid, "updated_at": now,
-        },
-    ]
-    grapes = [
-        {"grape_id": 1, "name": "Merlot", "etl_run_id": rid, "updated_at": now},
-    ]
+    winery_name = "Château MCP"
+    wine_name = "Test Cuvée"
+
     wines = [
-        {
-            "wine_id": 1, "wine_slug": "chateau-mcp-test-cuvee-2020",
-            "winery_id": 1, "name": "Test Cuvée",
-            "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
-            "category": "Red wine",
-            "_raw_classification": None,
-            "subcategory": None, "specialty": None,
-            "sweetness": None, "effervescence": None, "volume_ml": 750,
-            "_raw_volume": None,
-            "container": None, "hue": None, "cork": None, "alcohol_pct": 14.0,
-            "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-            "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-            "opening_type": None, "opening_minutes": None,
-            "drink_from": 2024, "drink_until": 2030,
-            "optimal_from": 2025, "optimal_until": 2028,
-            "original_list_price": None, "original_list_currency": None,
-            "list_price": None, "list_currency": None,
-            "comment": None, "winemaking_notes": None,
-            "is_favorite": True, "is_wishlist": False,
-            "tracked_wine_id": 90_001,
-            "full_name": "Château MCP Test Cuvée 2020",
-            "grape_type": "varietal",
-            "primary_grape": "Merlot",
-            "grape_summary": "Merlot",
-            "_raw_grapes": None,
-            "dossier_path": f"cellar/{dossier_filename(1, 'Château MCP', 'Test Cuvée', 2020, False)}",
-            "drinking_status": "optimal",
-            "age_years": 5,
-            "price_tier": "unknown",
-            "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
-        },
-    ]
-    wine_grapes = [
-        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
-    ]
-    bottles = [
-        {
-            "bottle_id": 1, "wine_id": 1, "status": "stored",
-            "cellar_id": 1, "shelf": "A1", "bottle_number": 1,
-            "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
-            "acquisition_type": "purchase",
-            "original_purchase_price": Decimal("30.00"),
-            "original_purchase_currency": "CHF",
-            "purchase_price": Decimal("30.00"),
-            "purchase_currency": "CHF", "purchase_comment": None,
-            "output_date": None, "output_type": None, "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
-            "etl_run_id": rid, "updated_at": now,
-        },
-    ]
-    cellars = [
-        {"cellar_id": 1, "name": "Cave", "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
-    ]
-    providers = [
-        {"provider_id": 1, "name": "Vendor", "etl_run_id": rid, "updated_at": now},
-    ]
-    etl_runs = [
-        {
-            "run_id": 1, "started_at": now, "finished_at": now,
-            "run_type": "full", "wines_source_hash": "abc",
-            "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-            "total_inserts": 3, "total_updates": 0, "total_deletes": 0,
-            "wines_inserted": 1, "wines_updated": 0,
-            "wines_deleted": 0, "wines_renamed": 0,
-        },
-    ]
-    change_logs = [
-        {
-            "change_id": 1, "run_id": 1, "entity_type": "wine",
-            "entity_id": 1, "change_type": "insert", "changed_fields": None,
-        },
+        make_wine(
+            winery_name=winery_name,
+            name=wine_name,
+            is_favorite=True,
+            tracked_wine_id=90_001,
+            drink_from=2024,
+            drink_until=2030,
+            optimal_from=2025,
+            optimal_until=2028,
+            drinking_status="optimal",
+            age_years=5,
+        )
     ]
 
     entities = {
-        "winery": wineries,
-        "appellation": appellations,
-        "grape": grapes,
+        "winery": [make_winery(name=winery_name)],
+        "appellation": [make_appellation()],
+        "grape": [make_grape()],
         "wine": wines,
-        "wine_grape": wine_grapes,
-        "bottle": bottles,
-        "cellar": cellars,
-        "provider": providers,
+        "wine_grape": [make_wine_grape()],
+        "bottle": [
+            make_bottle(
+                original_purchase_price=Decimal("30.00"),
+                purchase_price=Decimal("30.00"),
+            )
+        ],
+        "cellar": [make_cellar()],
+        "provider": [make_provider(name="Vendor")],
         "tasting": [],
         "pro_rating": [],
+        "etl_run": [make_etl_run(total_inserts=3)],
+        "change_log": [make_change_log()],
     }
 
-    for name, rows in entities.items():
-        writer.write_parquet(name, rows, tmp_path)
-    writer.write_parquet("etl_run", etl_runs, tmp_path)
-    writer.write_parquet("change_log", change_logs, tmp_path)
+    write_dataset(tmp_path, entities)
 
     # Generate dossiers
     markdown.generate_dossiers(entities, tmp_path, current_year=2025)
 
     # Generate tracked wines and companion dossiers
-    from cellarbrain import companion_markdown
-    from cellarbrain.settings import Settings
-
     settings = Settings()
     slug = companion_markdown.companion_dossier_slug(
-        90_001, "Château MCP", "Test Cuvée",
+        90_001,
+        winery_name,
+        wine_name,
     )
     tracked_wines = [
-        {
-            "tracked_wine_id": 90_001, "winery_id": 1, "wine_name": "Test Cuvée",
-            "category": "Red wine", "appellation_id": 1,
-            "dossier_path": f"tracked/{slug}",
-            "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
-        },
+        make_tracked_wine(
+            winery_name=wine_name,
+            wine_name=wine_name,
+            dossier_path=f"tracked/{slug}",
+        )
     ]
     entities["tracked_wine"] = tracked_wines
     writer.write_parquet("tracked_wine", tracked_wines, tmp_path)
@@ -179,7 +114,9 @@ def _set_data_dir_env(data_dir, monkeypatch):
 @pytest.fixture()
 def server():
     from cellarbrain import mcp_server
+
     mcp_server._mcp_settings = None  # force re-read from env
+    mcp_server.invalidate_connections()
     return mcp_server
 
 
@@ -322,7 +259,9 @@ class TestCellarInfoTool:
         empty_dir.mkdir()
         monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(empty_dir))
         from cellarbrain import mcp_server
+
         mcp_server._mcp_settings = None
+        mcp_server.invalidate_connections()
         result = mcp_server.cellar_info()
         assert "Cellar Info" in result
         assert "Version" in result
@@ -434,6 +373,95 @@ class TestSearchSynonymsTool:
         # "frankreich" is a built-in synonym for "France"
         result = server.find_wine("frankreich")
         assert "Château" in result or "Test Cuvée" in result
+
+
+# ---------------------------------------------------------------------------
+# TestCurrencyRatesTool
+# ---------------------------------------------------------------------------
+
+
+class TestCurrencyRatesTool:
+    def test_list_returns_rates(self, server):
+        result = server.currency_rates(action="list")
+        assert "currency rates" in result
+        assert "EUR" in result
+        assert "toml" in result
+
+    def test_set_new_rate(self, server, data_dir):
+        result = server.currency_rates(action="set", currency="RON", rate=0.19)
+        assert "Set exchange rate" in result
+        assert "RON" in result
+        # Verify listed as custom
+        listing = server.currency_rates(action="list")
+        assert "RON" in listing
+        assert "custom" in listing
+
+    def test_set_overwrites_toml_rate(self, server, data_dir):
+        result = server.currency_rates(action="set", currency="EUR", rate=0.97)
+        assert "Set exchange rate" in result
+        listing = server.currency_rates(action="list")
+        assert "0.97" in listing
+
+    def test_remove_custom_rate(self, server, data_dir):
+        server.currency_rates(action="set", currency="HRK", rate=0.13)
+        result = server.currency_rates(action="remove", currency="HRK")
+        assert "Removed" in result
+        listing = server.currency_rates(action="list")
+        assert "HRK" not in listing
+
+    def test_remove_nonexistent_returns_error(self, server):
+        result = server.currency_rates(action="remove", currency="XYZ")
+        assert "Error" in result
+        assert "not a custom rate" in result
+
+    def test_set_missing_currency_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="", rate=0.5)
+        assert "Error" in result
+
+    def test_set_missing_rate_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="RON")
+        assert "Error" in result
+
+    def test_set_negative_rate_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="RON", rate=-0.5)
+        assert "Error" in result
+        assert "positive" in result
+
+    def test_set_zero_rate_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="RON", rate=0.0)
+        assert "Error" in result
+
+    def test_set_default_currency_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="CHF", rate=1.0)
+        assert "Error" in result
+        assert "default currency" in result
+
+    def test_set_invalid_currency_code_returns_error(self, server):
+        result = server.currency_rates(action="set", currency="Euro", rate=0.93)
+        assert "Error" in result
+        assert "ISO 4217" in result
+
+    def test_set_auto_uppercases(self, server, data_dir):
+        result = server.currency_rates(action="set", currency="ron", rate=0.19)
+        assert "RON" in result
+        listing = server.currency_rates(action="list")
+        assert "RON" in listing
+
+    def test_remove_missing_currency_returns_error(self, server):
+        result = server.currency_rates(action="remove", currency="")
+        assert "Error" in result
+
+    def test_invalid_action_returns_error(self, server):
+        result = server.currency_rates(action="invalid")
+        assert "Error" in result
+
+    def test_sidecar_persists_across_reloads(self, server, data_dir):
+        server.currency_rates(action="set", currency="RON", rate=0.19)
+        # Force settings re-read
+        server._mcp_settings = None
+        listing = server.currency_rates(action="list")
+        assert "RON" in listing
+        assert "custom" in listing
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +635,45 @@ class TestReloadDataErrors:
 
 
 # ---------------------------------------------------------------------------
+# TestConnectionCaching
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionCaching:
+    def test_get_connection_returns_cached(self, server, monkeypatch):
+        """Repeated _get_connection() calls return the same object."""
+        from cellarbrain import mcp_server
+
+        # Ensure cache is clear
+        mcp_server.invalidate_connections()
+        c1 = mcp_server._get_connection()
+        c2 = mcp_server._get_connection()
+        assert c1 is c2
+
+    def test_get_agent_connection_returns_cached(self, server, monkeypatch):
+        """Repeated _get_agent_connection() calls return the same object."""
+        from cellarbrain import mcp_server
+
+        mcp_server.invalidate_connections()
+        c1 = mcp_server._get_agent_connection()
+        c2 = mcp_server._get_agent_connection()
+        assert c1 is c2
+
+    def test_invalidate_clears_cache(self, server, monkeypatch):
+        """invalidate_connections() causes fresh connections on next call."""
+        from cellarbrain import mcp_server
+
+        mcp_server.invalidate_connections()
+        c1 = mcp_server._get_connection()
+        a1 = mcp_server._get_agent_connection()
+        mcp_server.invalidate_connections()
+        c2 = mcp_server._get_connection()
+        a2 = mcp_server._get_agent_connection()
+        assert c1 is not c2
+        assert a1 is not a2
+
+
+# ---------------------------------------------------------------------------
 # TestCompanionDossierTools
 # ---------------------------------------------------------------------------
 
@@ -763,6 +830,107 @@ class TestToolLogging:
         assert "error=" in caplog.text
 
 
+class TestBuildEventSoftErrors:
+    """Verify _build_event detects soft errors (tools returning 'Error: ...')."""
+
+    @pytest.fixture(autouse=True)
+    def _collector(self, tmp_path):
+
+        from cellarbrain.observability import EventCollector
+        from cellarbrain.settings import LoggingConfig
+
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        self._col = EventCollector(config, str(tmp_path))
+        with patch("cellarbrain.observability.get_collector", return_value=self._col):
+            yield
+        self._col.close()
+
+    def _last_event(self):
+        self._col.flush()
+        return self._col._db.execute(
+            "SELECT status, error_type, error_message FROM tool_events ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+
+    def test_soft_error_sets_status_error(self):
+        import time
+
+        from cellarbrain.mcp_server import _build_event
+
+        _build_event(
+            "test_tool",
+            "tool",
+            {},
+            {},
+            time.perf_counter(),
+            result="Error: some descriptive error message",
+            exc=None,
+        )
+        status, error_type, error_message = self._last_event()
+        assert status == "error"
+        assert error_type == "HandledError"
+        assert error_message == "some descriptive error message"
+
+    def test_hard_error_uses_exception(self):
+        import time
+
+        from cellarbrain.mcp_server import _build_event
+        from cellarbrain.query import QueryError
+
+        _build_event(
+            "test_tool",
+            "tool",
+            {},
+            {},
+            time.perf_counter(),
+            result=None,
+            exc=QueryError("Column 'foo' not found"),
+        )
+        status, error_type, error_message = self._last_event()
+        assert status == "error"
+        assert error_type == "QueryError"
+        assert error_message == "Column 'foo' not found"
+
+    def test_ok_result_stays_ok(self):
+        import time
+
+        from cellarbrain.mcp_server import _build_event
+
+        _build_event(
+            "test_tool",
+            "tool",
+            {},
+            {},
+            time.perf_counter(),
+            result="| col |\n|---|\n| val |",
+            exc=None,
+        )
+        status, error_type, error_message = self._last_event()
+        assert status == "ok"
+        assert error_type is None
+        assert error_message is None
+
+
+class TestMetaParameter:
+    def test_query_cellar_accepts_meta(self, server):
+        result = server.query_cellar(
+            sql="SELECT COUNT(*) AS n FROM wines",
+            meta={"agent_name": "test-agent"},
+        )
+        assert "n" in result
+
+    def test_find_wine_accepts_meta(self, server):
+        result = server.find_wine(query="Merlot", meta={"agent_name": "qa"})
+        assert isinstance(result, str)
+
+    def test_meta_none_works(self, server):
+        result = server.cellar_stats(meta=None)
+        assert isinstance(result, str)
+
+    def test_meta_absent_backward_compat(self, server):
+        result = server.cellar_stats()
+        assert isinstance(result, str)
+
+
 # ---------------------------------------------------------------------------
 # TestSchemaResource
 # ---------------------------------------------------------------------------
@@ -811,9 +979,13 @@ class TestSommelierErrors:
 
         def _patched():
             s = original()
-            object.__setattr__(s, "sommelier", type(s.sommelier)(
-                model_dir="nonexistent/model",
-            ))
+            object.__setattr__(
+                s,
+                "sommelier",
+                type(s.sommelier)(
+                    model_dir="nonexistent/model",
+                ),
+            )
             return s
 
         server._load_mcp_settings = _patched
@@ -850,9 +1022,13 @@ class TestAddPairing:
 
         def _patched():
             s = original()
-            object.__setattr__(s, "sommelier", type(s.sommelier)(
-                pairing_dataset=str(self._dataset_path),
-            ))
+            object.__setattr__(
+                s,
+                "sommelier",
+                type(s.sommelier)(
+                    pairing_dataset=str(self._dataset_path),
+                ),
+            )
             return s
 
         server._load_mcp_settings = _patched
@@ -931,3 +1107,104 @@ class TestAddPairing:
                 pairing_score=0.5 + i * 0.1,
             )
         assert "3 pairs" in result
+
+
+# ---------------------------------------------------------------------------
+# TestGetFormatSiblingsTool
+# ---------------------------------------------------------------------------
+
+
+class TestGetFormatSiblingsTool:
+    def test_no_siblings(self, server):
+        result = server.get_format_siblings(wine_id=1)
+        assert "no format siblings" in result.lower()
+
+    def test_nonexistent_wine(self, server):
+        result = server.get_format_siblings(wine_id=999)
+        assert "no format siblings" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestBatchUpdateDossierTool
+# ---------------------------------------------------------------------------
+
+
+class TestBatchUpdateDossierTool:
+    def test_batch_updates_multiple_wines(self, server):
+        result = server.batch_update_dossier(
+            wine_ids=[1],
+            section="producer_profile",
+            content="Shared producer profile content.",
+        )
+        assert "1/1" in result
+        assert "✓" in result
+
+    def test_batch_partial_failure(self, server):
+        result = server.batch_update_dossier(
+            wine_ids=[1, 999],
+            section="producer_profile",
+            content="Content here.",
+        )
+        assert "1/2" in result
+        assert "✗" in result
+
+
+# ---------------------------------------------------------------------------
+# TestTrainSommelierTool
+# ---------------------------------------------------------------------------
+
+
+class TestTrainSommelierTool:
+    """Tests for the train_sommelier MCP tool."""
+
+    def test_missing_dataset_returns_error(self, server):
+        """When pairing dataset doesn't exist, returns an error."""
+        server._mcp_settings = None
+        original = server._load_mcp_settings
+
+        def _patched():
+            s = original()
+            object.__setattr__(
+                s,
+                "sommelier",
+                type(s.sommelier)(
+                    pairing_dataset="nonexistent/pairings.parquet",
+                ),
+            )
+            return s
+
+        server._load_mcp_settings = _patched
+        server._mcp_settings = None
+        try:
+            result = server.train_sommelier()
+            assert "Error:" in result
+            assert "not found" in result
+        finally:
+            server._load_mcp_settings = original
+            server._mcp_settings = None
+
+    def test_incremental_without_model_returns_error(self, server):
+        """Incremental training without existing model returns an error."""
+        server._mcp_settings = None
+        original = server._load_mcp_settings
+
+        def _patched():
+            s = original()
+            object.__setattr__(
+                s,
+                "sommelier",
+                type(s.sommelier)(
+                    model_dir="nonexistent/model",
+                    pairing_dataset="nonexistent/pairings.parquet",
+                ),
+            )
+            return s
+
+        server._load_mcp_settings = _patched
+        server._mcp_settings = None
+        try:
+            result = server.train_sommelier(incremental=True)
+            assert "Error:" in result
+        finally:
+            server._load_mcp_settings = original
+            server._mcp_settings = None

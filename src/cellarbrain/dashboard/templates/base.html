@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Cellarbrain Explorer{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+    <style>
+        :root {
+            --pico-font-size: 14px;
+        }
+        nav .nav-group { display: inline-block; margin-right: 1.5rem; }
+        nav .nav-group-label {
+            font-size: 0.75rem; text-transform: uppercase;
+            color: var(--pico-muted-color); display: block; margin-bottom: 0.15rem;
+        }
+        nav a { margin-right: 0.5rem; font-size: 0.85rem; }
+        nav a.active { font-weight: bold; text-decoration: underline; }
+        nav a.disabled { color: var(--pico-muted-color); pointer-events: none; opacity: 0.5; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .kpi-card { padding: 1rem; border-radius: 8px; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); text-align: center; }
+        .kpi-card .value { font-size: 1.8rem; font-weight: bold; }
+        .kpi-card .label { font-size: 0.8rem; color: var(--pico-muted-color); }
+        .period-selector { display: inline-flex; gap: 0.25rem; }
+        .period-selector a { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; text-decoration: none; }
+        .period-selector a.active { background: var(--pico-primary); color: white; }
+        .chart-container { position: relative; height: 250px; margin-bottom: 1.5rem; }
+        .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
+        table { font-size: 0.85rem; }
+        .badge { padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.75rem; }
+        .badge-ok { background: #dcfce7; color: #166534; }
+        .badge-warn { background: #fef9c3; color: #854d0e; }
+        .badge-error { background: #fecaca; color: #991b1b; }
+        .mono { font-family: monospace; font-size: 0.8rem; }
+        .truncate { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .hidden { display: none; }
+        footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--pico-muted-border-color); font-size: 0.75rem; color: var(--pico-muted-color); }
+        /* Live tail event cards */
+        .event-card { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color); font-size: 0.8rem; font-family: monospace; }
+        .event-card.error { background: #fef2f2; }
+        .event-card .ts { color: var(--pico-muted-color); }
+        .event-card .type { color: var(--pico-primary); }
+        .event-card .name { font-weight: 600; }
+        .event-card .status { margin-left: 0.3rem; }
+        .event-card .ms { color: var(--pico-muted-color); margin-left: 0.3rem; }
+        .turn-boundary { padding: 0.2rem 0.5rem; font-size: 0.7rem; color: var(--pico-muted-color); text-align: center; border-bottom: 1px solid var(--pico-muted-border-color); }
+        .live-toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+        .live-toolbar select { width: auto; padding: 0.2rem 0.4rem; font-size: 0.75rem; margin: 0; }
+        .live-toolbar button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.3rem; }
+        .status-dot.connected { background: #22c55e; }
+        .status-dot.disconnected { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <main class="container-fluid">
+        <nav>
+            <div class="nav-group">
+                <span class="nav-group-label">Cellar</span>
+                <a href="/cellar" class="{% if active_nav == 'cellar' %}active{% endif %}">Wines</a>
+                <a href="/bottles" class="{% if active_nav == 'bottles' %}active{% endif %}">Bottles</a>
+                <a href="/tracked" class="{% if active_nav == 'tracked' %}active{% endif %}">Tracked</a>
+                <a href="/stats" class="{% if active_nav == 'stats' %}active{% endif %}">Stats</a>
+                <a href="/drinking" class="{% if active_nav == 'drinking' %}active{% endif %}">Drinking</a>
+                <a href="/sql" class="{% if active_nav == 'sql' %}active{% endif %}">SQL</a>
+            </div>
+            <div class="nav-group">
+                <span class="nav-group-label">Server</span>
+                <a href="/" class="{% if active_nav == 'overview' %}active{% endif %}">Overview</a>
+                <a href="/tools" class="{% if active_nav == 'tools' %}active{% endif %}">Tool Usage</a>
+                <a href="/errors" class="{% if active_nav == 'errors' %}active{% endif %}">Errors</a>
+                <a href="/sessions" class="{% if active_nav == 'sessions' %}active{% endif %}">Sessions</a>
+                <a href="/latency" class="{% if active_nav == 'latency' %}active{% endif %}">Latency</a>
+                <a href="/live" class="{% if active_nav == 'live' %}active{% endif %}">Live</a>
+            </div>
+            <div class="nav-group">
+                <span class="nav-group-label">Workbench</span>
+                <a href="/workbench" class="{% if active_nav == 'workbench' %}active{% endif %}">Tools</a>
+                <a href="/workbench/batch" class="{% if active_nav == 'workbench_batch' %}active{% endif %}">Batch</a>
+            </div>
+        </nav>
+
+        <div class="toolbar">
+            <h4 style="margin:0">{% block page_title %}{% endblock %}</h4>
+            <div style="display:flex; align-items:center; gap:1rem;">
+                {% if period is defined %}
+                <div class="period-selector">
+                    {% for p in ["1h", "24h", "7d", "30d"] %}
+                    <a href="?period={{ p }}"
+                       class="{% if period == p %}active{% endif %}"
+                       hx-get="?period={{ p }}" hx-push-url="true" hx-target="body">{{ p }}</a>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if include_workbench is defined %}
+                <label style="font-size:0.7rem; margin:0; display:flex; align-items:center; gap:0.25rem; cursor:pointer;">
+                    <input type="checkbox" style="width:auto; margin:0;"
+                           {% if include_workbench %}checked{% endif %}
+                           onchange="var url=new URL(window.location); if(this.checked){url.searchParams.set('include_workbench','1')}else{url.searchParams.delete('include_workbench')}; window.location=url;">
+                    Workbench
+                </label>
+                {% endif %}
+                <button class="outline secondary" style="font-size:0.75rem; padding:0.2rem 0.5rem;" onclick="refreshConnection()">Refresh</button>
+            </div>
+        </div>
+
+        {% block content %}{% endblock %}
+
+        <footer>
+            Cellarbrain Explorer &middot; Phase 5 &middot; Live Tail
+            {% if period is defined %}
+            <span style="margin-left:1.5rem;">
+                <label style="font-size:0.7rem; margin:0; display:inline-flex; align-items:center; gap:0.25rem; cursor:pointer;">
+                    <input type="checkbox" id="auto-refresh-toggle" style="width:auto; margin:0;">
+                    Auto-refresh (30 s)
+                </label>
+            </span>
+            {% endif %}
+        </footer>
+    </main>
+    <script src="/static/dashboard.js"></script>
+    <script>
+    /* Toggle active class for inline tab / selector groups on HTMX click */
+    document.addEventListener('click', function(e) {
+        var link = e.target.closest('.period-selector a, [data-toggle-group] a, [data-toggle-group] [role="button"]');
+        if (!link) return;
+        var group = link.closest('.period-selector, [data-toggle-group]');
+        if (!group) return;
+        /* period-selector: toggle .active */
+        if (group.classList.contains('period-selector')) {
+            group.querySelectorAll('a').forEach(function(a) { a.classList.remove('active'); });
+            link.classList.add('active');
+        } else {
+            /* button-style toggles (contrast / outline secondary) */
+            group.querySelectorAll('a[role="button"], button').forEach(function(a) {
+                a.className = a.className.replace('contrast', 'outline secondary');
+            });
+            link.className = link.className.replace('outline secondary', 'contrast');
+        }
+    });
+    </script>
+    <script>
+    (function(){
+        var toggle = document.getElementById('auto-refresh-toggle');
+        if (!toggle) return;
+        var timer = null;
+        toggle.addEventListener('change', function(){
+            if (this.checked) {
+                timer = setInterval(function(){ window.location.reload(); }, 30000);
+            } else {
+                if (timer) { clearInterval(timer); timer = null; }
+            }
+        });
+    })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

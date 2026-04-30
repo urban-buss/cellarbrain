@@ -1,0 +1,22 @@
+{# Render a list of live events (used as a non-SSE fallback context) #}
+{% for event in events %}
+{% if loop.previtem is defined and loop.previtem.turn_id != event.turn_id %}
+<div class="turn-boundary">── new turn ──</div>
+{% endif %}
+<div class="event-card{% if event.status == 'error' %} error{% endif %}">
+    <span class="ts">{{ event.started_at.strftime('%H:%M:%S') if event.started_at.strftime is defined else event.started_at }}</span>
+    <span class="type">{{ event.event_type }}</span>
+    <span class="name">{{ event.name }}</span>
+    <span class="status">{{ event.status }}</span>
+    <span class="ms">{{ '%.0f' % (event.duration_ms or 0) }} ms</span>
+    {% if event.error_type %}
+    <span style="color:var(--pico-del-color);">{{ event.error_type }}</span>
+    {% endif %}
+    {% if event.parameters %}
+    <details style="margin:0;font-size:0.75rem;">
+        <summary style="cursor:pointer;">params</summary>
+        <pre style="margin:0;white-space:pre-wrap;word-break:break-word;">{{ event.parameters }}</pre>
+    </details>
+    {% endif %}
+</div>
+{% endfor %}

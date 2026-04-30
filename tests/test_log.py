@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 
 import pytest
 
-from cellarbrain.log import setup_logging
+from cellarbrain.log import JsonFormatter, setup_logging
 from cellarbrain.settings import LoggingConfig
 
 
@@ -73,9 +74,13 @@ class TestSetupLogging:
 
     def test_file_handler_rotation_settings(self, tmp_path):
         log_file = str(tmp_path / "rot.log")
-        setup_logging(LoggingConfig(
-            log_file=log_file, max_bytes=1024, backup_count=5,
-        ))
+        setup_logging(
+            LoggingConfig(
+                log_file=log_file,
+                max_bytes=1024,
+                backup_count=5,
+            )
+        )
         file_handler = logging.getLogger().handlers[1]
         assert file_handler.maxBytes == 1024
         assert file_handler.backupCount == 5
@@ -102,3 +107,62 @@ class TestSetupLogging:
         assert len(root.handlers) >= 2
         setup_logging(LoggingConfig())
         assert len(root.handlers) == 1
+
+
+class TestJsonFormatter:
+    def test_produces_valid_json(self):
+        fmt = JsonFormatter(session_id="abc123")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="hello %s",
+            args=("world",),
+            exc_info=None,
+        )
+        line = fmt.format(record)
+        obj = json.loads(line)
+        assert obj["message"] == "hello world"
+        assert obj["level"] == "INFO"
+
+    def test_includes_session_id(self):
+        fmt = JsonFormatter(session_id="sess-42")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test",
+            args=(),
+            exc_info=None,
+        )
+        obj = json.loads(fmt.format(record))
+        assert obj["session_id"] == "sess-42"
+
+    def test_includes_extra_fields(self):
+        fmt = JsonFormatter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test",
+            args=(),
+            exc_info=None,
+        )
+        record.turn_id = "turn-1"
+        record.duration_ms = 42.0
+        obj = json.loads(fmt.format(record))
+        assert obj["turn_id"] == "turn-1"
+        assert obj["duration_ms"] == 42.0
+
+    def test_setup_logging_json_format(self, tmp_path):
+        log_file = str(tmp_path / "test.log")
+        setup_logging(
+            LoggingConfig(format="json", log_file=log_file),
+            session_id="sess-json",
+        )
+        root = logging.getLogger()
+        file_handler = root.handlers[1]
+        assert isinstance(file_handler.formatter, JsonFormatter)

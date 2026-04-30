@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% set active_nav = "overview" %}
+
+{% block title %}Overview — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Server Overview{% endblock %}
+
+{% block content %}
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="value">{{ overview.total }}</div>
+        <div class="label">Total Calls</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.error_pct }}%</div>
+        <div class="label">Error Rate</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.avg_ms or "—" }}</div>
+        <div class="label">Avg Latency (ms)</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.sessions }}</div>
+        <div class="label">Sessions</div>
+    </div>
+</div>
+
+<h5>Call Volume</h5>
+<div class="chart-container">
+    <canvas id="volumeChart"></canvas>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+    <div>
+        <h5>Recent Errors
+            <a href="/errors" style="font-size:0.8rem; margin-left:0.5rem;">View all &rarr;</a>
+        </h5>
+        {% if errors %}
+        <table>
+            <thead><tr><th>Time</th><th>Tool</th><th>Error</th></tr></thead>
+            <tbody>
+            {% for e in errors %}
+            <tr>
+                <td class="mono">{{ e.started_at.strftime("%H:%M:%S") if e.started_at else "—" }}</td>
+                <td>{{ e.name }}</td>
+                <td class="truncate">{{ e.error_message or "—" }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>No errors in this period.</p>
+        {% endif %}
+    </div>
+    <div>
+        <h5>Top Tools
+            <a href="/tools" style="font-size:0.8rem; margin-left:0.5rem;">View all &rarr;</a>
+        </h5>
+        <div class="chart-container" style="height:200px">
+            <canvas id="topToolsChart"></canvas>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    renderBarChart('volumeChart', '/api/volume?period={{ period }}', 'Calls/hour');
+
+    fetch('/api/top-tools?period={{ period }}&limit=10')
+        .then(r => r.json())
+        .then(d => {
+            new Chart(document.getElementById('topToolsChart'), {
+                type: 'bar',
+                data: {
+                    labels: d.map(t => t.name),
+                    datasets: [{
+                        label: 'Calls',
+                        data: d.map(t => t.calls),
+                        backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                    }]
+                },
+                options: {
+                    responsive: true, indexAxis: 'y',
+                    scales: { x: { beginAtZero: true } },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        });
+</script>
+{% endblock %}

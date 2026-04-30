@@ -57,6 +57,17 @@
 - Try `/about`, `/history`, `/weingut`, `/the-estate`, `/our-wines`
 - Budget: 1–2 attempts. ~30% success rate (JS/cookie walls block many).
 
+### Producer Fallback Chain (when producer website fails)
+
+If the producer website is blocked, empty, or unavailable, try in order:
+
+1. **Wine-Searcher producer snippet** — The product page (already fetched) often contains founding year, owner, region. Check existing content first.
+2. **Millesima producer page** — `https://www.millesima.co.uk/producer-{producer-slug}.html` — dedicated producer profiles.
+3. **Swiss retailer bios** — Gerstl (`/c?q={winery}`) and Mövenpick product pages embed producer descriptions.
+4. **Google webcache** — `https://webcache.googleusercontent.com/search?q=cache:{producer-url}` — 1 attempt only.
+
+Budget: 2–3 additional fetches total. If all fail → skip `producer_profile`.
+
 ### Vivino (last resort only)
 
 - Only when all above sources yield insufficient data
@@ -68,7 +79,7 @@
 | Tier | Sources | Trust |
 |---|---|---|
 | **1a** | Winery / estate homepage | High |
-| **1b** | Millésima, Wine-Searcher, Mövenpick, Gerstl | High |
+| **1b** | Millésima, Wine-Searcher (incl. Producer tab), Mövenpick, Gerstl | High |
 | **2** | Wine Cellar Insider, winemag.co.za, Schuler.ch, Wikipedia | Medium-High |
 | **3** | Vivino, CellarTracker | Low — last resort |
 | **Blocked** | James Suckling, Wine Spectator, Decanter, Wine Enthusiast, Tim Atkin | Inaccessible |
@@ -76,12 +87,14 @@
 
 ## Vintage Data Gaps
 
-| Region | Availability | Action |
-|---|---|---|
-| Bordeaux | ~95% | Wine-Searcher + Millesima |
-| Burgundy, Rhône, Champagne | ~80% | Wine-Searcher vintage pages |
-| Italy (Piedmont, Tuscany) | ~60% | Wine-Searcher (less detailed) |
-| South Africa | ~50% | winemag.co.za, WOSA |
-| Argentina (Mendoza) | ~10% | Rarely published |
-| Armenia, Ticino, Languedoc | ~0% | Accept the gap |
-| Any, very recent vintage | ~10% | Too recent for reports |
+Check this map **before** fetching a Wine-Searcher vintage page. For regions marked **No**, skip the vintage-page fetch and extract vintage commentary from retailer product pages instead.
+
+| Region | Has vintage page | Availability | Action |
+|---|---|---|---|
+| Bordeaux | **Yes** | ~95% | Wine-Searcher + Millesima |
+| Burgundy, Rhône, Champagne | **Yes** | ~80% | Wine-Searcher vintage pages |
+| Italy (Piedmont, Tuscany) | **Yes** (less detailed) | ~60% | Wine-Searcher vintage pages |
+| South Africa | Partial | ~50% | winemag.co.za, WOSA |
+| Argentina (Mendoza) | **No** | ~10% | Rarely published — skip vintage fetch |
+| Armenia, Ticino, Languedoc, Alentejo | **No** | ~0% | Accept the gap — skip vintage fetch |
+| Any, very recent vintage (year −1) | **No** | ~10% | Too recent — skip vintage fetch |

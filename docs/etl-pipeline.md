@@ -106,8 +106,8 @@ Default currency: CHF. Rates configured in `cellarbrain.toml` under `[currency.r
 After currency conversion, each bottle gets:
 
 - `purchase_price` / `purchase_currency` — converted from original
-- `is_onsite` — `True` unless the bottle's cellar is in `settings.offsite_cellars` or `settings.in_transit_cellars`
-- `is_in_transit` — `True` if the bottle's cellar is in `settings.in_transit_cellars`
+- `is_onsite` — `True` unless `classify_cellar()` returns `"offsite"` or `"in_transit"` for the bottle's cellar name (based on `settings.cellar_rules`)
+- `is_in_transit` — `True` if `classify_cellar()` returns `"in_transit"` for the bottle's cellar name
 
 In-transit bottles represent orders not yet in the physical cellar (`status = 'stored'` but `is_in_transit = true`). They are excluded from cellar inventory counts, cellar value, volume calculations, and drinking recommendations.
 

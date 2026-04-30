@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import CheckResult, RunResult, SmokeConfig
@@ -22,7 +22,7 @@ def generate_report(
     mcp_checks: list[CheckResult] | None = None,
 ) -> str:
     """Return a complete Markdown report string."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     date_str = now.strftime("%Y-%m-%d %H:%M")
 
     all_checks = output_checks + cross_checks + (integrity_checks or []) + (mcp_checks or [])
@@ -34,8 +34,8 @@ def generate_report(
     _a = lines.append
 
     _a(f"# ETL Smoke Test Report — {date_str} UTC\n")
-    _a(f"**Agent:** cellarbrain-smoketest")
-    _a(f'**Trigger:** {trigger or "automated"}')
+    _a("**Agent:** cellarbrain-smoketest")
+    _a(f"**Trigger:** {trigger or 'automated'}")
     _a(f"**Overall:** {overall}")
     _a(f"**Raw folders:** {', '.join(config.folders)}\n")
 
@@ -43,7 +43,7 @@ def generate_report(
     _a("## Environment\n")
     _a(f"- Python: {config.python_version}")
     _a(f"- cellarbrain: {config.cellarbrain_version}")
-    _a(f"- OS: Windows\n")
+    _a("- OS: Windows\n")
 
     # --- Summary (first for quick triage) ---
     _a("## Summary\n")
@@ -78,8 +78,10 @@ def generate_report(
     if pytest_result:
         _a("## Python Tests\n")
         pt_icon = "PASS" if pytest_result.ok else "FAIL"
-        _a(f"**Result:** {pt_icon} — {pytest_result.passed} passed, "
-           f"{pytest_result.failed} failed, {pytest_result.errors} errors\n")
+        _a(
+            f"**Result:** {pt_icon} — {pytest_result.passed} passed, "
+            f"{pytest_result.failed} failed, {pytest_result.errors} errors\n"
+        )
         if not pytest_result.ok:
             _a("```")
             # Show last 30 lines of output for failed tests
@@ -115,8 +117,11 @@ def generate_report(
         if ec:
             entity_parts = []
             for key, label in [
-                ("winery", "wineries"), ("appellation", "appellations"),
-                ("grape", "grapes"), ("cellar", "cellars"), ("provider", "providers"),
+                ("winery", "wineries"),
+                ("appellation", "appellations"),
+                ("grape", "grapes"),
+                ("cellar", "cellars"),
+                ("provider", "providers"),
             ]:
                 if key in ec:
                     entity_parts.append(f"{ec[key]} {label}")
@@ -124,8 +129,10 @@ def generate_report(
                 _a(f"| Entities built | {', '.join(entity_parts)} |")
 
             for key, label in [
-                ("wine", "Wines"), ("wine_grape", "Wine-grapes"),
-                ("tasting", "Tastings"), ("pro_rating", "Pro ratings"),
+                ("wine", "Wines"),
+                ("wine_grape", "Wine-grapes"),
+                ("tasting", "Tastings"),
+                ("pro_rating", "Pro ratings"),
                 ("tracked_wine", "Tracked wines"),
             ]:
                 if key in ec:
@@ -154,7 +161,7 @@ def generate_report(
         if run.warnings:
             _a(f"| Warnings | {len(run.warnings)}: {'; '.join(run.warnings[:3])} |")
         else:
-            _a(f"| Warnings | None |")
+            _a("| Warnings | None |")
         _a(f"| Errors | {'; '.join(run.errors) if run.errors else 'None'} |")
         _a("")
 
@@ -174,9 +181,19 @@ def generate_report(
         _a("| Entity | Rows |")
         _a("|--------|------|")
         for name in [
-            "winery", "appellation", "grape", "cellar", "provider",
-            "tracked_wine", "wine", "wine_grape", "bottle",
-            "tasting", "pro_rating", "etl_run", "change_log",
+            "winery",
+            "appellation",
+            "grape",
+            "cellar",
+            "provider",
+            "tracked_wine",
+            "wine",
+            "wine_grape",
+            "bottle",
+            "tasting",
+            "pro_rating",
+            "etl_run",
+            "change_log",
         ]:
             if name in entity_check.data:
                 _a(f"| {name} | {entity_check.data[name]} |")
@@ -253,7 +270,7 @@ def generate_report(
 def write_report(content: str, report_dir: Path) -> Path:
     """Write *content* to a timestamped file in *report_dir*. Returns the path."""
     report_dir.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     filename = now.strftime("%Y-%m-%d-%H%M%S") + ".md"
     path = report_dir / filename
     path.write_text(content, encoding="utf-8")

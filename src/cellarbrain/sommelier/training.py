@@ -35,24 +35,20 @@ def train_model(
     """
     try:
         from sentence_transformers import InputExample, SentenceTransformer
-        from sentence_transformers.sentence_transformer.losses import CosineSimilarityLoss
         from sentence_transformers.sentence_transformer.evaluation import (
             EmbeddingSimilarityEvaluator,
         )
+        from sentence_transformers.sentence_transformer.losses import CosineSimilarityLoss
     except ImportError:
         raise ImportError(
-            "sentence-transformers is required for model training. "
-            "Install with: pip install cellarbrain[sommelier]"
+            "sentence-transformers is required for model training. Install with: pip install cellarbrain[sommelier]"
         ) from None
 
     from torch.utils.data import DataLoader
 
     pairing_path = Path(pairing_parquet)
     if not pairing_path.exists():
-        raise FileNotFoundError(
-            f"Pairing dataset not found: {pairing_path}. "
-            "Run build_pairings.py first."
-        )
+        raise FileNotFoundError(f"Pairing dataset not found: {pairing_path}. Run build_pairings.py first.")
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -71,10 +67,12 @@ def train_model(
 
     examples: list[InputExample] = []
     for i in range(n):
-        examples.append(InputExample(
-            texts=[food_texts[i].as_py(), wine_texts[i].as_py()],
-            label=float(scores[i].as_py()),
-        ))
+        examples.append(
+            InputExample(
+                texts=[food_texts[i].as_py(), wine_texts[i].as_py()],
+                label=float(scores[i].as_py()),
+            )
+        )
 
     # --- Stratified train/eval split (by score quintile) --------------------
 
@@ -99,7 +97,9 @@ def train_model(
     eval_scores = [ex.label for ex in eval_examples]
 
     evaluator = EmbeddingSimilarityEvaluator(
-        eval_sentences1, eval_sentences2, eval_scores,
+        eval_sentences1,
+        eval_sentences2,
+        eval_scores,
         name="pairing-eval",
     )
 
@@ -116,7 +116,10 @@ def train_model(
 
     logger.info(
         "Training: %d epochs, batch %d, %d total steps, %d warmup",
-        epochs, batch_size, total_steps, warmup_steps,
+        epochs,
+        batch_size,
+        total_steps,
+        warmup_steps,
     )
 
     model.fit(

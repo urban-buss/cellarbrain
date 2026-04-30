@@ -8,8 +8,6 @@ model → index → MCP tool → enriched Markdown table.
 from __future__ import annotations
 
 import asyncio
-import json
-import shutil
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,11 +42,13 @@ def tiny_model(tmp_path_factory):
 
     tmp = tmp_path_factory.mktemp("model")
     pairs = tmp / "pairings.parquet"
-    table = pa.table({
-        "food_text": [f"dish {i} with ingredients" for i in range(20)],
-        "wine_text": [f"wine {i} from region {i % 5}" for i in range(20)],
-        "pairing_score": [round(0.05 + (i / 20) * 0.9, 3) for i in range(20)],
-    })
+    table = pa.table(
+        {
+            "food_text": [f"dish {i} with ingredients" for i in range(20)],
+            "wine_text": [f"wine {i} from region {i % 5}" for i in range(20)],
+            "pairing_score": [round(0.05 + (i / 20) * 0.9, 3) for i in range(20)],
+        }
+    )
     pq.write_table(table, pairs)
 
     output = str(tmp / "model")
@@ -68,28 +68,37 @@ def tiny_model(tmp_path_factory):
 def food_catalogue(tmp_path_factory):
     """Create a small food catalogue Parquet."""
     tmp = tmp_path_factory.mktemp("catalogue")
-    table = pa.table({
-        "dish_id": ["food_1", "food_2", "food_3", "food_4", "food_5"],
-        "dish_name": [
-            "Grilled lamb chops with rosemary",
-            "Sashimi platter with wasabi",
-            "Margherita pizza with fresh basil",
-            "Chocolate fondant with vanilla ice cream",
-            "Caesar salad with parmesan croutons",
-        ],
-        "description": ["d1", "d2", "d3", "d4", "d5"],
-        "ingredients": [["lamb", "rosemary"], ["tuna", "wasabi"],
-                        ["mozzarella", "basil"], ["chocolate", "cream"],
-                        ["romaine", "parmesan"]],
-        "cuisine": ["French", "Japanese", "Italian", "French", "American"],
-        "weight_class": ["heavy", "light", "medium", "heavy", "light"],
-        "protein": ["lamb", "fish", "cheese", "none", "chicken"],
-        "cooking_method": ["grill", "raw", "bake", "bake", "toss"],
-        "flavour_profile": [
-            ["rich", "herby"], ["clean", "umami"], ["savoury", "tangy"],
-            ["sweet", "rich"], ["crisp", "savoury"],
-        ],
-    })
+    table = pa.table(
+        {
+            "dish_id": ["food_1", "food_2", "food_3", "food_4", "food_5"],
+            "dish_name": [
+                "Grilled lamb chops with rosemary",
+                "Sashimi platter with wasabi",
+                "Margherita pizza with fresh basil",
+                "Chocolate fondant with vanilla ice cream",
+                "Caesar salad with parmesan croutons",
+            ],
+            "description": ["d1", "d2", "d3", "d4", "d5"],
+            "ingredients": [
+                ["lamb", "rosemary"],
+                ["tuna", "wasabi"],
+                ["mozzarella", "basil"],
+                ["chocolate", "cream"],
+                ["romaine", "parmesan"],
+            ],
+            "cuisine": ["French", "Japanese", "Italian", "French", "American"],
+            "weight_class": ["heavy", "light", "medium", "heavy", "light"],
+            "protein": ["lamb", "fish", "cheese", "none", "chicken"],
+            "cooking_method": ["grill", "raw", "bake", "bake", "toss"],
+            "flavour_profile": [
+                ["rich", "herby"],
+                ["clean", "umami"],
+                ["savoury", "tangy"],
+                ["sweet", "rich"],
+                ["crisp", "savoury"],
+            ],
+        }
+    )
     path = tmp / "food_catalogue.parquet"
     pq.write_table(table, path)
     return str(path)
@@ -109,13 +118,15 @@ def food_index(tmp_path_factory, tiny_model, food_catalogue):
     ids = []
     for i in range(cat.num_rows):
         did = cat.column("dish_id")[i].as_py()
-        texts.append(build_food_text(
-            dish_name=cat.column("dish_name")[i].as_py(),
-            cuisine=cat.column("cuisine")[i].as_py(),
-            weight_class=cat.column("weight_class")[i].as_py(),
-            protein=cat.column("protein")[i].as_py(),
-            flavour_profile=cat.column("flavour_profile")[i].as_py(),
-        ))
+        texts.append(
+            build_food_text(
+                dish_name=cat.column("dish_name")[i].as_py(),
+                cuisine=cat.column("cuisine")[i].as_py(),
+                weight_class=cat.column("weight_class")[i].as_py(),
+                protein=cat.column("protein")[i].as_py(),
+                flavour_profile=cat.column("flavour_profile")[i].as_py(),
+            )
+        )
         ids.append(did)
 
     tmp = tmp_path_factory.mktemp("food_idx")
@@ -139,85 +150,161 @@ def wine_dataset(tmp_path_factory):
         {"winery_id": 1, "name": "Château MCP", "etl_run_id": rid, "updated_at": now},
     ]
     appellations = [
-        {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-         "subregion": None, "classification": None,
-         "etl_run_id": rid, "updated_at": now},
+        {
+            "appellation_id": 1,
+            "country": "France",
+            "region": "Bordeaux",
+            "subregion": None,
+            "classification": None,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     grapes = [
         {"grape_id": 1, "name": "Merlot", "etl_run_id": rid, "updated_at": now},
     ]
 
     _template = {
-        "wine_slug": "placeholder", "winery_id": 1, "name": "Wine",
-        "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
-        "category": "Red wine", "_raw_classification": None,
-        "subcategory": None, "specialty": None,
-        "sweetness": None, "effervescence": None, "volume_ml": 750,
-        "_raw_volume": None, "container": None, "hue": None, "cork": None,
-        "alcohol_pct": 14.0, "acidity_g_l": None, "sugar_g_l": None,
-        "ageing_type": None, "ageing_months": None, "farming_type": None,
-        "serving_temp_c": None, "opening_type": None, "opening_minutes": None,
-        "drink_from": None, "drink_until": None,
-        "optimal_from": None, "optimal_until": None,
-        "original_list_price": None, "original_list_currency": None,
-        "list_price": None, "list_currency": None,
-        "comment": None, "winemaking_notes": None,
-        "is_favorite": False, "is_wishlist": False, "tracked_wine_id": None,
-        "full_name": "Placeholder", "grape_type": "varietal",
-        "primary_grape": "Merlot", "grape_summary": "Merlot", "_raw_grapes": None,
+        "wine_slug": "placeholder",
+        "winery_id": 1,
+        "name": "Wine",
+        "vintage": 2020,
+        "is_non_vintage": False,
+        "appellation_id": 1,
+        "category": "Red wine",
+        "_raw_classification": None,
+        "subcategory": None,
+        "specialty": None,
+        "sweetness": None,
+        "effervescence": None,
+        "volume_ml": 750,
+        "_raw_volume": None,
+        "container": None,
+        "hue": None,
+        "cork": None,
+        "alcohol_pct": 14.0,
+        "acidity_g_l": None,
+        "sugar_g_l": None,
+        "ageing_type": None,
+        "ageing_months": None,
+        "farming_type": None,
+        "serving_temp_c": None,
+        "opening_type": None,
+        "opening_minutes": None,
+        "drink_from": None,
+        "drink_until": None,
+        "optimal_from": None,
+        "optimal_until": None,
+        "original_list_price": None,
+        "original_list_currency": None,
+        "list_price": None,
+        "list_currency": None,
+        "comment": None,
+        "winemaking_notes": None,
+        "is_favorite": False,
+        "is_wishlist": False,
+        "tracked_wine_id": None,
+        "full_name": "Placeholder",
+        "grape_type": "varietal",
+        "primary_grape": "Merlot",
+        "grape_summary": "Merlot",
+        "_raw_grapes": None,
         "dossier_path": "cellar/0001.md",
-        "drinking_status": "unknown", "age_years": 5,
-        "price_tier": "unknown", "is_deleted": False,
-        "etl_run_id": rid, "updated_at": now,
+        "drinking_status": "unknown",
+        "age_years": 5,
+        "price_tier": "unknown",
+        "bottle_format": "Standard",
+        "price_per_750ml": None,
+        "format_group_id": None,
+        "food_tags": None,
+        "is_deleted": False,
+        "etl_run_id": rid,
+        "updated_at": now,
     }
 
     wines = [
-        {**_template, "wine_id": 1, "wine_slug": "chateau-mcp-merlot-2020",
-         "full_name": "Château MCP Merlot 2020",
-         "dossier_path": f"cellar/{dossier_filename(1, 'Château MCP', 'Merlot', 2020, False)}"},
+        {
+            **_template,
+            "wine_id": 1,
+            "wine_slug": "chateau-mcp-merlot-2020",
+            "full_name": "Château MCP Merlot 2020",
+            "dossier_path": f"cellar/{dossier_filename(1, 'Château MCP', 'Merlot', 2020, False)}",
+        },
     ]
     wine_grapes = [
-        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
     bottles = [
-        {"bottle_id": 1, "wine_id": 1, "status": "stored",
-         "cellar_id": 1, "shelf": "A1", "bottle_number": 1,
-         "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
-         "acquisition_type": "purchase",
-         "original_purchase_price": Decimal("20.00"),
-         "original_purchase_currency": "CHF",
-         "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-         "purchase_comment": None,
-         "output_date": None, "output_type": None, "output_comment": None,
-         "is_onsite": True, "is_in_transit": False,
-         "etl_run_id": rid, "updated_at": now},
+        {
+            "bottle_id": 1,
+            "wine_id": 1,
+            "status": "stored",
+            "cellar_id": 1,
+            "shelf": "A1",
+            "bottle_number": 1,
+            "provider_id": 1,
+            "purchase_date": datetime(2023, 6, 1).date(),
+            "acquisition_type": "purchase",
+            "original_purchase_price": Decimal("20.00"),
+            "original_purchase_currency": "CHF",
+            "purchase_price": Decimal("20.00"),
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": None,
+            "output_type": None,
+            "output_comment": None,
+            "is_onsite": True,
+            "is_in_transit": False,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Cave", "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"cellar_id": 1, "name": "Cave", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
     providers = [
         {"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now},
     ]
     etl_runs = [
-        {"run_id": 1, "started_at": now, "finished_at": now,
-         "run_type": "full", "wines_source_hash": "abc",
-         "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-         "total_inserts": 1, "total_updates": 0, "total_deletes": 0,
-         "wines_inserted": 1, "wines_updated": 0,
-         "wines_deleted": 0, "wines_renamed": 0},
+        {
+            "run_id": 1,
+            "started_at": now,
+            "finished_at": now,
+            "run_type": "full",
+            "wines_source_hash": "abc",
+            "bottles_source_hash": "def",
+            "bottles_gone_source_hash": None,
+            "total_inserts": 1,
+            "total_updates": 0,
+            "total_deletes": 0,
+            "wines_inserted": 1,
+            "wines_updated": 0,
+            "wines_deleted": 0,
+            "wines_renamed": 0,
+        },
     ]
     change_logs = [
-        {"change_id": 1, "run_id": 1, "entity_type": "wine",
-         "entity_id": 1, "change_type": "insert", "changed_fields": None},
+        {
+            "change_id": 1,
+            "run_id": 1,
+            "entity_type": "wine",
+            "entity_id": 1,
+            "change_type": "insert",
+            "changed_fields": None,
+        },
     ]
 
     for name, rows in [
-        ("winery", wineries), ("appellation", appellations),
-        ("grape", grapes), ("wine", wines), ("wine_grape", wine_grapes),
-        ("bottle", bottles), ("cellar", cellars), ("provider", providers),
-        ("tasting", []), ("pro_rating", []),
+        ("winery", wineries),
+        ("appellation", appellations),
+        ("grape", grapes),
+        ("wine", wines),
+        ("wine_grape", wine_grapes),
+        ("bottle", bottles),
+        ("cellar", cellars),
+        ("provider", providers),
+        ("tasting", []),
+        ("pro_rating", []),
     ]:
         writer.write_parquet(name, rows, tmp)
     writer.write_parquet("etl_run", etl_runs, tmp)
@@ -245,10 +332,15 @@ def wine_index(tmp_path_factory, tiny_model, wine_dataset):
     texts, ids = [], []
     for row in rows:
         wid, name, country, region, grapes, category = row
-        texts.append(build_wine_text(
-            full_name=name, country=country, region=region,
-            grape_summary=grapes, category=category,
-        ))
+        texts.append(
+            build_wine_text(
+                full_name=name,
+                country=country,
+                region=region,
+                grape_summary=grapes,
+                category=category,
+            )
+        )
         ids.append(str(wid))
 
     # Put wine index inside the data dir under sommelier/
@@ -262,7 +354,11 @@ def wine_index(tmp_path_factory, tiny_model, wine_dataset):
 
 @pytest.fixture(scope="module")
 def sommelier_server(
-    tiny_model, food_catalogue, food_index, wine_index, wine_dataset,
+    tiny_model,
+    food_catalogue,
+    food_index,
+    wine_index,
+    wine_dataset,
 ):
     """Return an mcp_server module with sommelier fully wired."""
     import os
@@ -333,8 +429,7 @@ class TestSuggestWines:
         """limit=1 returns at most 1 data row."""
         result = asyncio.run(sommelier_server.suggest_wines(food_query="grilled steak", limit=1))
         data_rows = [
-            line for line in result.split("\n")
-            if line.startswith("| ") and "Rank" not in line and "---" not in line
+            line for line in result.split("\n") if line.startswith("| ") and "Rank" not in line and "---" not in line
         ]
         assert len(data_rows) <= 1
 

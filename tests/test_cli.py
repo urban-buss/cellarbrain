@@ -2,141 +2,61 @@
 
 from __future__ import annotations
 
+import pathlib
 import warnings
-from datetime import datetime
 from decimal import Decimal
 
 import pytest
 
 from cellarbrain import markdown, writer
-from cellarbrain.markdown import dossier_filename
 from cellarbrain.cli import main
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-def _now() -> datetime:
-    return datetime(2025, 1, 1)
+from dataset_factory import (
+    _now,
+    make_appellation,
+    make_bottle,
+    make_cellar,
+    make_change_log,
+    make_etl_run,
+    make_grape,
+    make_provider,
+    make_wine,
+    make_wine_grape,
+    make_winery,
+    write_dataset,
+)
 
 
 def _make_dataset(tmp_path):
     """Write minimal Parquet dataset for CLI subcommands."""
-    now = _now()
-    rid = 1
-
-    wineries = [
-        {"winery_id": 1, "name": "Test Winery", "etl_run_id": rid, "updated_at": now},
-    ]
-    appellations = [
+    return write_dataset(
+        tmp_path,
         {
-            "appellation_id": 1, "country": "France", "region": "Bordeaux",
-            "subregion": None, "classification": None,
-            "etl_run_id": rid, "updated_at": now,
+            "winery": [make_winery()],
+            "appellation": [make_appellation()],
+            "grape": [make_grape()],
+            "wine": [make_wine(age_years=5)],
+            "wine_grape": [make_wine_grape()],
+            "bottle": [
+                make_bottle(
+                    original_purchase_price=Decimal("20.00"),
+                    purchase_price=Decimal("20.00"),
+                )
+            ],
+            "cellar": [make_cellar()],
+            "provider": [make_provider(name="Shop")],
+            "etl_run": [make_etl_run()],
+            "change_log": [make_change_log()],
         },
-    ]
-    grapes = [
-        {"grape_id": 1, "name": "Merlot", "etl_run_id": rid, "updated_at": now},
-    ]
-    wines = [
-        {
-            "wine_id": 1, "wine_slug": "test-winery-test-wine-2020",
-            "winery_id": 1, "name": "Test Wine",
-            "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
-            "category": "Red wine",
-            "_raw_classification": None,
-            "subcategory": None, "specialty": None,
-            "sweetness": None, "effervescence": None, "volume_ml": 750,
-            "_raw_volume": None,
-            "container": None, "hue": None, "cork": None, "alcohol_pct": 14.0,
-            "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-            "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-            "opening_type": None, "opening_minutes": None,
-            "drink_from": None, "drink_until": None,
-            "optimal_from": None, "optimal_until": None,
-            "original_list_price": None, "original_list_currency": None,
-            "list_price": None, "list_currency": None,
-            "comment": None, "winemaking_notes": None,
-            "is_favorite": False, "is_wishlist": False,
-            "tracked_wine_id": None,
-            "full_name": "Test Winery Test Wine 2020",
-            "grape_type": "varietal",
-            "primary_grape": "Merlot",
-            "grape_summary": "Merlot",
-            "_raw_grapes": None,
-            "dossier_path": f"cellar/{dossier_filename(1, 'Test Winery', 'Test Wine', 2020, False)}",
-            "drinking_status": "unknown",
-            "age_years": 5,
-            "price_tier": "unknown",
-            "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
-        },
-    ]
-    wine_grapes = [
-        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
-    ]
-    bottles = [
-        {
-            "bottle_id": 1, "wine_id": 1, "status": "stored",
-            "cellar_id": 1, "shelf": "A1", "bottle_number": 1,
-            "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
-            "acquisition_type": "purchase",
-            "original_purchase_price": Decimal("20.00"),
-            "original_purchase_currency": "CHF",
-            "purchase_price": Decimal("20.00"),
-            "purchase_currency": "CHF", "purchase_comment": None,
-            "output_date": None, "output_type": None, "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
-            "etl_run_id": rid, "updated_at": now,
-        },
-    ]
-    cellars = [
-        {"cellar_id": 1, "name": "Cave", "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
-    ]
-    providers = [
-        {"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now},
-    ]
-    etl_runs = [
-        {
-            "run_id": 1, "started_at": now, "finished_at": now,
-            "run_type": "full", "wines_source_hash": "abc",
-            "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-            "total_inserts": 5, "total_updates": 0, "total_deletes": 0,
-            "wines_inserted": 1, "wines_updated": 0,
-            "wines_deleted": 0, "wines_renamed": 0,
-        },
-    ]
-    change_logs = [
-        {
-            "change_id": 1, "run_id": 1, "entity_type": "wine",
-            "entity_id": 1, "change_type": "insert", "changed_fields": None,
-        },
-    ]
-
-    for name, rows in [
-        ("winery", wineries), ("appellation", appellations), ("grape", grapes),
-        ("wine", wines), ("wine_grape", wine_grapes), ("bottle", bottles),
-        ("cellar", cellars), ("provider", providers),
-        ("tasting", []), ("pro_rating", []),
-        ("etl_run", etl_runs), ("change_log", change_logs),
-    ]:
-        writer.write_parquet(name, rows, tmp_path)
-
-    return tmp_path
+    )
 
 
 @pytest.fixture()
 def data_dir(tmp_path):
     return _make_dataset(tmp_path)
-
-
-# ---------------------------------------------------------------------------
-# TestLegacyDetection
-# ---------------------------------------------------------------------------
 
 
 class TestLegacyDetection:
@@ -223,7 +143,7 @@ class TestConfigFlag:
     def test_data_dir_flag_overrides_config(self, data_dir, tmp_path, capsys):
         cfg = tmp_path / "cellarbrain.toml"
         cfg.write_text(
-            f'[paths]\ndata_dir = "nonexistent"\n',
+            '[paths]\ndata_dir = "nonexistent"\n',
             encoding="utf-8",
         )
         # -d should override the config file data_dir
@@ -256,32 +176,87 @@ class TestEtlRunWineLevelCounts:
         # Mixed change_log: wines + non-wine entities
         etl_runs = [
             {
-                "run_id": rid, "started_at": now, "finished_at": now,
-                "run_type": "incremental", "wines_source_hash": "a",
-                "bottles_source_hash": "b", "bottles_gone_source_hash": None,
-                "total_inserts": 4, "total_updates": 3,
-                "total_deletes": 1, "wines_inserted": 2,
-                "wines_updated": 1, "wines_deleted": 1,
+                "run_id": rid,
+                "started_at": now,
+                "finished_at": now,
+                "run_type": "incremental",
+                "wines_source_hash": "a",
+                "bottles_source_hash": "b",
+                "bottles_gone_source_hash": None,
+                "total_inserts": 4,
+                "total_updates": 3,
+                "total_deletes": 1,
+                "wines_inserted": 2,
+                "wines_updated": 1,
+                "wines_deleted": 1,
                 "wines_renamed": 0,
             },
         ]
         change_logs = [
-            {"change_id": 1, "run_id": rid, "entity_type": "wine",
-             "entity_id": 1, "change_type": "insert", "changed_fields": None},
-            {"change_id": 2, "run_id": rid, "entity_type": "wine",
-             "entity_id": 2, "change_type": "insert", "changed_fields": None},
-            {"change_id": 3, "run_id": rid, "entity_type": "bottle",
-             "entity_id": 10, "change_type": "insert", "changed_fields": None},
-            {"change_id": 4, "run_id": rid, "entity_type": "bottle",
-             "entity_id": 11, "change_type": "insert", "changed_fields": None},
-            {"change_id": 5, "run_id": rid, "entity_type": "wine",
-             "entity_id": 3, "change_type": "update", "changed_fields": '["price"]'},
-            {"change_id": 6, "run_id": rid, "entity_type": "bottle",
-             "entity_id": 10, "change_type": "update", "changed_fields": '["shelf"]'},
-            {"change_id": 7, "run_id": rid, "entity_type": "winery",
-             "entity_id": 1, "change_type": "update", "changed_fields": '["name"]'},
-            {"change_id": 8, "run_id": rid, "entity_type": "wine",
-             "entity_id": 4, "change_type": "delete", "changed_fields": None},
+            {
+                "change_id": 1,
+                "run_id": rid,
+                "entity_type": "wine",
+                "entity_id": 1,
+                "change_type": "insert",
+                "changed_fields": None,
+            },
+            {
+                "change_id": 2,
+                "run_id": rid,
+                "entity_type": "wine",
+                "entity_id": 2,
+                "change_type": "insert",
+                "changed_fields": None,
+            },
+            {
+                "change_id": 3,
+                "run_id": rid,
+                "entity_type": "bottle",
+                "entity_id": 10,
+                "change_type": "insert",
+                "changed_fields": None,
+            },
+            {
+                "change_id": 4,
+                "run_id": rid,
+                "entity_type": "bottle",
+                "entity_id": 11,
+                "change_type": "insert",
+                "changed_fields": None,
+            },
+            {
+                "change_id": 5,
+                "run_id": rid,
+                "entity_type": "wine",
+                "entity_id": 3,
+                "change_type": "update",
+                "changed_fields": '["price"]',
+            },
+            {
+                "change_id": 6,
+                "run_id": rid,
+                "entity_type": "bottle",
+                "entity_id": 10,
+                "change_type": "update",
+                "changed_fields": '["shelf"]',
+            },
+            {
+                "change_id": 7,
+                "run_id": rid,
+                "entity_type": "winery",
+                "entity_id": 1,
+                "change_type": "update",
+                "changed_fields": '["name"]',
+            },
+            {
+                "change_id": 8,
+                "run_id": rid,
+                "entity_type": "wine",
+                "entity_id": 4,
+                "change_type": "delete",
+                "changed_fields": None,
+            },
         ]
         writer.write_parquet("etl_run", etl_runs, tmp_path)
         writer.write_parquet("change_log", change_logs, tmp_path)
@@ -339,8 +314,18 @@ def data_dir_with_dossiers(tmp_path):
     data_dir = _make_dataset(tmp_path)
     entities = {
         name: writer.read_parquet_rows(name, data_dir)
-        for name in ("winery", "appellation", "grape", "wine", "wine_grape",
-                     "bottle", "cellar", "provider", "tasting", "pro_rating")
+        for name in (
+            "winery",
+            "appellation",
+            "grape",
+            "wine",
+            "wine_grape",
+            "bottle",
+            "cellar",
+            "provider",
+            "tasting",
+            "pro_rating",
+        )
     }
     markdown.generate_dossiers(entities, data_dir, current_year=2025)
     return data_dir
@@ -354,16 +339,14 @@ class TestDossierSubcommand:
         assert "## Characteristics" in captured.out
 
     def test_dossier_sections_flag_filters_output(self, data_dir_with_dossiers, capsys):
-        main(["-d", str(data_dir_with_dossiers), "dossier", "1",
-              "--sections", "identity"])
+        main(["-d", str(data_dir_with_dossiers), "dossier", "1", "--sections", "identity"])
         captured = capsys.readouterr()
         assert "## Identity" in captured.out
         assert "## Origin" not in captured.out
         assert "wine_id:" in captured.out  # frontmatter always present
 
     def test_dossier_sections_multiple_keys(self, data_dir_with_dossiers, capsys):
-        main(["-d", str(data_dir_with_dossiers), "dossier", "1",
-              "--sections", "identity", "producer_profile"])
+        main(["-d", str(data_dir_with_dossiers), "dossier", "1", "--sections", "identity", "producer_profile"])
         captured = capsys.readouterr()
         assert "## Identity" in captured.out
         assert "## Producer Profile" in captured.out
@@ -408,6 +391,7 @@ class TestErrorHandling:
         captured = capsys.readouterr()
         assert "Error:" in captured.err
 
+
 # ---------------------------------------------------------------------------
 # TestWishlistCli
 # ---------------------------------------------------------------------------
@@ -415,7 +399,6 @@ class TestErrorHandling:
 
 def _make_wishlist_dataset(tmp_path):
     """Extend base dataset with tracked_wine for wishlist CLI tests."""
-    from cellarbrain.markdown import dossier_filename
     from cellarbrain import companion_markdown
     from cellarbrain.settings import Settings
 
@@ -424,15 +407,21 @@ def _make_wishlist_dataset(tmp_path):
     rid = 1
 
     slug = companion_markdown.companion_dossier_slug(
-        90_001, "Test Winery", "Test Wine",
+        90_001,
+        "Test Winery",
+        "Test Wine",
     )
     tracked_wines = [
         {
-            "tracked_wine_id": 90_001, "winery_id": 1, "wine_name": "Test Wine",
-            "category": "Red wine", "appellation_id": 1,
+            "tracked_wine_id": 90_001,
+            "winery_id": 1,
+            "wine_name": "Test Wine",
+            "category": "Red wine",
+            "appellation_id": 1,
             "dossier_path": f"tracked/{slug}",
             "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
     writer.write_parquet("tracked_wine", tracked_wines, base)
@@ -471,7 +460,6 @@ class TestWishlistCli:
 
 class TestVerbosityFlags:
     def test_verbose_flag_parsed(self):
-        from cellarbrain.cli import _subcommand_main
         import argparse
 
         # Intercept argparse and capture parsed args
@@ -527,3 +515,177 @@ class TestVerbosityFlags:
         sub.add_parser("validate")
         args = parser.parse_args(["--log-file", "test.log", "validate"])
         assert args.log_file == "test.log"
+
+
+class TestDashboardSubcommand:
+    def test_dashboard_help_accepted(self):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["dashboard", "--help"])
+        assert exc_info.value.code == 0
+
+    def test_dashboard_port_parsed(self):
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-c", "--config", default=None)
+        parser.add_argument("-d", "--data-dir", default=None)
+        parser.add_argument("-v", "--verbose", action="count", default=0)
+        parser.add_argument("-q", "--quiet", action="store_true")
+        parser.add_argument("--log-file", default=None)
+        sub = parser.add_subparsers(dest="command")
+        dash = sub.add_parser("dashboard")
+        dash.add_argument("--port", type=int, default=8017)
+        dash.add_argument("--open", action="store_true")
+        dash.add_argument("--dev", action="store_true")
+        args = parser.parse_args(["dashboard", "--port", "9999"])
+        assert args.command == "dashboard"
+        assert args.port == 9999
+
+
+class TestIngestSubcommand:
+    def test_ingest_help_accepted(self):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["ingest", "--help"])
+        assert exc_info.value.code == 0
+
+    def test_ingest_args_parsed(self):
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-c", "--config", default=None)
+        parser.add_argument("-d", "--data-dir", default=None)
+        parser.add_argument("-v", "--verbose", action="count", default=0)
+        parser.add_argument("-q", "--quiet", action="store_true")
+        parser.add_argument("--log-file", default=None)
+        sub = parser.add_subparsers(dest="command")
+        ingest = sub.add_parser("ingest")
+        ingest.add_argument("--once", action="store_true")
+        ingest.add_argument("--dry-run", action="store_true")
+        ingest.add_argument("--setup", action="store_true")
+
+        args = parser.parse_args(["ingest", "--once", "--dry-run"])
+        assert args.command == "ingest"
+        assert args.once is True
+        assert args.dry_run is True
+        assert args.setup is False
+
+    def test_ingest_setup_flag(self):
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command")
+        ingest = sub.add_parser("ingest")
+        ingest.add_argument("--once", action="store_true")
+        ingest.add_argument("--dry-run", action="store_true")
+        ingest.add_argument("--setup", action="store_true")
+
+        args = parser.parse_args(["ingest", "--setup"])
+        assert args.setup is True
+
+
+# ---------------------------------------------------------------------------
+# TestRederiveFoodTagsSubcommand
+# ---------------------------------------------------------------------------
+
+
+class TestRederiveFoodTagsSubcommand:
+    def test_dry_run_no_writes(self, tmp_path, capsys):
+        """Dry run should not modify dossier files."""
+        # Create a minimal dossier with food_pairings
+        wines_dir = tmp_path / "wines" / "cellar"
+        wines_dir.mkdir(parents=True)
+        dossier = wines_dir / "0001-test-wine.md"
+        dossier.write_text(
+            "---\nwine_id: 1\ncategory: red\n"
+            "food_tags: []\nfood_groups: []\n---\n"
+            "# Test Wine\n\n## Food Pairings\n\n"
+            "### Recommended Pairings\n"
+            "<!-- source: agent:research -->\n"
+            "**Grilled lamb**, **duck confit**\n"
+            "<!-- source: agent:research \u2014 end -->\n",
+            encoding="utf-8",
+        )
+        # Create a food catalogue
+        _create_mini_catalogue(tmp_path)
+
+        main(
+            [
+                "-d",
+                str(tmp_path),
+                "rederive-food-tags",
+                "--dry-run",
+                "-o",
+                str(tmp_path),
+            ]
+        )
+        captured = capsys.readouterr()
+        assert "Would update" in captured.out
+
+        # File should still have empty tags
+        text = dossier.read_text(encoding="utf-8")
+        assert "food_tags: []" in text
+
+    def test_no_dossier_dir_exits(self, tmp_path):
+        """Missing wines/ directory should exit."""
+        with pytest.raises(SystemExit):
+            main(["-d", str(tmp_path), "rederive-food-tags", "-o", str(tmp_path)])
+
+    def test_skips_pending_dossiers(self, tmp_path, capsys):
+        """Dossiers with placeholder prose should be skipped."""
+        wines_dir = tmp_path / "wines" / "cellar"
+        wines_dir.mkdir(parents=True)
+        dossier = wines_dir / "0002-test-wine.md"
+        dossier.write_text(
+            "---\nwine_id: 2\ncategory: white\n"
+            "food_tags: []\nfood_groups: []\n---\n"
+            "# Test Wine 2\n\n## Food Pairings\n\n"
+            "### Recommended Pairings\n"
+            "<!-- source: agent:research -->\n"
+            "*Pending agent action.*\n"
+            "<!-- source: agent:research \u2014 end -->\n",
+            encoding="utf-8",
+        )
+        _create_mini_catalogue(tmp_path)
+
+        main(
+            [
+                "-d",
+                str(tmp_path),
+                "rederive-food-tags",
+                "--dry-run",
+                "-o",
+                str(tmp_path),
+            ]
+        )
+        captured = capsys.readouterr()
+        assert "skipped 1" in captured.out
+
+
+def _create_mini_catalogue(base_path: pathlib.Path) -> None:
+    """Create a minimal food_catalogue.parquet for testing.
+
+    The rederive command resolves the catalogue relative to data_dir.parent,
+    so we place it at base_path.parent / models/sommelier/.
+    """
+    import duckdb
+
+    catalogue_path = base_path.parent / "models" / "sommelier" / "food_catalogue.parquet"
+    catalogue_path.parent.mkdir(parents=True, exist_ok=True)
+
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE food_catalogue (
+            dish_id VARCHAR, dish_name VARCHAR, description VARCHAR,
+            ingredients VARCHAR[], cuisine VARCHAR, weight_class VARCHAR,
+            protein VARCHAR, cooking_method VARCHAR, flavour_profile VARCHAR[]
+        )
+    """)
+    con.execute("""
+        INSERT INTO food_catalogue VALUES
+        ('duck-confit', 'Duck Confit', 'Slow-cooked duck leg', ['duck', 'garlic'],
+         'French', 'heavy', 'poultry', 'slow_cook', ['rich', 'savory']),
+        ('grilled-lamb', 'Grilled Lamb', 'Lamb with herbs', ['lamb', 'rosemary'],
+         'Mediterranean', 'heavy', 'red_meat', 'grill', ['herbal', 'savory'])
+    """)
+    con.execute(f"COPY food_catalogue TO '{catalogue_path}' (FORMAT PARQUET)")
+    con.close()

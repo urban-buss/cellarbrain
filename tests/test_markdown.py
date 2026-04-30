@@ -4,22 +4,19 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from pathlib import Path
-
-import pytest
 
 from cellarbrain.markdown import (
     _drinking_status,
     _extract_agent_sections,
     _extract_frontmatter_agent_fields,
     _find_existing_dossier,
-    _make_slug,
     affected_wine_ids,
     dossier_filename,
     generate_dossiers,
     mark_deleted_dossiers,
     render_wine_dossier,
 )
+from cellarbrain.slugify import make_slug
 
 _NOW = datetime(2025, 6, 1, 12, 0, 0)
 
@@ -27,6 +24,7 @@ _NOW = datetime(2025, 6, 1, 12, 0, 0)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _wine(
     wine_id: int = 1,
@@ -58,29 +56,59 @@ def _wine(
     drinking_status: str = "unknown",
     age_years: int | None = None,
     price_tier: str = "unknown",
+    bottle_format: str = "Standard",
+    price_per_750ml: Decimal | None = None,
 ) -> dict:
     return {
-        "wine_id": wine_id, "winery_id": winery_id, "name": name,
-        "vintage": vintage, "is_non_vintage": is_non_vintage,
-        "appellation_id": appellation_id, "category": category,
-        "subcategory": None, "specialty": None, "sweetness": None,
-        "effervescence": None, "volume_ml": volume_ml, "container": None,
-        "hue": None, "cork": None,
-        "alcohol_pct": alcohol_pct, "acidity_g_l": None, "sugar_g_l": None,
-        "ageing_type": None, "ageing_months": None, "farming_type": None,
-        "serving_temp_c": None, "opening_type": None, "opening_minutes": None,
-        "drink_from": drink_from, "drink_until": drink_until,
-        "optimal_from": optimal_from, "optimal_until": optimal_until,
-        "list_price": list_price, "list_currency": list_currency,
-        "original_list_price": original_list_price, "original_list_currency": original_list_currency,
-        "comment": comment, "winemaking_notes": None,
-        "is_favorite": is_favorite, "is_wishlist": is_wishlist,
+        "wine_id": wine_id,
+        "winery_id": winery_id,
+        "name": name,
+        "vintage": vintage,
+        "is_non_vintage": is_non_vintage,
+        "appellation_id": appellation_id,
+        "category": category,
+        "subcategory": None,
+        "specialty": None,
+        "sweetness": None,
+        "effervescence": None,
+        "volume_ml": volume_ml,
+        "container": None,
+        "hue": None,
+        "cork": None,
+        "alcohol_pct": alcohol_pct,
+        "acidity_g_l": None,
+        "sugar_g_l": None,
+        "ageing_type": None,
+        "ageing_months": None,
+        "farming_type": None,
+        "serving_temp_c": None,
+        "opening_type": None,
+        "opening_minutes": None,
+        "drink_from": drink_from,
+        "drink_until": drink_until,
+        "optimal_from": optimal_from,
+        "optimal_until": optimal_until,
+        "list_price": list_price,
+        "list_currency": list_currency,
+        "original_list_price": original_list_price,
+        "original_list_currency": original_list_currency,
+        "comment": comment,
+        "winemaking_notes": None,
+        "is_favorite": is_favorite,
+        "is_wishlist": is_wishlist,
         "tracked_wine_id": tracked_wine_id,
-        "full_name": full_name, "grape_type": grape_type,
-        "primary_grape": primary_grape, "grape_summary": grape_summary,
-        "drinking_status": drinking_status, "age_years": age_years,
+        "full_name": full_name,
+        "grape_type": grape_type,
+        "primary_grape": primary_grape,
+        "grape_summary": grape_summary,
+        "drinking_status": drinking_status,
+        "age_years": age_years,
         "price_tier": price_tier,
-        "etl_run_id": 1, "updated_at": _NOW,
+        "bottle_format": bottle_format,
+        "price_per_750ml": price_per_750ml,
+        "format_group_id": None,
+        "etl_run_id": 1,
+        "updated_at": _NOW,
     }
 
 
@@ -99,6 +127,7 @@ def _render(wine: dict | None = None, **kwargs) -> str:
         pro_ratings=kwargs.get("pro_ratings", []),
         current_year=kwargs.get("current_year", 2026),
         existing_content=kwargs.get("existing_content"),
+        format_siblings=kwargs.get("format_siblings"),
     )
 
 
@@ -125,44 +154,46 @@ def _minimal_entities(
 # TestMakeSlug
 # ---------------------------------------------------------------------------
 
+
 class TestMakeSlug:
     def test_basic_slug(self):
-        assert _make_slug("Marques De Murrieta", None, 2016, False) == "marques-de-murrieta-2016"
+        assert make_slug("Marques De Murrieta", None, 2016, False) == "marques-de-murrieta-2016"
 
     def test_accented_chars(self):
-        assert _make_slug("Château Phélan Ségur", None, 2020, False) == "chateau-phelan-segur-2020"
+        assert make_slug("Château Phélan Ségur", None, 2020, False) == "chateau-phelan-segur-2020"
 
     def test_unicode_apostrophe(self):
-        assert _make_slug("Château d\u2019Aiguilhe", None, 2019, False) == "chateau-daiguilhe-2019"
+        assert make_slug("Château d\u2019Aiguilhe", None, 2019, False) == "chateau-daiguilhe-2019"
 
     def test_with_wine_name(self):
-        assert _make_slug("Spier", "21 Gables", 2020, False) == "spier-21-gables-2020"
+        assert make_slug("Spier", "21 Gables", 2020, False) == "spier-21-gables-2020"
 
     def test_non_vintage(self):
-        assert _make_slug("Dom", "Brut", None, True) == "dom-brut-nv"
+        assert make_slug("Dom", "Brut", None, True) == "dom-brut-nv"
 
     def test_no_name(self):
-        assert _make_slug("Spier", None, 2020, False) == "spier-2020"
+        assert make_slug("Spier", None, 2020, False) == "spier-2020"
 
     def test_no_winery(self):
-        assert _make_slug(None, "Cuvée", 2020, False) == "cuvee-2020"
+        assert make_slug(None, "Cuvée", 2020, False) == "cuvee-2020"
 
     def test_no_winery_no_name(self):
-        assert _make_slug(None, None, 2020, False) == "2020"
+        assert make_slug(None, None, 2020, False) == "2020"
 
     def test_truncation_at_60(self):
         long_name = "A" * 80
-        slug = _make_slug(long_name, None, 2020, False)
+        slug = make_slug(long_name, None, 2020, False)
         assert len(slug) <= 60
         assert not slug.endswith("-")
 
     def test_consecutive_special_chars(self):
-        assert _make_slug("A & B", "C / D", 2020, False) == "a-b-c-d-2020"
+        assert make_slug("A & B", "C / D", 2020, False) == "a-b-c-d-2020"
 
 
 # ---------------------------------------------------------------------------
 # TestDossierFilename
 # ---------------------------------------------------------------------------
+
 
 class TestDossierFilename:
     def test_basic(self):
@@ -181,6 +212,7 @@ class TestDossierFilename:
 # ---------------------------------------------------------------------------
 # TestFindExistingDossier
 # ---------------------------------------------------------------------------
+
 
 class TestFindExistingDossier:
     def test_finds_by_prefix(self, tmp_path):
@@ -221,6 +253,7 @@ class TestFindExistingDossier:
 # TestDrinkingStatus
 # ---------------------------------------------------------------------------
 
+
 class TestDrinkingStatus:
     def test_too_young(self):
         assert _drinking_status(2022, 2036, 2024, 2030, 2020) == "Too young"
@@ -248,6 +281,7 @@ class TestDrinkingStatus:
 # ---------------------------------------------------------------------------
 # TestExtractAgentSections
 # ---------------------------------------------------------------------------
+
 
 class TestExtractAgentSections:
     def test_extracts_populated_section(self):
@@ -282,12 +316,11 @@ class TestExtractAgentSections:
     def test_preserves_content_verbatim(self):
         inner = "\n**Bold** and *italic* with `code`\n- list item\n\n"
         content = (
-            "## Wine Description\n"
-            f"<!-- source: agent:research -->{inner}"
-            "<!-- source: agent:research \u2014 end -->\n"
+            f"## Wine Description\n<!-- source: agent:research -->{inner}<!-- source: agent:research \u2014 end -->\n"
         )
         result = _extract_agent_sections(content)
         assert inner in result["Wine Description"]
+
     def test_does_not_cross_h2_boundaries(self):
         """Regression: agent fence must associate with its own H2 section."""
         content = (
@@ -334,9 +367,11 @@ class TestExtractAgentSections:
         assert "TN content." in result["Tasting Notes"]
         assert "FP content." in result["Food Pairings"]
 
+
 # ---------------------------------------------------------------------------
 # TestExtractFrontmatterAgentFields
 # ---------------------------------------------------------------------------
+
 
 class TestExtractFrontmatterAgentFields:
     def test_extracts_populated_list(self):
@@ -362,37 +397,98 @@ class TestExtractFrontmatterAgentFields:
         assert result["agent_sections_populated"] == []
 
 
+class TestExtractFrontmatterFoodGroups:
+    def test_parses_food_groups(self):
+        content = (
+            "---\nfood_tags:\n  - duck-confit\nfood_groups:\n  - heavy\n  - French\nagent_sections_populated: []\n---\n"
+        )
+        result = _extract_frontmatter_agent_fields(content)
+        assert result["food_groups"] == ["heavy", "French"]
+
+    def test_empty_food_groups(self):
+        content = "---\nfood_groups: []\nagent_sections_populated: []\n---\n"
+        result = _extract_frontmatter_agent_fields(content)
+        assert result["food_groups"] == []
+
+    def test_missing_food_groups(self):
+        content = "---\nagent_sections_populated: []\n---\n"
+        result = _extract_frontmatter_agent_fields(content)
+        assert result["food_groups"] == []
+
+
 # ---------------------------------------------------------------------------
 # TestRenderWineDossier
 # ---------------------------------------------------------------------------
 
+
 class TestRenderWineDossier:
     def test_full_wine_all_data(self):
         w = _wine(
-            wine_id=25, appellation_id=1, alcohol_pct=14.0,
-            drink_from=2022, drink_until=2036, optimal_from=2024, optimal_until=2030,
-            comment="Great wine", list_price=Decimal("39.00"), list_currency="CHF",
-            original_list_price=Decimal("39.00"), original_list_currency="CHF",
+            wine_id=25,
+            appellation_id=1,
+            alcohol_pct=14.0,
+            drink_from=2022,
+            drink_until=2036,
+            optimal_from=2024,
+            optimal_until=2030,
+            comment="Great wine",
+            list_price=Decimal("39.00"),
+            list_currency="CHF",
+            original_list_price=Decimal("39.00"),
+            original_list_currency="CHF",
         )
-        app = {"appellation_id": 1, "country": "Spain", "region": "La Rioja", "subregion": "Rioja", "classification": "DOCa"}
+        app = {
+            "appellation_id": 1,
+            "country": "Spain",
+            "region": "La Rioja",
+            "subregion": "Rioja",
+            "classification": "DOCa",
+        }
         grapes = [{"grape_name": "Tempranillo", "percentage": 82.0, "sort_order": 1}]
-        bottles = [{
-            "bottle_id": 1, "wine_id": 25, "status": "stored",
-            "cellar_id": 1, "shelf": "A1",
-            "provider_id": 1, "purchase_date": date(2024, 12, 7),
-            "original_purchase_price": Decimal("39.00"), "original_purchase_currency": "CHF",
-            "purchase_price": Decimal("39.00"), "purchase_currency": "CHF",
-            "acquisition_type": "market_price",
-            "output_date": None, "output_type": None, "output_comment": None,
-        }]
-        ratings = [{"rating_id": 1, "wine_id": 25, "source": "JS", "score": 92.0, "max_score": 100, "review_text": None}]
-        tastings = [{"tasting_id": 1, "wine_id": 25, "tasting_date": date(2024, 2, 21), "note": "Great!", "score": 96.0, "max_score": 100}]
+        bottles = [
+            {
+                "bottle_id": 1,
+                "wine_id": 25,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A1",
+                "provider_id": 1,
+                "purchase_date": date(2024, 12, 7),
+                "original_purchase_price": Decimal("39.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("39.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            }
+        ]
+        ratings = [
+            {"rating_id": 1, "wine_id": 25, "source": "JS", "score": 92.0, "max_score": 100, "review_text": None}
+        ]
+        tastings = [
+            {
+                "tasting_id": 1,
+                "wine_id": 25,
+                "tasting_date": date(2024, 2, 21),
+                "note": "Great!",
+                "score": 96.0,
+                "max_score": 100,
+            }
+        ]
 
         md = render_wine_dossier(
-            wine=w, winery_name="Marques De Murrieta", appellation=app,
-            grapes=grapes, bottles=bottles,
-            cellar_names={1: "Main Cellar"}, provider_names={1: "Mövenpick"},
-            tastings=tastings, pro_ratings=ratings, current_year=2026,
+            wine=w,
+            winery_name="Marques De Murrieta",
+            appellation=app,
+            grapes=grapes,
+            bottles=bottles,
+            cellar_names={1: "Main Cellar"},
+            provider_names={1: "Mövenpick"},
+            tastings=tastings,
+            pro_ratings=ratings,
+            current_year=2026,
         )
         assert "wine_id: 25" in md
         assert "# Marques De Murrieta 2020" in md
@@ -506,29 +602,88 @@ class TestRenderWineDossier:
         assert "agent_sections_populated:" in md
         assert "producer_profile" in md
 
+    def test_frontmatter_contains_bottle_format_and_price_per_750ml(self):
+        w = _wine(
+            bottle_format="Magnum",
+            price_per_750ml=Decimal("40.00"),
+            volume_ml=1500,
+        )
+        md = _render(wine=w)
+        assert 'bottle_format: "Magnum"' in md
+        assert "price_per_750ml: 40.00" in md
+
+    def test_frontmatter_price_per_750ml_null_when_no_price(self):
+        w = _wine()
+        md = _render(wine=w)
+        assert 'bottle_format: "Standard"' in md
+        assert "price_per_750ml: \u2014" in md
+
+    def test_subtitle_shows_format_label_for_non_standard(self):
+        w = _wine(volume_ml=1500, bottle_format="Magnum")
+        app = {"appellation_id": 1, "country": "France", "region": "Bordeaux"}
+        md = _render(wine=w, appellation=app)
+        assert "1500 mL (Magnum)" in md
+
+    def test_subtitle_no_format_label_for_standard(self):
+        w = _wine(volume_ml=750, bottle_format="Standard")
+        app = {"appellation_id": 1, "country": "France", "region": "Bordeaux"}
+        md = _render(wine=w, appellation=app)
+        assert "750 mL" in md
+        assert "(Standard)" not in md
+
     def test_multiple_bottles_aggregated_in_purchase_history(self):
         bottles = [
-            {"bottle_id": 1, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A1",
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
-            {"bottle_id": 2, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A2",
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
-            {"bottle_id": 3, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A3",
-             "provider_id": 2, "purchase_date": date(2024, 6, 1),
-             "original_purchase_price": Decimal("25.00"), "original_purchase_currency": "EUR",
-             "purchase_price": Decimal("23.25"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
+            {
+                "bottle_id": 1,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A1",
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
+            {
+                "bottle_id": 2,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A2",
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
+            {
+                "bottle_id": 3,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A3",
+                "provider_id": 2,
+                "purchase_date": date(2024, 6, 1),
+                "original_purchase_price": Decimal("25.00"),
+                "original_purchase_currency": "EUR",
+                "purchase_price": Decimal("23.25"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
         ]
         md = _render(
             bottles=bottles,
@@ -548,21 +703,40 @@ class TestRenderWineDossier:
 
     def test_consumption_history_with_gone_bottles(self):
         bottles = [
-            {"bottle_id": 1, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A1",
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
-            {"bottle_id": 2, "wine_id": 1, "status": "drunk",
-             "cellar_id": None, "shelf": None,
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": date(2025, 3, 15), "output_type": "drunk",
-             "output_comment": "Birthday dinner"},
+            {
+                "bottle_id": 1,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A1",
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
+            {
+                "bottle_id": 2,
+                "wine_id": 1,
+                "status": "drunk",
+                "cellar_id": None,
+                "shelf": None,
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": date(2025, 3, 15),
+                "output_type": "drunk",
+                "output_comment": "Birthday dinner",
+            },
         ]
         md = _render(
             bottles=bottles,
@@ -579,10 +753,59 @@ class TestRenderWineDossier:
         assert "## Cellar Inventory" in md
         assert "Total bottles:** 1" in md
 
+    # ---- Format group / siblings ----
+
+    def test_frontmatter_format_group_id_present(self):
+        w = _wine(wine_id=1)
+        w["format_group_id"] = 1
+        md = _render(wine=w)
+        assert "format_group_id: 1" in md
+
+    def test_frontmatter_format_group_id_null(self):
+        md = _render()
+        assert "format_group_id: null" in md
+
+    def test_frontmatter_siblings_list(self):
+        w = _wine(wine_id=1, volume_ml=750, bottle_format="Standard")
+        w["format_group_id"] = 1
+        sibling = _wine(wine_id=2, volume_ml=1500, bottle_format="Magnum")
+        sibling["format_group_id"] = 1
+        md = _render(wine=w, format_siblings=[sibling])
+        assert "format_siblings:" in md
+        assert "wine_id: 2" in md
+        assert 'bottle_format: "Magnum"' in md
+        assert "volume_ml: 1500" in md
+
+    def test_related_formats_section_rendered(self):
+        w = _wine(wine_id=1, volume_ml=750, bottle_format="Standard", drink_from=2024, drink_until=2030)
+        w["format_group_id"] = 1
+        sibling = _wine(wine_id=2, volume_ml=1500, bottle_format="Magnum", drink_from=2026, drink_until=2035)
+        sibling["format_group_id"] = 1
+        md = _render(wine=w, format_siblings=[sibling])
+        assert "## Related Formats" in md
+        assert "**Standard**" in md  # current wine bolded
+        assert "| Magnum |" in md
+
+    def test_no_related_formats_for_single_wine(self):
+        md = _render()
+        assert "## Related Formats" not in md
+
+    def test_related_formats_sorted_by_volume(self):
+        w = _wine(wine_id=2, volume_ml=1500, bottle_format="Magnum", drink_from=2026, drink_until=2035)
+        w["format_group_id"] = 1
+        sibling = _wine(wine_id=1, volume_ml=750, bottle_format="Standard", drink_from=2024, drink_until=2030)
+        sibling["format_group_id"] = 1
+        md = _render(wine=w, format_siblings=[sibling])
+        # Standard (750) should come before Magnum (1500)
+        std_pos = md.index("Standard")
+        mag_pos = md.index("**Magnum**")
+        assert std_pos < mag_pos
+
 
 # ---------------------------------------------------------------------------
 # TestGenerateDossiers
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateDossiers:
     def test_generates_all_files(self, tmp_path):
@@ -600,13 +823,23 @@ class TestGenerateDossiers:
     def test_stored_bottles_go_to_cellar(self, tmp_path):
         wines = [_wine(wine_id=1)]
         bottles = [
-            {"bottle_id": 1, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A1",
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
+            {
+                "bottle_id": 1,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A1",
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
         ]
         entities = _minimal_entities(wines=wines)
         entities["bottle"] = bottles
@@ -688,13 +921,23 @@ class TestGenerateDossiers:
         # Now this wine has a stored bottle
         entities = _minimal_entities()
         entities["bottle"] = [
-            {"bottle_id": 1, "wine_id": 1, "status": "stored",
-             "cellar_id": 1, "shelf": "A1",
-             "provider_id": 1, "purchase_date": date(2024, 1, 1),
-             "original_purchase_price": Decimal("20.00"), "original_purchase_currency": "CHF",
-             "purchase_price": Decimal("20.00"), "purchase_currency": "CHF",
-             "acquisition_type": "market_price",
-             "output_date": None, "output_type": None, "output_comment": None},
+            {
+                "bottle_id": 1,
+                "wine_id": 1,
+                "status": "stored",
+                "cellar_id": 1,
+                "shelf": "A1",
+                "provider_id": 1,
+                "purchase_date": date(2024, 1, 1),
+                "original_purchase_price": Decimal("20.00"),
+                "original_purchase_currency": "CHF",
+                "purchase_price": Decimal("20.00"),
+                "purchase_currency": "CHF",
+                "acquisition_type": "market_price",
+                "output_date": None,
+                "output_type": None,
+                "output_comment": None,
+            },
         ]
         paths = generate_dossiers(entities, tmp_path, 2026)
         assert len(paths) == 1
@@ -740,7 +983,8 @@ class TestGenerateDossiers:
 
         old_fname = dossier_filename(1, "W", "Old", 2020, False)
         (archive_dir / old_fname).write_text(
-            "---\nwine_id: 1\n---\n# W Old 2020\n", encoding="utf-8",
+            "---\nwine_id: 1\n---\n# W Old 2020\n",
+            encoding="utf-8",
         )
 
         wines = [_wine(wine_id=1, name="New")]
@@ -783,6 +1027,7 @@ class TestGenerateDossiers:
 # ---------------------------------------------------------------------------
 # TestMarkDeletedDossiers
 # ---------------------------------------------------------------------------
+
 
 class TestMarkDeletedDossiers:
     def test_marks_file_as_deleted(self, tmp_path):
@@ -835,6 +1080,7 @@ class TestMarkDeletedDossiers:
 # TestAffectedWineIds
 # ---------------------------------------------------------------------------
 
+
 class TestAffectedWineIds:
     def _entities(self) -> dict[str, list[dict]]:
         return {
@@ -850,25 +1096,61 @@ class TestAffectedWineIds:
             "appellation": [],
             "grape": [],
             "wine_grape": [
-                {"wine_id": 1, "grape_id": 5, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "wine_id": 1,
+                    "grape_id": 5,
+                    "percentage": 100.0,
+                    "sort_order": 1,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
             "bottle": [
-                {"bottle_id": 100, "wine_id": 2, "status": "stored",
-                 "cellar_id": 1, "shelf": "A", "provider_id": 1,
-                 "purchase_date": date(2024, 1, 1),
-                 "original_purchase_price": Decimal("10"), "original_purchase_currency": "CHF",
-                 "purchase_price": Decimal("10"), "purchase_currency": "CHF",
-                 "acquisition_type": "market_price",
-                 "output_date": None, "output_type": None, "output_comment": None,
-                 "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "bottle_id": 100,
+                    "wine_id": 2,
+                    "status": "stored",
+                    "cellar_id": 1,
+                    "shelf": "A",
+                    "provider_id": 1,
+                    "purchase_date": date(2024, 1, 1),
+                    "original_purchase_price": Decimal("10"),
+                    "original_purchase_currency": "CHF",
+                    "purchase_price": Decimal("10"),
+                    "purchase_currency": "CHF",
+                    "acquisition_type": "market_price",
+                    "output_date": None,
+                    "output_type": None,
+                    "output_comment": None,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
             "cellar": [],
             "provider": [],
             "tasting": [
-                {"tasting_id": 200, "wine_id": 3, "tasting_date": date(2024, 1, 1), "note": "x", "score": 90.0, "max_score": 100, "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "tasting_id": 200,
+                    "wine_id": 3,
+                    "tasting_date": date(2024, 1, 1),
+                    "note": "x",
+                    "score": 90.0,
+                    "max_score": 100,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
             "pro_rating": [
-                {"rating_id": 300, "wine_id": 1, "source": "JS", "score": 92.0, "max_score": 100, "review_text": None, "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "rating_id": 300,
+                    "wine_id": 1,
+                    "source": "JS",
+                    "score": 92.0,
+                    "max_score": 100,
+                    "review_text": None,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
         }
 

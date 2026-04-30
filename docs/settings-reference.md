@@ -16,7 +16,7 @@ All configuration is managed through frozen dataclasses in `settings.py`. Values
 |------------|----------------|
 | Scalars | TOML value replaces default |
 | Tables (`classification_short`, `currency.rates`, `search.synonyms`) | Merged — TOML entries add/override; defaults preserved for absent keys |
-| Arrays (`price_tiers`, `agent_sections`, `offsite_cellars`) | Replaced entirely when present in TOML |
+| Arrays (`price_tiers`, `agent_sections`, `cellar_rules`) | Replaced entirely when present in TOML |
 
 ## Dataclasses
 
@@ -104,6 +104,8 @@ Display labels for each drinking status enum:
 
 Rates are merged with TOML so you can add currencies without overriding the built-in ones.
 
+Agents can also manage rates at runtime via the `currency_rates` MCP tool. Agent-managed rates are stored in `{data_dir}/currency-rates.json` and take highest priority (override both built-in defaults and TOML values). This sidecar file is loaded automatically by `load_settings()` during ETL and MCP operations.
+
 ### `WishlistConfig`
 
 | Field | Type | Default | Purpose |
@@ -167,11 +169,71 @@ Synonyms are merged from three layers (highest priority wins):
 | `log_file` | `str \| None` | `None` | Path to log file; `None` disables file logging |
 | `max_bytes` | `int` | `5242880` | Max file size in bytes before rotation (5 MB) |
 | `backup_count` | `int` | `3` | Number of rotated backup files to keep |
-| `format` | `str` | `"%(asctime)s %(levelname)-8s %(name)s — %(message)s"` | Log line format string |
+| `format` | `str` | `"%(asctime)s %(levelname)-8s %(name)s — %(message)s"` | Log line format string. Set to `"json"` for structured JSON log lines |
 | `date_format` | `str` | `"%Y-%m-%d %H:%M:%S"` | Timestamp format |
+| `turn_gap_seconds` | `float` | `2.0` | Idle gap (seconds) before minting a new turn ID in MCP observability |
+| `slow_threshold_ms` | `float` | `2000.0` | Warn when a tool invocation exceeds this duration |
+| `log_db` | `str \| None` | `None` | Explicit path to DuckDB log store. Default: `<data_dir>/logs/cellarbrain-logs.duckdb` |
+| `retention_days` | `int` | `90` | Auto-prune events older than this when `cellarbrain logs --prune` is run |
 
 CLI flags override TOML: `-v` sets INFO, `-vv` sets DEBUG, `-q` sets ERROR, `--log-file` overrides `log_file`.
 When running `cellarbrain mcp`, stderr is locked to WARNING to protect the JSON-RPC transport; use `log_file` for debug output.
+
+### `DashboardConfig`
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `port` | `int` | `8017` | HTTP port for the web dashboard |
+| `workbench_read_only` | `bool` | `True` | Block write tools in the workbench by default |
+| `workbench_allow` | `list[str]` | `[]` | Write tools explicitly allowed even when `workbench_read_only` is `True` |
+
+TOML example:
+
+```toml
+[dashboard]
+port = 9000
+workbench_read_only = true
+workbench_allow = ["log_price"]
+```
+### `IngestConfig`
+
+Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Credentials are stored externally (system keyring or environment variables) — never in TOML.
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|--------|
+| `imap_host` | `str` | `"imap.mail.me.com"` | IMAP server hostname |
+| `imap_port` | `int` | `993` | IMAP server port |
+| `use_ssl` | `bool` | `True` | Use SSL/TLS for IMAP connection |
+| `mailbox` | `str` | `"INBOX"` | IMAP folder to monitor |
+| `subject_filter` | `str` | `"[VinoCell] CSV file"` | Only process emails matching this subject |
+| `sender_filter` | `str` | `""` | Only process emails from this sender (empty = no filter) |
+| `poll_interval` | `int` | `60` | Seconds between poll cycles |
+| `batch_window` | `int` | `300` | Seconds within which all 3 files must arrive to form a batch |
+| `expected_files` | `tuple[str, ...]` | `("export-wines.csv", "export-bottles-stored.csv", "export-bottles-gone.csv")` | Attachment filenames that form a complete batch |
+| `processed_action` | `str` | `"flag"` | What to do with processed emails: `"flag"` (mark as read) or `"move"` |
+| `processed_folder` | `str` | `"VinoCell/Processed"` | Target IMAP folder when `processed_action = "move"` |
+
+TOML example:
+
+```toml
+[ingest]
+imap_host = "imap.mail.me.com"
+poll_interval = 30
+batch_window = 600
+processed_action = "move"
+processed_folder = "Archive/VinoCell"
+```
+
+Credential storage:
+
+```bash
+# Interactive setup (stores in system keyring)
+cellarbrain ingest --setup
+
+# Or use environment variables
+export CELLARBRAIN_IMAP_USER="user@icloud.com"
+export CELLARBRAIN_IMAP_PASSWORD="app-specific-password"
+```
 ### `AgentSection`
 
 Defines a single agent-owned section:
@@ -205,8 +267,9 @@ Composes all sub-configs plus convenience helpers:
 | `dossier` | `DossierConfig` |
 | `agent_sections` | `tuple[AgentSection, ...]` |
 | `classification_short` | `dict[str, str]` |
-| `offsite_cellars` | `tuple[str, ...]` |
-| `in_transit_cellars` | `tuple[str, ...]` |
+| `offsite_cellars` | `tuple[str, ...]` | Legacy — use `cellar_rules` instead |
+| `in_transit_cellars` | `tuple[str, ...]` | Legacy — use `cellar_rules` instead |
+| `cellar_rules` | `tuple[CellarRule, ...]` |
 | `currency` | `CurrencyConfig` |
 | `etl` | `EtlConfig` |
 | `identity` | `IdentityConfig` |
@@ -254,9 +317,18 @@ rename_threshold = 0.85
 # custom_term = "stored_value"    # add custom DE→EN mappings
 # stopword = ""                   # empty string drops the token
 
-offsite_cellars = ["Remote storage"]
+# Legacy flat lists (still supported, but prefer cellar_rules):
+# offsite_cellars = ["Remote storage"]
+# in_transit_cellars = ["99 Orders & Subscriptions"]
 
-in_transit_cellars = ["99 Orders & Subscriptions"]
+# Cellar classification rules (first match wins, default is "onsite"):
+[[cellar_rules]]
+pattern = "03*"
+classification = "offsite"
+
+[[cellar_rules]]
+pattern = "99*"
+classification = "in_transit"
 
 [[price_tiers]]
 label = "budget"

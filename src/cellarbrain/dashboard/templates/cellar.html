@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% set active_nav = "cellar" %}
+{% block title %}Wine Catalogue — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Wine Catalogue{% endblock %}
+
+{% block content %}
+<div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; align-items:end;">
+    <div style="flex:1; min-width:200px;">
+        <input type="search" placeholder="Search wines…" value="{{ q }}"
+               hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+               hx-trigger="input changed delay:300ms"
+               hx-include="[name='category'],[name='region'],[name='status'],[name='vintage_min'],[name='vintage_max'],[name='hide_empty']"
+               name="q" id="wine-search">
+    </div>
+    <div>
+        <select name="category" hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+                hx-include="#wine-search,[name='region'],[name='status'],[name='vintage_min'],[name='vintage_max'],[name='hide_empty']">
+            <option value="">All categories</option>
+            {% for c in filters.category %}
+            <option value="{{ c }}" {% if category == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <select name="region" hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+                hx-include="#wine-search,[name='category'],[name='status'],[name='vintage_min'],[name='vintage_max'],[name='hide_empty']">
+            <option value="">All regions</option>
+            {% for r in filters.region %}
+            <option value="{{ r }}" {% if region == r %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <select name="status" hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+                hx-include="#wine-search,[name='category'],[name='region'],[name='vintage_min'],[name='vintage_max'],[name='hide_empty']">
+            <option value="">All statuses</option>
+            {% for s in filters.drinking_status %}
+            <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="number" name="vintage_min" placeholder="From" style="width:80px;"
+               value="{{ vintage_min|default('') }}"
+               hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+               hx-trigger="change"
+               hx-include="#wine-search,[name='category'],[name='region'],[name='status'],[name='vintage_max'],[name='hide_empty']">
+        <span>–</span>
+        <input type="number" name="vintage_max" placeholder="To" style="width:80px;"
+               value="{{ vintage_max|default('') }}"
+               hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+               hx-trigger="change"
+               hx-include="#wine-search,[name='category'],[name='region'],[name='status'],[name='vintage_min'],[name='hide_empty']">
+    </div>
+    <div style="display:flex; align-items:center; gap:0.3rem;">
+        <label style="margin:0; font-size:0.85rem; white-space:nowrap; cursor:pointer;">
+            <input type="hidden" name="hide_empty" value="0" id="hide-empty-fallback">
+            <input type="checkbox" name="hide_empty" value="1"
+                   {% if hide_empty %}checked{% endif %}
+                   hx-get="/cellar" hx-target="#wine-tbody" hx-swap="innerHTML"
+                   hx-include="#wine-search,[name='category'],[name='region'],[name='status'],[name='vintage_min'],[name='vintage_max'],#hide-empty-fallback"
+                   style="margin:0 0.3rem 0 0;">
+            Hide empty
+        </label>
+    </div>
+</div>
+
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            {% set base_params = "q=" ~ q ~ "&category=" ~ category ~ "&region=" ~ region ~ "&status=" ~ status ~ "&hide_empty=" ~ ("1" if hide_empty else "0") %}
+            {% for col_id, col_label in [("wine_name", "Wine"), ("vintage", "Vintage"), ("winery_name", "Winery"), ("region", "Region"), ("category", "Category"), ("bottles_stored", "Bottles"), ("price", "Price"), ("drinking_status", "Status")] %}
+            <th>
+                <a href="/cellar?{{ base_params }}&sort={{ col_id }}&dir={% if sort == col_id and not desc %}desc{% else %}asc{% endif %}"
+                   hx-get="/cellar?{{ base_params }}&sort={{ col_id }}&dir={% if sort == col_id and not desc %}desc{% else %}asc{% endif %}"
+                   hx-target="#wine-tbody" hx-swap="innerHTML">
+                    {{ col_label }}{% if sort == col_id %}{{ " ▼" if desc else " ▲" }}{% endif %}
+                </a>
+            </th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody id="wine-tbody">
+        {% include "partials/wine_rows.html" %}
+    </tbody>
+</table>
+</figure>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+    <span style="font-size:0.85rem; color:var(--pico-muted-color);">
+        {{ total }} wine{{ "s" if total != 1 }} found
+    </span>
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+        {% if page > 1 %}
+        <a href="/cellar?page={{ page - 1 }}&sort={{ sort }}&dir={% if desc %}desc{% else %}asc{% endif %}&q={{ q }}&category={{ category }}&region={{ region }}&status={{ status }}&hide_empty={% if hide_empty %}1{% else %}0{% endif %}"
+           role="button" class="outline secondary" style="font-size:0.8rem; padding:0.2rem 0.6rem;">← Prev</a>
+        {% endif %}
+        <span style="font-size:0.85rem;">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="/cellar?page={{ page + 1 }}&sort={{ sort }}&dir={% if desc %}desc{% else %}asc{% endif %}&q={{ q }}&category={{ category }}&region={{ region }}&status={{ status }}&hide_empty={% if hide_empty %}1{% else %}0{% endif %}"
+           role="button" class="outline secondary" style="font-size:0.8rem; padding:0.2rem 0.6rem;">Next →</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="kpi-grid" style="margin-top:1.5rem;">
+    <div class="kpi-card">
+        <div class="value">{{ quick_stats.wines }}</div>
+        <div class="label">Wines</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ quick_stats.bottles }}</div>
+        <div class="label">Bottles</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">CHF {{ "{:,.0f}".format(quick_stats.value or 0) }}</div>
+        <div class="label">Total Value</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ quick_stats.ready }}</div>
+        <div class="label">Ready to Drink</div>
+    </div>
+</div>
+{% endblock %}

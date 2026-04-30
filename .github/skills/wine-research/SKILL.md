@@ -32,7 +32,7 @@ Defensive, fact-only research workflow for populating agent-owned sections in wi
 | Tier | Sources | Trust |
 |---|---|---|
 | **1a — Producer** | Winery / estate homepage | High — most authoritative for producer identity |
-| **1b — Curated vendors** | Millésima (millesima.co.uk), Mövenpick Wein (moevenpick-wein.com), Gerstl (gerstl.ch) | High — aggregated critic scores + editorial content |
+| **1b — Curated vendors** | Millésima (millesima.co.uk), Wine-Searcher (incl. Producer tab), Mövenpick Wein (moevenpick-wein.com), Gerstl (gerstl.ch) | High — aggregated critic scores + editorial content. Wine-Searcher Producer tab provides founding year, owner, region as fallback when estate sites fail. |
 | **2 — Open web** | Wine Cellar Insider, winemag.co.za, Wikipedia, Falstaff, regional critics, Google search | Medium-High — verify identity carefully |
 | **3 — Community** | Vivino (crowd data only), CellarTracker | Low — last resort, cross-reference only |
 | **Avoid** | Personal blogs, unknown sites, AI-generated content, social media | Do not cite |
@@ -58,6 +58,7 @@ Every section must end with `Sources: [list URLs visited]`.
 
 ### `vintage_report` (100–200 words)
 - **Skip for non-vintage wines** (vintage is null or NV)
+- **Consult the vintage-page region map** before fetching Wine-Searcher vintage pages. Major regions (Bordeaux, Burgundy, Rhône, Champagne, Piedmont, Tuscany) have dedicated pages; minor regions (Ticino, Alentejo, Languedoc, Armenia, Mendoza) do not — skip the fetch and extract vintage notes from retailer product pages instead.
 - Growing season for the specific region, not the whole country
 - Key weather events, harvest timing
 - Regional consensus (cite source)
@@ -108,6 +109,7 @@ Markdown table of verified scores only:
 2. Execute single-wine workflow for each, one at a time
 3. Track progress with `todo` tool
 4. Finish all sections for wine A before starting wine B
+5. For wines with `format_group_id` in frontmatter, use `batch_update_dossier` to apply shared sections (e.g. `producer_profile`, `vintage_report`) to all format siblings at once
 
 ### Prioritisation (when user doesn't specify)
 1. Favourites with pending sections

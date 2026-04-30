@@ -1,0 +1,15 @@
+{% for w in wines %}
+<tr>
+    <td><a href="/cellar/{{ w.wine_id }}">{{ w.wine_name }}</a></td>
+    <td>{{ w.vintage }}</td>
+    <td>{{ w.winery_name }}</td>
+    <td>{{ w.region or w.country or "—" }}</td>
+    <td>{{ w.category }}</td>
+    <td>{{ w.bottles_stored }}</td>
+    <td>{% if w.price %}CHF {{ "%.2f"|format(w.price) }}{% else %}—{% endif %}</td>
+    <td><span class="badge {% if w.drinking_status == 'optimal' %}badge-ok{% elif w.drinking_status == 'past_optimal' %}badge-error{% endif %}">{{ w.drinking_status or "—" }}</span></td>
+</tr>
+{% endfor %}
+{% if not wines %}
+<tr><td colspan="8" style="text-align:center; color:var(--pico-muted-color);">No wines found.</td></tr>
+{% endif %}

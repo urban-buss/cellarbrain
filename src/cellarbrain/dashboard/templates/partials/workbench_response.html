@@ -1,0 +1,30 @@
+{% if result %}
+<div style="margin-bottom:0.5rem;">
+    <span class="badge {% if result.error %}badge-error{% else %}badge-ok{% endif %}">
+        {% if result.error %}Error{% else %}OK{% endif %}
+    </span>
+    <span style="font-size:0.8rem; color:var(--pico-muted-color); margin-left:0.5rem;">
+        {{ result.elapsed_ms }} ms
+    </span>
+    {% if not result.error %}
+    <button class="outline secondary" style="font-size:0.7rem; padding:0.1rem 0.4rem; margin-left:0.5rem;"
+            onclick="copyResponse('response-raw')">Copy</button>
+    {% endif %}
+</div>
+
+{% if result.error %}
+<article style="background:#fecaca; padding:0.75rem; border-radius:6px;">
+    <strong>{{ result.error_type }}:</strong>
+    <span style="font-size:0.85rem;">{{ result.error }}</span>
+</article>
+{% else %}
+<div style="margin-bottom:0.5rem;">
+    <button class="outline secondary" style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+            onclick="toggleView('response-raw', 'response-rendered')">Toggle Raw / Rendered</button>
+</div>
+<pre id="response-raw" style="font-size:0.8rem; white-space:pre-wrap; word-break:break-word; max-height:500px; overflow:auto;">{{ result.result }}</pre>
+<div id="response-rendered" class="hidden" style="font-size:0.85rem; max-height:500px; overflow:auto;">
+    {{ result.result }}
+</div>
+{% endif %}
+{% endif %}

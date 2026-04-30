@@ -9,7 +9,7 @@ All views are defined as SQL templates in `flat.py`. Table names are substituted
 Two-layer architecture:
 
 - **Full views** (`wines_full`, `bottles_full`): all columns with backward-compatible aliases. Used by `cellar_stats`, `cellar_churn`, `find_wine`, and agents needing technical detail.
-- **Slim views** (`wines`, `bottles`): curated ~18/~16 columns with clean naming. Default surface for agent-submitted SQL.
+- **Slim views** (`wines`, `bottles`): curated ~23/~20 columns with clean naming. Default surface for agent-submitted SQL.
 
 ### `wines_full` View
 
@@ -24,6 +24,7 @@ Key columns:
 | `country`, `region`, `subregion`, `classification` | appellation |
 | `blend_type`, `primary_grape`, `grapes` | wine (computed) |
 | `drinking_status`, `age_years`, `price_tier` | wine (computed) |
+| `bottle_format`, `price_per_750ml` | wine (computed — volume-normalised pricing) |
 | `style_tags` | slim only (computed — `CONCAT_WS` of subcategory, sweetness, effervescence, specialty) |
 | `is_favorite`, `is_wishlist`, `tracked_wine_id` | wine |
 | `bottles_stored`, `bottles_consumed` | COUNT from bottle (stored excludes in-transit) |
@@ -35,9 +36,9 @@ Key columns:
 
 ### `wines` View (Slim)
 
-Curated 19-column subset of `wines_full` for agent queries:
+Curated 23-column subset of `wines_full` for agent queries:
 
-`wine_id`, `wine_name`, `vintage`, `winery_name`, `category`, `country`, `region`, `subregion`, `primary_grape`, `blend_type`, `drinking_status`, `price_tier`, `price`, `bottles_stored`, `bottles_on_order`, `bottles_consumed`, `is_favorite`, `is_wishlist`, `tracked_wine_id`.
+`wine_id`, `wine_name`, `vintage`, `winery_name`, `category`, `country`, `region`, `subregion`, `primary_grape`, `blend_type`, `drinking_status`, `price_tier`, `price`, `price_per_750ml`, `volume_ml`, `bottle_format`, `bottles_stored`, `bottles_on_order`, `bottles_consumed`, `is_favorite`, `is_wishlist`, `tracked_wine_id`, `style_tags`.
 
 ### `bottles_full` View
 
@@ -47,9 +48,9 @@ Key columns: `bottle_id`, `wine_id`, `wine_name`, `vintage`, `winery_name`, `cou
 
 ### `bottles` View (Slim)
 
-Curated 17-column subset of `bottles_full` for agent queries:
+Curated 20-column subset of `bottles_full` for agent queries:
 
-`bottle_id`, `wine_id`, `wine_name`, `vintage`, `winery_name`, `category`, `country`, `region`, `primary_grape`, `drinking_status`, `price_tier`, `price`, `status`, `cellar_name`, `shelf`, `output_date`, `output_type`.
+`bottle_id`, `wine_id`, `wine_name`, `vintage`, `winery_name`, `category`, `country`, `region`, `primary_grape`, `drinking_status`, `price_tier`, `price`, `price_per_750ml`, `volume_ml`, `bottle_format`, `status`, `cellar_name`, `shelf`, `output_date`, `output_type`.
 
 ### `tracked_wines` View
 
@@ -83,7 +84,7 @@ Built on top of the slim or full views:
 | `wines_drinking_now` | `wines` | 20 | `WHERE drinking_status IN ('optimal','drinkable') AND bottles_stored > 0` |
 | `wines_wishlist` | `_wines_wishlist` | 20 | Wishlist/favorite wines |
 
-All convenience views expose slim columns — 20 for wine views, 17 for bottle views — keeping agent responses compact.
+All convenience views expose slim columns — 23 for wine views, 20 for bottle views — keeping agent responses compact.
 
 ### Internal Full-Column Views
 

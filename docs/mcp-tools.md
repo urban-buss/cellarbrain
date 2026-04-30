@@ -1,12 +1,24 @@
 # MCP Tools Reference
 
-19 tools, 10 resources, and prompts exposed via FastMCP with stdio transport.
+20 tools + `server_stats`, 10 resources, and prompts exposed via FastMCP with stdio transport.
 
 ## Configuration
 
 - Settings loaded at startup via `CELLARBRAIN_CONFIG` env var or built-in defaults
 - Data directory from `CELLARBRAIN_DATA_DIR` env var (default: `output`)
 - Tool defaults (row_limit, search_limit, pending_limit) configurable in `cellarbrain.toml` under `[query]`
+
+## `meta` Parameter
+
+All tools accept an optional `meta: dict | None = None` parameter for passing
+observability metadata from the calling agent:
+
+```json
+{"agent_name": "research", "trace_id": "abc123", "turn_id": "custom-turn-id"}
+```
+
+The `meta` dict is consumed by the logging/observability layer and does not
+affect tool behaviour. Omit it for backward compatibility.
 
 ## Tools
 
@@ -15,11 +27,13 @@
 | Tool | Args | Returns |
 |------|------|---------|
 | `query_cellar` | `sql: str` | Markdown table from read-only SQL. Agent connection (views only). |
-| `find_wine` | `query: str`, `limit?: int`, `fuzzy?: bool` | Markdown table of matches across name, winery, region, grape, category, vintage, sweetness, effervescence, specialty, subcategory. Applies synonym expansion (DE→EN), intent detection (drinking status, price, ratings, stock), and concept expansion (sparkling, dessert, fortified, sweet, tracked, favorite, wishlist) before search. Falls back to soft-AND (partial match) when strict AND returns 0 results and ≥2 text tokens exist. |
+| `find_wine` | `query: str`, `limit?: int`, `fuzzy?: bool` | Markdown table of matches across name, winery, region, grape, category, vintage, sweetness, effervescence, specialty, subcategory. Includes price, bottle format (size), and price/750 mL. Applies synonym expansion (DE→EN), intent detection (drinking status, price, ratings, stock), and concept expansion (sparkling, dessert, fortified, sweet, tracked, favorite, wishlist) before search. Falls back to soft-AND (partial match) when strict AND returns 0 results and ≥2 text tokens exist. |
 | `cellar_info` | `verbose?: bool` | Version, currency, data directory, ETL freshness, inventory counts, and config metadata. Set `verbose=True` for extended diagnostics. |
 | `cellar_stats` | `group_by?: str`, `limit?: int`, `sort_by?: str` | Overall summary or grouped breakdown by one of 10 dimensions. `limit`: max groups (default 20, 0=unlimited); excess rolled into `(other)`. `sort_by`: "bottles" (default), "value", "wines", "volume". |
 | `cellar_churn` | `period?: str`, `year?: int`, `month?: int` | Roll-forward churn analysis (beginning/purchased/consumed/ending). |
 | `search_synonyms` | `action: str`, `key?: str`, `value?: str` | Manage custom search synonyms. Actions: `list`, `add`, `remove`. |
+| `currency_rates` | `action: str`, `currency?: str`, `rate?: float` | Manage currency exchange rates. Actions: `list`, `set`, `remove`. |
+| `server_stats` | `period?: str` | Usage, latency, and error statistics from the observability log store. Period: `"1h"`, `"24h"`, `"7d"`, `"30d"`. |
 
 `query_cellar` validates SQL is read-only (SELECT/WITH only, no DDL/DML) and uses the agent connection which exposes only views, not raw entity tables.
 
@@ -28,6 +42,8 @@
 `find_wine` tokenises multi-word queries (AND across words, OR across columns) and uses `strip_accents()` for accent-insensitive matching. Searches 12 text columns: wine name, winery, country, region, subregion, classification, category, primary grape, subcategory, sweetness, effervescence, and specialty. Before searching, tokens are normalised via a synonym dictionary (~155 built-in entries) that maps German terms to stored values (e.g. `rotwein` → `red`, `schweiz` → `Switzerland`, `trocken` → `dry`) and drops stopwords (e.g. `weingut`, `wein`). After synonym normalisation, an intent detection layer recognises attribute-based patterns — drinking status (`ready to drink`, `too young`, `past optimal`), price (`under 30`, `budget`), ratings (`top rated`), and stock levels (`low stock`, `last bottle`) — and injects WHERE/ORDER BY clauses. Consumed intent tokens are excluded from text search. German intent triggers (e.g. `trinkreif` → `"ready to drink"`) are handled via the synonym layer. A concept expansion layer then handles wine-style keywords (`sparkling`, `dessert`, `fortified`, `sweet`, `natural`) by OR-expanding them to concrete wine names (e.g. `sparkling` also matches Prosecco, Champagne, Crémant, etc.) and system concepts (`tracked`, `favorite`/`favourite`, `wishlist`) which inject WHERE filters. German wine-style terms (`Schaumwein`, `Süsswein`, `Dessertwein`, `Likörwein`, `Sekt`) are mapped to concept keywords via the synonym layer. Custom synonyms can be added via `search_synonyms` or TOML `[search.synonyms]`. When strict AND returns zero results and at least two ILIKE text conditions exist, a soft-AND fallback fires: it requires at least one ILIKE condition to match and ranks results by match count (descending). Intent and system-concept filters remain mandatory. Results are prefixed with a "Partial match" header. If soft AND also returns nothing, the fuzzy fallback fires (when `fuzzy=True`). Uses parameterised queries to prevent SQL injection. The `limit` parameter must be ≥ 1; invalid values return an error message.
 
 `search_synonyms` manages the custom synonym layer (stored in `data_dir/search-synonyms.json`). Actions: `list` shows all synonyms (built-in + custom) with source; `add` saves a key→value mapping (empty value = stopword); `remove` deletes a custom synonym (built-in entries cannot be removed). Changes take effect on the next `find_wine` call.
+
+`currency_rates` manages currency exchange rates used for price normalisation (stored in `data_dir/currency-rates.json`). Rates express: 1 unit of foreign currency = X units of CHF. Actions: `list` shows all rates (TOML + custom) with source; `set` adds/updates a custom rate (validates ISO 4217 code, positive rate, rejects default currency); `remove` deletes a custom rate (TOML rates cannot be removed). Custom rates override TOML rates and take effect on the next ETL run or MCP operation. When the ETL encounters a currency without a configured rate, the error message directs the agent to call this tool.
 
 `cellar_info` returns three sections: **Cellar Info** (version, currency, data directory, config file, query limits), **Data Freshness** (last ETL run timestamp/type, changeset summary), and **Inventory** (wines, bottles, tracked wines, dossiers, price observations). With `verbose=True`, adds Python/MCP SDK versions, total ETL runs, companion dossier count, currency conversion rates, and cellar location names. Degrades gracefully when no ETL data exists.
 
@@ -104,6 +120,8 @@ ORDER BY wine_id
 |------|------|---------|
 | `read_dossier` | `wine_id: int`, `sections?: list[str]` | Full dossier or filtered sections. |
 | `update_dossier` | `wine_id: int`, `section: str`, `content: str`, `agent_name?: str` | Confirmation. Agent sections only. |
+| `batch_update_dossier` | `wine_ids: list[int]`, `section: str`, `content: str`, `agent_name?: str` | Summary: X/Y succeeded + per-wine results. |
+| `get_format_siblings` | `wine_id: int` | Markdown table of format variants (Standard, Magnum, etc.). |
 | `pending_research` | `limit?: int`, `section?: str` | Per-vintage wines with unfilled agent sections. |
 
 `read_dossier` section keys: ETL (`identity`, `origin`, `grapes`, `characteristics`, `drinking_window`, `cellar_inventory`, `purchase_history`, `consumption_history`, `owner_notes`), Mixed (`ratings_reviews`, `tasting_notes`, `food_pairings`), Agent (`producer_profile`, `vintage_report`, `wine_description`, `market_availability`, `similar_wines`, `agent_log`).
@@ -133,7 +151,7 @@ Expects CSV exports in `raw/` directory alongside the data directory. Agent-owne
 
 | Tool | Args | Returns |
 |------|------|--------|
-| `suggest_wines` | `food_query: str`, `limit?: int` | Markdown table of wines ranked by embedding similarity to the food query. Includes vintage, category, region, grape, bottles, and price. |
+| `suggest_wines` | `food_query: str`, `limit?: int` | Markdown table of wines ranked by embedding similarity to the food query. Includes vintage, category, region, grape, bottles, size, price, and price/750 mL. |
 | `suggest_foods` | `wine_id: int`, `limit?: int` | Markdown table of dishes ranked by embedding similarity to the wine. Includes cuisine, weight class, protein, and flavour profile from the food catalogue. |
 
 Both tools use a fine-tuned `all-MiniLM-L6-v2` sentence-transformer model with FAISS indexes. They require:

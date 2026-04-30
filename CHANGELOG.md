@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Web Explorer dashboard** (`cellarbrain dashboard`): local Starlette web app with observability
+  overview, tool usage, error log, session drill-down, latency charts, live event tail (SSE),
+  cellar browser, bottle inventory, drinking window, tracked wines, SQL playground, cellar statistics,
+  and interactive MCP tool workbench. Uses HTMX + Pico CSS + Chart.js.
 - Soft-delete for wines: `is_deleted` column (bool, default `false`) added to `wine.parquet`.
   Wines that disappear from the CSV export are retained as tombstones (`is_deleted=true`) instead
   of being hard-deleted. Tombstones are excluded from all DuckDB views and FK validation, and

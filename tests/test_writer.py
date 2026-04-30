@@ -1,12 +1,20 @@
 """Unit tests for cellarbrain.writer — Parquet round-trip."""
 
-import tempfile
 from datetime import datetime
 
-import pytest
 import pyarrow.parquet as pq
+import pytest
 
-from cellarbrain.writer import SCHEMAS, write_all, write_parquet, append_parquet, read_parquet_rows, write_partitioned_parquet, read_partitioned_parquet_rows, append_partitioned_parquet
+from cellarbrain.writer import (
+    SCHEMAS,
+    append_parquet,
+    append_partitioned_parquet,
+    read_parquet_rows,
+    read_partitioned_parquet_rows,
+    write_all,
+    write_parquet,
+    write_partitioned_parquet,
+)
 
 _NOW = datetime(2025, 1, 1, 0, 0, 0)
 
@@ -75,6 +83,10 @@ class TestWriteParquet:
                 "drinking_status": "unknown",
                 "age_years": None,
                 "price_tier": "unknown",
+                "bottle_format": "Standard",
+                "price_per_750ml": None,
+                "format_group_id": None,
+                "food_tags": None,
                 "is_deleted": False,
                 "etl_run_id": 1,
                 "updated_at": _NOW,
@@ -99,32 +111,65 @@ class TestWriteAll:
 
 class TestAppendParquet:
     def test_append_creates_if_absent(self, tmp_path):
-        rows = [{"run_id": 1, "started_at": _NOW, "finished_at": _NOW,
-                 "run_type": "full", "wines_source_hash": "abc",
-                 "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-                 "total_inserts": 5,
-                 "total_updates": 0, "total_deletes": 0,
-                 "wines_inserted": 1, "wines_updated": 0,
-                 "wines_deleted": 0, "wines_renamed": 0}]
+        rows = [
+            {
+                "run_id": 1,
+                "started_at": _NOW,
+                "finished_at": _NOW,
+                "run_type": "full",
+                "wines_source_hash": "abc",
+                "bottles_source_hash": "def",
+                "bottles_gone_source_hash": None,
+                "total_inserts": 5,
+                "total_updates": 0,
+                "total_deletes": 0,
+                "wines_inserted": 1,
+                "wines_updated": 0,
+                "wines_deleted": 0,
+                "wines_renamed": 0,
+            }
+        ]
         path = append_parquet("etl_run", rows, tmp_path)
         assert path.exists()
         assert pq.read_table(path).num_rows == 1
 
     def test_append_adds_to_existing(self, tmp_path):
-        row1 = [{"run_id": 1, "started_at": _NOW, "finished_at": _NOW,
-                 "run_type": "full", "wines_source_hash": "a",
-                 "bottles_source_hash": "b", "bottles_gone_source_hash": None,
-                 "total_inserts": 3,
-                 "total_updates": 0, "total_deletes": 0,
-                 "wines_inserted": 1, "wines_updated": 0,
-                 "wines_deleted": 0, "wines_renamed": 0}]
-        row2 = [{"run_id": 2, "started_at": _NOW, "finished_at": _NOW,
-                 "run_type": "incremental", "wines_source_hash": "c",
-                 "bottles_source_hash": "d", "bottles_gone_source_hash": "e",
-                 "total_inserts": 1,
-                 "total_updates": 2, "total_deletes": 0,
-                 "wines_inserted": 0, "wines_updated": 1,
-                 "wines_deleted": 0, "wines_renamed": 0}]
+        row1 = [
+            {
+                "run_id": 1,
+                "started_at": _NOW,
+                "finished_at": _NOW,
+                "run_type": "full",
+                "wines_source_hash": "a",
+                "bottles_source_hash": "b",
+                "bottles_gone_source_hash": None,
+                "total_inserts": 3,
+                "total_updates": 0,
+                "total_deletes": 0,
+                "wines_inserted": 1,
+                "wines_updated": 0,
+                "wines_deleted": 0,
+                "wines_renamed": 0,
+            }
+        ]
+        row2 = [
+            {
+                "run_id": 2,
+                "started_at": _NOW,
+                "finished_at": _NOW,
+                "run_type": "incremental",
+                "wines_source_hash": "c",
+                "bottles_source_hash": "d",
+                "bottles_gone_source_hash": "e",
+                "total_inserts": 1,
+                "total_updates": 2,
+                "total_deletes": 0,
+                "wines_inserted": 0,
+                "wines_updated": 1,
+                "wines_deleted": 0,
+                "wines_renamed": 0,
+            }
+        ]
         append_parquet("etl_run", row1, tmp_path)
         append_parquet("etl_run", row2, tmp_path)
         assert pq.read_table(tmp_path / "etl_run.parquet").num_rows == 2
@@ -147,6 +192,7 @@ class TestReadParquetRows:
 class TestWritePriceObservation:
     def test_round_trip(self, tmp_path):
         from decimal import Decimal
+
         rows = [
             {
                 "observation_id": 1,
@@ -173,22 +219,37 @@ class TestWritePriceObservation:
 class TestPartitionedParquet:
     def test_write_partitioned_creates_year_files(self, tmp_path):
         from decimal import Decimal
+
         rows = [
             {
-                "observation_id": 1, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop A",
-                "retailer_url": None, "price": Decimal("30.00"),
-                "currency": "CHF", "price_chf": Decimal("30.00"),
-                "in_stock": True, "observed_at": datetime(2025, 6, 1),
-                "observation_source": "agent", "notes": None,
+                "observation_id": 1,
+                "tracked_wine_id": 1,
+                "vintage": 2020,
+                "bottle_size_ml": 750,
+                "retailer_name": "Shop A",
+                "retailer_url": None,
+                "price": Decimal("30.00"),
+                "currency": "CHF",
+                "price_chf": Decimal("30.00"),
+                "in_stock": True,
+                "observed_at": datetime(2025, 6, 1),
+                "observation_source": "agent",
+                "notes": None,
             },
             {
-                "observation_id": 2, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop B",
-                "retailer_url": None, "price": Decimal("35.00"),
-                "currency": "CHF", "price_chf": Decimal("35.00"),
-                "in_stock": True, "observed_at": datetime(2026, 1, 15),
-                "observation_source": "agent", "notes": None,
+                "observation_id": 2,
+                "tracked_wine_id": 1,
+                "vintage": 2020,
+                "bottle_size_ml": 750,
+                "retailer_name": "Shop B",
+                "retailer_url": None,
+                "price": Decimal("35.00"),
+                "currency": "CHF",
+                "price_chf": Decimal("35.00"),
+                "in_stock": True,
+                "observed_at": datetime(2026, 1, 15),
+                "observation_source": "agent",
+                "notes": None,
             },
         ]
         paths = write_partitioned_parquet("price_observation", rows, tmp_path)
@@ -205,24 +266,39 @@ class TestPartitionedParquet:
 
     def test_append_partitioned(self, tmp_path):
         from decimal import Decimal
+
         row1 = [
             {
-                "observation_id": 1, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop A",
-                "retailer_url": None, "price": Decimal("30.00"),
-                "currency": "CHF", "price_chf": Decimal("30.00"),
-                "in_stock": True, "observed_at": datetime(2026, 1, 15),
-                "observation_source": "agent", "notes": None,
+                "observation_id": 1,
+                "tracked_wine_id": 1,
+                "vintage": 2020,
+                "bottle_size_ml": 750,
+                "retailer_name": "Shop A",
+                "retailer_url": None,
+                "price": Decimal("30.00"),
+                "currency": "CHF",
+                "price_chf": Decimal("30.00"),
+                "in_stock": True,
+                "observed_at": datetime(2026, 1, 15),
+                "observation_source": "agent",
+                "notes": None,
             },
         ]
         row2 = [
             {
-                "observation_id": 2, "tracked_wine_id": 1, "vintage": 2020,
-                "bottle_size_ml": 750, "retailer_name": "Shop B",
-                "retailer_url": None, "price": Decimal("35.00"),
-                "currency": "CHF", "price_chf": Decimal("35.00"),
-                "in_stock": True, "observed_at": datetime(2026, 3, 1),
-                "observation_source": "agent", "notes": None,
+                "observation_id": 2,
+                "tracked_wine_id": 1,
+                "vintage": 2020,
+                "bottle_size_ml": 750,
+                "retailer_name": "Shop B",
+                "retailer_url": None,
+                "price": Decimal("35.00"),
+                "currency": "CHF",
+                "price_chf": Decimal("35.00"),
+                "in_stock": True,
+                "observed_at": datetime(2026, 3, 1),
+                "observation_source": "agent",
+                "notes": None,
             },
         ]
         write_partitioned_parquet("price_observation", row1, tmp_path)
@@ -231,7 +307,7 @@ class TestPartitionedParquet:
         assert len(combined) == 2
 
 
-class TestReadParquetRows:
+class TestReadParquetRowsExtended:
     def test_read_back(self, tmp_path):
         rows = [{"winery_id": 1, "name": "X", "etl_run_id": 1, "updated_at": _NOW}]
         write_parquet("winery", rows, tmp_path)
@@ -245,17 +321,14 @@ class TestReadParquetRows:
 
 class TestWriterSchemaErrors:
     def test_wrong_type_includes_entity_and_field(self, tmp_path):
-        rows = [{"winery_id": "not_an_int", "name": "Bad",
-                 "etl_run_id": 1, "updated_at": _NOW}]
+        rows = [{"winery_id": "not_an_int", "name": "Bad", "etl_run_id": 1, "updated_at": _NOW}]
         with pytest.raises(ValueError, match=r"winery.*winery_id"):
             write_parquet("winery", rows, tmp_path)
 
     def test_wrong_type_includes_row_index(self, tmp_path):
         rows = [
-            {"winery_id": 1, "name": "OK",
-             "etl_run_id": 1, "updated_at": _NOW},
-            {"winery_id": "bad", "name": "Bad",
-             "etl_run_id": 1, "updated_at": _NOW},
+            {"winery_id": 1, "name": "OK", "etl_run_id": 1, "updated_at": _NOW},
+            {"winery_id": "bad", "name": "Bad", "etl_run_id": 1, "updated_at": _NOW},
         ]
         with pytest.raises(ValueError, match=r"row 1.*winery_id"):
             write_parquet("winery", rows, tmp_path)

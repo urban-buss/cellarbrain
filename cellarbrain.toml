@@ -2,14 +2,23 @@
 # All values shown are the built-in defaults.
 # Delete or comment out any section you don't need to customize.
 
-# --- Offsite Cellars --------------------------------------------------------
-# Cellar location names that should be flagged as offsite.
-# offsite_cellars = ["Off-site Storage", "Wine Locker"]
-
-# --- In-Transit Cellars ----------------------------------------------------
-# Cellar location names for ordered/subscription bottles not yet received.
-# Bottles in these cellars are tracked but excluded from inventory counts.
-# in_transit_cellars = ["99 Orders & Subscriptions"]
+# --- Cellar Classification Rules -------------------------------------------
+# Ordered list of rules. First matching rule wins.
+# Patterns use fnmatch glob syntax (*, ?, [abc], [!abc]).
+# Exact cellar names work as patterns too (they match only themselves).
+# classification: "onsite" | "offsite" | "in_transit"
+#
+# If no rule matches a cellar name, the default is "onsite".
+# NOTE: cellar_rules and offsite_cellars/in_transit_cellars are mutually
+#       exclusive — use one or the other, not both.
+#
+# [[cellar_rules]]
+# pattern = "03*"
+# classification = "offsite"
+#
+# [[cellar_rules]]
+# pattern = "99*"
+# classification = "in_transit"
 
 # --- Paths & Directories ---------------------------------------------------
 [paths]
@@ -64,6 +73,18 @@ level = "WARNING"                        # DEBUG | INFO | WARNING | ERROR
 # log_file = "logs/cellarbrain.log"      # uncomment to enable file logging
 # max_bytes = 5242880                    # 5 MB per rotated file
 # backup_count = 3                       # keep 3 rotated backups
+# format = "json"                        # "json" for structured JSON log lines
+# turn_gap_seconds = 2.0                 # idle gap before new turn ID (MCP)
+# slow_threshold_ms = 2000.0             # warn when tool exceeds this latency
+# log_db = "output/logs/cellarbrain-logs.duckdb"  # explicit log store path
+# retention_days = 90                    # auto-prune events older than this
+
+# --- Backup & Restore -------------------------------------------------------
+[backup]
+backup_dir = "bkp"                       # directory for backup archives
+max_backups = 5                          # retention: keep N most recent
+include_sommelier = false                # include sommelier indexes in backup
+include_logs = false                     # include log databases in backup
 
 # --- Drinking Window Indicators ---------------------------------------------
 # Plain text labels — no emoji. Used in dossiers and query output.
@@ -252,7 +273,7 @@ USD = 0.88
 GBP = 1.11
 AUD = 0.56
 CAD = 0.62
-RON = 0.18
+RON = 0.19
 
 # --- Sommelier (AI Food-Wine Pairing) --------------------------------------
 # Requires optional dependencies: pip install cellarbrain[sommelier]

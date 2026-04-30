@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set active_nav = "workbench" %}
+
+{% block page_title %}Tool Workbench ({{ total }} tools){% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    Direct Python invocation of MCP tool functions &mdash; no MCP protocol involved.
+    <a href="/workbench/batch">Run batch sequences →</a>
+</p>
+
+{% for category, tools in grouped.items() %}
+<details open style="margin-bottom:1rem;">
+    <summary><strong>{{ category }}</strong> ({{ tools|length }})</summary>
+    <table>
+        <thead>
+            <tr>
+                <th>Tool</th>
+                <th>Description</th>
+                <th>Params</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in tools %}
+            <tr>
+                <td>
+                    <a href="/workbench/{{ t.name }}" class="mono">{{ t.name }}</a>
+                    {% if t.is_write %}<span class="badge badge-error" title="Write tool">⚠ write</span>{% endif %}
+                </td>
+                <td style="font-size:0.85rem;">{{ t.description }}</td>
+                <td class="mono" style="font-size:0.8rem;">{{ t.parameters|length }}</td>
+                <td><a href="/workbench/{{ t.name }}" style="font-size:0.8rem;">Open →</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endfor %}
+{% endblock %}

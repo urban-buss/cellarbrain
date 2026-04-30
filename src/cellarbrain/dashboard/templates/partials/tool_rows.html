@@ -1,0 +1,12 @@
+{% for t in tools %}
+<tr>
+    <td><span class="badge">{{ t.event_type }}</span></td>
+    <td>{{ t.name }}</td>
+    <td>{{ t.calls }}</td>
+    <td>{{ t.avg_ms }}</td>
+    <td>{{ t.p95_ms }}</td>
+    <td>{% if t.errors %}<span class="badge badge-error">{{ t.errors }}</span>{% else %}0{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="6">No tool calls in this period.</td></tr>
+{% endfor %}

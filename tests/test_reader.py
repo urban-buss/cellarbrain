@@ -1,26 +1,26 @@
-"""Tests for cellarbrain.reader — CSV file reading."""
+"""Tests for cellarbrain.vinocell_reader — CSV file reading."""
 
 from __future__ import annotations
 
 import pytest
 
-from cellarbrain.reader import (
+from cellarbrain.vinocell_reader import (
+    BOTTLES_GONE_REQUIRED_HEADERS,
+    BOTTLES_REQUIRED_HEADERS,
+    VINOCELL_COLUMN_MAP,
+    WINES_REQUIRED_HEADERS,
     _read_csv,
     _remap_columns,
     _validate_headers,
     read_bottles_csv,
     read_bottles_gone_csv,
     read_wines_csv,
-    BOTTLES_GONE_REQUIRED_HEADERS,
-    BOTTLES_REQUIRED_HEADERS,
-    VINOCELL_COLUMN_MAP,
-    WINES_REQUIRED_HEADERS,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: write a UTF-16 LE tab-delimited CSV file
 # ---------------------------------------------------------------------------
+
 
 def _write_csv(path, headers, rows=None):
     """Write a UTF-16 LE tab-delimited CSV with the given headers and rows."""
@@ -100,8 +100,7 @@ class TestReadWinesCsv:
     def test_bottles_csv_passed_as_wines_raises(self, tmp_path):
         """Bottles headers (has Cellar, no Tasting) → swapped-file error."""
         # Has Cellar (bottles discriminator) but no Tasting (wines discriminator)
-        headers = sorted({"Winery", "Name", "Year", "Cellar", "Shelf",
-                          "Input date", "Input type"})
+        headers = sorted({"Winery", "Name", "Year", "Cellar", "Shelf", "Input date", "Input type"})
         f = _write_csv(tmp_path / "wines.csv", headers)
         with pytest.raises(ValueError, match="bottles CSV.*not a wines CSV"):
             read_wines_csv(f)
@@ -126,8 +125,7 @@ class TestReadBottlesCsv:
     def test_wines_csv_passed_as_bottles_raises(self, tmp_path):
         """Wines headers (has Tasting, no Cellar) → swapped-file error."""
         # Has Tasting (wines discriminator) but no Cellar (bottles discriminator)
-        headers = sorted({"Winery", "Name", "Year", "Tasting",
-                          "Category", "Country", "Pro Ratings"})
+        headers = sorted({"Winery", "Name", "Year", "Tasting", "Category", "Country", "Pro Ratings"})
         f = _write_csv(tmp_path / "bottles.csv", headers)
         with pytest.raises(ValueError, match="wines CSV.*not a bottles CSV"):
             read_bottles_csv(f)

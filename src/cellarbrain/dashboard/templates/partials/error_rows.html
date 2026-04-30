@@ -1,0 +1,18 @@
+{% for e in errors %}
+<tr>
+    <td class="mono">{{ e.started_at.strftime("%H:%M:%S") if e.started_at else "—" }}</td>
+    <td>{{ e.name }}</td>
+    <td>{{ e.error_type or "—" }}</td>
+    <td class="truncate">{{ e.error_message or "—" }}</td>
+    <td>{{ e.duration_ms }} ms</td>
+    <td>
+        <button class="outline secondary" style="font-size:0.7rem; padding:0.1rem 0.3rem;"
+                hx-get="/errors/{{ e.event_id }}" hx-target="#detail-{{ e.event_id }}" hx-swap="innerHTML">
+            Detail
+        </button>
+    </td>
+</tr>
+<tr id="detail-{{ e.event_id }}"></tr>
+{% else %}
+<tr><td colspan="6">No errors in this period.</td></tr>
+{% endfor %}

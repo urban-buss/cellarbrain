@@ -10,51 +10,20 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-import unicodedata
-from datetime import datetime
 from decimal import Decimal
 
 from .settings import DrinkingWindowConfig, Settings
+from .slugify import make_slug
 
 logger = logging.getLogger(__name__)
+
+# Backward-compat alias for any code importing the old private name.
+_make_slug = make_slug
 
 
 # ---------------------------------------------------------------------------
 # Slug / filename helpers
 # ---------------------------------------------------------------------------
-
-def _make_slug(
-    winery: str | None,
-    name: str | None,
-    vintage: int | None,
-    is_non_vintage: bool,
-    slug_max_length: int = 60,
-) -> str:
-    """Build a URL-safe slug from winery, name, and vintage.
-
-    Examples:
-        >>> _make_slug("Marques De Murrieta", None, 2016, False)
-        'marques-de-murrieta-2016'
-        >>> _make_slug("Château Phélan Ségur", None, 2020, False)
-        'chateau-phelan-segur-2020'
-    """
-    parts: list[str] = []
-    if winery:
-        parts.append(winery)
-    if name:
-        parts.append(name)
-    if is_non_vintage:
-        parts.append("nv")
-    elif vintage is not None:
-        parts.append(str(vintage))
-
-    raw = " ".join(parts)
-    # Accent-fold to ASCII
-    nfkd = unicodedata.normalize("NFKD", raw)
-    ascii_str = nfkd.encode("ascii", "ignore").decode("ascii")
-    # Lowercase, replace non-alphanumeric with hyphens, collapse
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_str.lower()).strip("-")
-    return slug[:slug_max_length].rstrip("-")
 
 
 def dossier_filename(
@@ -66,7 +35,7 @@ def dossier_filename(
     slug_max_length: int = 60,
 ) -> str:
     """Return the Markdown filename for a wine dossier."""
-    slug = _make_slug(winery, name, vintage, is_non_vintage, slug_max_length)
+    slug = make_slug(winery, name, vintage, is_non_vintage, slug_max_length)
     return f"{wine_id:04d}-{slug}.md"
 
 
@@ -91,6 +60,7 @@ def _find_existing_dossier(
 # ---------------------------------------------------------------------------
 # Drinking window helper
 # ---------------------------------------------------------------------------
+
 
 def _drinking_status(
     drink_from: int | None,
@@ -150,18 +120,30 @@ def _extract_agent_sections(existing_content: str) -> dict[str, str]:
 
 
 _FM_AGENT_POP_RE = re.compile(
-    r"^agent_sections_populated:\s*\n((?:\s+-\s+.+\n)*)", re.MULTILINE,
+    r"^agent_sections_populated:\s*\n((?:\s+-\s+.+\n)*)",
+    re.MULTILINE,
 )
 _FM_AGENT_PEND_RE = re.compile(
-    r"^agent_sections_pending:\s*\n((?:\s+-\s+.+\n)*)", re.MULTILINE,
+    r"^agent_sections_pending:\s*\n((?:\s+-\s+.+\n)*)",
+    re.MULTILINE,
+)
+_FM_FOOD_TAGS_RE = re.compile(
+    r"^food_tags:\s*(?:\[]\s*\n|(\n(?:\s+-\s+.+\n)*))",
+    re.MULTILINE,
+)
+_FM_FOOD_GROUPS_RE = re.compile(
+    r"^food_groups:\s*(?:\[]\s*\n|(\n(?:\s+-\s+.+\n)*))",
+    re.MULTILINE,
 )
 
 
 def _extract_frontmatter_agent_fields(existing_content: str) -> dict[str, list[str]]:
-    """Parse agent_sections_populated/pending from YAML frontmatter."""
+    """Parse agent_sections_populated/pending, food_tags, and food_groups from YAML frontmatter."""
     result: dict[str, list[str]] = {
         "agent_sections_populated": [],
         "agent_sections_pending": [],
+        "food_tags": [],
+        "food_groups": [],
     }
     for key, pattern in [
         ("agent_sections_populated", _FM_AGENT_POP_RE),
@@ -171,12 +153,19 @@ def _extract_frontmatter_agent_fields(existing_content: str) -> dict[str, list[s
         if m:
             items = re.findall(r"-\s+(\S+)", m.group(1))
             result[key] = items
+    ft_m = _FM_FOOD_TAGS_RE.search(existing_content)
+    if ft_m and ft_m.group(1):
+        result["food_tags"] = re.findall(r"-\s+(\S+)", ft_m.group(1))
+    fg_m = _FM_FOOD_GROUPS_RE.search(existing_content)
+    if fg_m and fg_m.group(1):
+        result["food_groups"] = re.findall(r"-\s+(\S+)", fg_m.group(1))
     return result
 
 
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+
 
 def _fmt(value: object, null_char: str = "\u2014") -> str:
     """Format a value for display in a Markdown table cell."""
@@ -202,7 +191,7 @@ def _yaml_str(value: object) -> str:
     if isinstance(value, Decimal):
         return str(value)
     s = str(value)
-    if any(c in s for c in '":{}[]#&*!|>\'%@`'):
+    if any(c in s for c in "\":{}[]#&*!|>'%@`"):
         escaped = s.replace('"', '\\"')
         return f'"{escaped}"'
     if s == "" or s.startswith(" ") or s.endswith(" "):
@@ -236,6 +225,7 @@ def render_wine_dossier(
     current_year: int,
     existing_content: str | None = None,
     settings: Settings | None = None,
+    format_siblings: list[dict] | None = None,
 ) -> str:
     """Render a complete wine dossier Markdown string."""
     if settings is None:
@@ -244,15 +234,13 @@ def render_wine_dossier(
     agent_fm = (
         _extract_frontmatter_agent_fields(existing_content)
         if existing_content
-        else {"agent_sections_populated": [], "agent_sections_pending": []}
+        else {"agent_sections_populated": [], "agent_sections_pending": [], "food_tags": [], "food_groups": []}
     )
 
     null_char = settings.display.null_char
     separator = settings.display.separator
     dw = settings.drinking_window
-    heading_to_key = settings.heading_to_key()
     pure_sections = settings.pure_agent_sections()
-    mixed_sections = settings.mixed_agent_sections()
 
     def fmt(value: object) -> str:
         return _fmt(value, null_char)
@@ -303,17 +291,37 @@ def render_wine_dossier(
     age = wine.get("age_years")
     parts.append(f"age_years: {age if age is not None else 'null'}\n")
     parts.append(f"price_tier: {_yaml_str(wine.get('price_tier'))}\n")
+    parts.append(f"bottle_format: {_yaml_str(wine.get('bottle_format'))}\n")
+    parts.append(f"price_per_750ml: {fmt(wine.get('price_per_750ml'))}\n")
+    fgid = wine.get("format_group_id")
+    parts.append(f"format_group_id: {fgid if fgid is not None else 'null'}\n")
+    if format_siblings:
+        parts.append("format_siblings:\n")
+        for sib in format_siblings:
+            parts.append(f"  - wine_id: {sib['wine_id']}\n")
+            parts.append(f"    bottle_format: {_yaml_str(sib.get('bottle_format'))}\n")
+            parts.append(f"    volume_ml: {sib.get('volume_ml')}\n")
     parts.append(f"etl_run_id: {wine.get('etl_run_id')}\n")
     parts.append(f"updated_at: {_yaml_str(str(wine.get('updated_at', '')))}\n")
     dp = wine.get("dossier_path")
     if dp:
         parts.append(f"dossier_path: {_yaml_str(dp)}\n")
     else:
-        dfn = dossier_filename(
-            wine["wine_id"], winery_name, wine.get("name"), vintage,
-            wine.get("is_non_vintage", False),
-        )
+        # Fallback: use wine_slug if available, else compute via dossier_filename
+        _slug = wine.get("wine_slug")
+        if _slug is not None:
+            dfn = f"{wine['wine_id']:04d}-{_slug}.md"
+        else:
+            dfn = dossier_filename(
+                wine["wine_id"],
+                winery_name,
+                wine.get("name"),
+                vintage,
+                wine.get("is_non_vintage", False),
+            )
         parts.append(f"dossier_path: {_yaml_str(dfn)}\n")
+    parts.append(f"food_tags:{_yaml_list(agent_fm['food_tags'])}")
+    parts.append(f"food_groups:{_yaml_list(agent_fm['food_groups'])}")
     parts.append(f"agent_sections_populated:{_yaml_list(agent_populated)}")
     parts.append(f"agent_sections_pending:{_yaml_list(agent_pending)}")
     parts.append("---\n\n")
@@ -345,7 +353,11 @@ def render_wine_dossier(
             sub_parts.append(appellation["classification"])
     vol = wine.get("volume_ml")
     if vol:
-        sub_parts.append(f"{vol} mL")
+        bf = wine.get("bottle_format", "")
+        if bf and bf != "Standard":
+            sub_parts.append(f"{vol} mL ({bf})")
+        else:
+            sub_parts.append(f"{vol} mL")
     if sub_parts:
         parts.append(f"> {f' {separator} '.join(sub_parts)}\n\n")
 
@@ -356,10 +368,12 @@ def render_wine_dossier(
     parts.append(f"| **Wine ID** | {wine['wine_id']} |\n")
     parts.append(f"| **Winery** | {fmt(winery_name)} |\n")
     parts.append(f"| **Name** | {fmt(wine.get('name'))} |\n")
-    parts.append(f"| **Grape Type** | {fmt(wine.get('grape_type')).title() if wine.get('grape_type') else '\u2014'} |\n")
+    parts.append(
+        f"| **Grape Type** | {fmt(wine.get('grape_type')).title() if wine.get('grape_type') else null_char} |\n"
+    )
     parts.append(f"| **Grape Summary** | {fmt(wine.get('grape_summary'))} |\n")
     parts.append(f"| **Vintage** | {fmt(vintage)} |\n")
-    parts.append(f"| **Category** | {fmt(category).title() if category else '\u2014'} |\n")
+    parts.append(f"| **Category** | {fmt(category).title() if category else null_char} |\n")
     parts.append(f"| **Subcategory** | {fmt(wine.get('subcategory'))} |\n")
     parts.append(f"| **Specialty** | {fmt(wine.get('specialty'))} |\n")
     parts.append(f"| **Sweetness** | {fmt(wine.get('sweetness'))} |\n")
@@ -369,6 +383,27 @@ def render_wine_dossier(
     parts.append(f"| **Hue** | {fmt(wine.get('hue'))} |\n")
     parts.append(f"| **Cork** | {fmt(wine.get('cork'))} |\n")
     parts.append("\n")
+
+    # ---- Related Formats ----
+    if format_siblings:
+        parts.append("## Related Formats\n\n")
+        parts.append("| Format | Volume | Wine ID | Drinking Window |\n")
+        parts.append("|---|---|---|---|\n")
+        current_wid = wine["wine_id"]
+        all_formats = [wine, *format_siblings]
+        all_formats.sort(key=lambda w: w.get("volume_ml") or 0)
+        for w in all_formats:
+            bf = fmt(w.get("bottle_format"))
+            vol_str = f"{w.get('volume_ml')} mL" if w.get("volume_ml") else "\u2014"
+            wid_str = str(w["wine_id"])
+            df = w.get("drink_from")
+            du = w.get("drink_until")
+            dw_str = f"{df}\u2013{du}" if df and du else fmt(df or du)
+            if w["wine_id"] == current_wid:
+                parts.append(f"| **{bf}** | **{vol_str}** | **{wid_str}** | **{dw_str}** |\n")
+            else:
+                parts.append(f"| {bf} | {vol_str} | {wid_str} | {dw_str} |\n")
+        parts.append("\n")
 
     # ---- Origin ----
     if appellation:
@@ -400,12 +435,20 @@ def render_wine_dossier(
 
     parts.append("## Characteristics\n\n")
     parts.append("| Field | Value |\n|---|---|\n")
-    parts.append(f"| **Alcohol** | {fmt(wine.get('alcohol_pct'))}{'%' if wine.get('alcohol_pct') is not None else ''} |\n")
-    parts.append(f"| **Acidity** | {fmt(wine.get('acidity_g_l'))}{'g/L' if wine.get('acidity_g_l') is not None else ''} |\n")
-    parts.append(f"| **Residual Sugar** | {fmt(wine.get('sugar_g_l'))}{'g/L' if wine.get('sugar_g_l') is not None else ''} |\n")
+    parts.append(
+        f"| **Alcohol** | {fmt(wine.get('alcohol_pct'))}{'%' if wine.get('alcohol_pct') is not None else ''} |\n"
+    )
+    parts.append(
+        f"| **Acidity** | {fmt(wine.get('acidity_g_l'))}{'g/L' if wine.get('acidity_g_l') is not None else ''} |\n"
+    )
+    parts.append(
+        f"| **Residual Sugar** | {fmt(wine.get('sugar_g_l'))}{'g/L' if wine.get('sugar_g_l') is not None else ''} |\n"
+    )
     parts.append(f"| **Ageing** | {ageing_str} |\n")
     parts.append(f"| **Farming** | {fmt(wine.get('farming_type'))} |\n")
-    parts.append(f"| **Serving Temp** | {fmt(wine.get('serving_temp_c'))}{'°C' if wine.get('serving_temp_c') is not None else ''} |\n")
+    parts.append(
+        f"| **Serving Temp** | {fmt(wine.get('serving_temp_c'))}{'°C' if wine.get('serving_temp_c') is not None else ''} |\n"
+    )
     parts.append(f"| **Opening** | {opening_str} |\n")
     parts.append(f"| **Winemaking** | {fmt(wine.get('winemaking_notes'))} |\n")
     parts.append("\n")
@@ -438,7 +481,9 @@ def render_wine_dossier(
             if b.get("original_purchase_price") is not None
         )
         if has_foreign:
-            parts.append("| # | Cellar | Shelf | Purchase Date | Price | Price (converted) | Provider |\n|---|---|---|---|---|---|---|\n")
+            parts.append(
+                "| # | Cellar | Shelf | Purchase Date | Price | Price (converted) | Provider |\n|---|---|---|---|---|---|---|\n"
+            )
         else:
             parts.append("| # | Cellar | Shelf | Purchase Date | Price | Provider |\n|---|---|---|---|---|---|\n")
         default_total = Decimal("0")
@@ -464,10 +509,7 @@ def render_wine_dossier(
                     f" | {price_str} | {conv_str} | {provider} |\n"
                 )
             else:
-                parts.append(
-                    f"| {i} | {cellar} | {fmt(b.get('shelf'))} | {pdate_str}"
-                    f" | {price_str} | {provider} |\n"
-                )
+                parts.append(f"| {i} | {cellar} | {fmt(b.get('shelf'))} | {pdate_str} | {price_str} | {provider} |\n")
         parts.append("\n")
         if priced_count:
             avg = default_total / priced_count
@@ -495,7 +537,9 @@ def render_wine_dossier(
             if b.get("original_purchase_price") is not None
         )
         if has_foreign_oo:
-            parts.append("| # | Cellar | Purchase Date | Price | Price (converted) | Provider |\n|---|---|---|---|---|---|\n")
+            parts.append(
+                "| # | Cellar | Purchase Date | Price | Price (converted) | Provider |\n|---|---|---|---|---|---|\n"
+            )
         else:
             parts.append("| # | Cellar | Purchase Date | Price | Provider |\n|---|---|---|---|---|\n")
         for i, b in enumerate(on_order_bottles, 1):
@@ -510,15 +554,9 @@ def render_wine_dossier(
                 conv_price = b.get("purchase_price")
                 conv_currency = b.get("purchase_currency", "")
                 conv_str = f"{conv_price} {conv_currency}" if conv_price is not None else "\u2014"
-                parts.append(
-                    f"| {i} | {cellar} | {pdate_str}"
-                    f" | {price_str} | {conv_str} | {provider} |\n"
-                )
+                parts.append(f"| {i} | {cellar} | {pdate_str} | {price_str} | {conv_str} | {provider} |\n")
             else:
-                parts.append(
-                    f"| {i} | {cellar} | {pdate_str}"
-                    f" | {price_str} | {provider} |\n"
-                )
+                parts.append(f"| {i} | {cellar} | {pdate_str} | {price_str} | {provider} |\n")
         parts.append("\n")
 
     # ---- Purchase History ----
@@ -545,7 +583,9 @@ def render_wine_dossier(
         default_grand_total = Decimal("0")
         default_currency = ""
         orig_totals: dict[str, Decimal] = {}
-        for (pdate, prov_id, price, currency, ptype), qty in sorted(purchase_groups.items(), key=lambda x: str(x[0][0] or "")):
+        for (pdate, prov_id, price, currency, ptype), qty in sorted(
+            purchase_groups.items(), key=lambda x: str(x[0][0] or "")
+        ):
             provider = provider_names.get(prov_id, "\u2014") if prov_id else "\u2014"
             price_str = f"{price} {currency}" if price is not None else "\u2014"
             pdate_str = str(pdate) if pdate is not None else "\u2014"
@@ -693,6 +733,7 @@ def render_wine_dossier(
 # Batch generation
 # ---------------------------------------------------------------------------
 
+
 def generate_dossiers(
     entities: dict[str, list[dict]],
     output_dir: pathlib.Path,
@@ -717,9 +758,7 @@ def generate_dossiers(
 
     # Determine which wines have stored bottles (exclude in-transit)
     stored_wine_ids: set[int] = {
-        b["wine_id"]
-        for b in entities.get("bottle", [])
-        if b.get("status") == "stored" and not b.get("is_in_transit")
+        b["wine_id"] for b in entities.get("bottle", []) if b.get("status") == "stored" and not b.get("is_in_transit")
     }
 
     # Build lookup dicts
@@ -739,11 +778,13 @@ def generate_dossiers(
     grapes_by_wine: dict[int, list[dict]] = {}
     for wg in entities.get("wine_grape", []):
         wid = wg["wine_id"]
-        grapes_by_wine.setdefault(wid, []).append({
-            "grape_name": grape_by_id.get(wg["grape_id"], "?"),
-            "percentage": wg.get("percentage"),
-            "sort_order": wg.get("sort_order", 0),
-        })
+        grapes_by_wine.setdefault(wid, []).append(
+            {
+                "grape_name": grape_by_id.get(wg["grape_id"], "?"),
+                "percentage": wg.get("percentage"),
+                "sort_order": wg.get("sort_order", 0),
+            }
+        )
     for lst in grapes_by_wine.values():
         lst.sort(key=lambda x: x["sort_order"])
 
@@ -774,6 +815,13 @@ def generate_dossiers(
         wid = r["wine_id"]
         ratings_by_wine.setdefault(wid, []).append(r)
 
+    # Build format-siblings lookup: format_group_id → list of wines in group
+    _group_members: dict[int, list[dict]] = {}
+    for w in entities.get("wine", []):
+        fgid = w.get("format_group_id")
+        if fgid is not None:
+            _group_members.setdefault(fgid, []).append(w)
+
     written: list[pathlib.Path] = []
 
     for wine in entities.get("wine", []):
@@ -785,10 +833,19 @@ def generate_dossiers(
         app_id = wine.get("appellation_id")
         appellation = appellation_by_id.get(app_id) if app_id else None
 
-        fname = dossier_filename(
-            wid, winery_name, wine.get("name"),
-            wine.get("vintage"), wine.get("is_non_vintage", False),
-        )
+        # Use pre-computed wine_slug to match assign_dossier_paths exactly;
+        # fall back to dossier_filename() for tests that lack the field.
+        slug = wine.get("wine_slug")
+        if slug is not None:
+            fname = f"{wid:04d}-{slug}.md"
+        else:
+            fname = dossier_filename(
+                wid,
+                winery_name,
+                wine.get("name"),
+                wine.get("vintage"),
+                wine.get("is_non_vintage", False),
+            )
 
         # Determine subfolder and alternate location
         target_dir = cellar_dir if wid in stored_wine_ids else archive_dir
@@ -811,6 +868,12 @@ def generate_dossiers(
                 existing_content = found.read_text(encoding="utf-8")
                 found.unlink()
 
+        # Build format siblings for this wine (exclude self)
+        fgid = wine.get("format_group_id")
+        siblings = None
+        if fgid is not None:
+            siblings = [w for w in _group_members.get(fgid, []) if w["wine_id"] != wid]
+
         md = render_wine_dossier(
             wine=wine,
             winery_name=winery_name,
@@ -824,6 +887,7 @@ def generate_dossiers(
             current_year=current_year,
             existing_content=existing_content,
             settings=settings,
+            format_siblings=siblings if siblings else None,
         )
         fpath.write_text(md, encoding="utf-8")
         written.append(fpath)
@@ -835,6 +899,7 @@ def generate_dossiers(
 # ---------------------------------------------------------------------------
 # Deleted wine handling
 # ---------------------------------------------------------------------------
+
 
 def mark_deleted_dossiers(
     output_dir: pathlib.Path,
@@ -882,6 +947,7 @@ def mark_deleted_dossiers(
 # ---------------------------------------------------------------------------
 # Affected wine IDs (for sync mode)
 # ---------------------------------------------------------------------------
+
 
 def affected_wine_ids(
     change_log: list[dict],
@@ -966,21 +1032,15 @@ def affected_wine_ids(
             pass  # Handled below
 
     # Handle wine_grape changes: entity_id is None, so check if any wine_grape changed
-    has_wine_grape_change = any(
-        c["entity_type"] == "wine_grape" for c in change_log
-    )
+    has_wine_grape_change = any(c["entity_type"] == "wine_grape" for c in change_log)
     if has_wine_grape_change:
         # Regenerate all wines that have wine_grapes
         for wg in entities.get("wine_grape", []):
             result.add(wg["wine_id"])
 
     # Handle cellar/provider changes: regenerate wines that have bottles
-    has_cellar_change = any(
-        c["entity_type"] == "cellar" for c in change_log
-    )
-    has_provider_change = any(
-        c["entity_type"] == "provider" for c in change_log
-    )
+    has_cellar_change = any(c["entity_type"] == "cellar" for c in change_log)
+    has_provider_change = any(c["entity_type"] == "provider" for c in change_log)
     if has_cellar_change or has_provider_change:
         for b in entities.get("bottle", []):
             result.add(b["wine_id"])

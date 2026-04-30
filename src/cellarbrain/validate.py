@@ -59,9 +59,19 @@ def validate(output_dir: str | pathlib.Path) -> ValidationResult:
     try:
         # Register views for Parquet files that exist
         for name in [
-            "wine", "tracked_wine", "bottle", "winery", "appellation",
-            "grape", "wine_grape", "tasting", "pro_rating", "cellar",
-            "provider", "etl_run", "change_log",
+            "wine",
+            "tracked_wine",
+            "bottle",
+            "winery",
+            "appellation",
+            "grape",
+            "wine_grape",
+            "tasting",
+            "pro_rating",
+            "cellar",
+            "provider",
+            "etl_run",
+            "change_log",
         ]:
             pf = d / f"{name}.parquet"
             if pf.exists():
@@ -72,10 +82,7 @@ def validate(output_dir: str | pathlib.Path) -> ValidationResult:
         price_files = list(d.glob("price_observation_*.parquet"))
         if price_files:
             glob_path = str(d / "price_observation_*.parquet").replace("\\", "/")
-            con.execute(
-                f"CREATE VIEW price_observation AS "
-                f"SELECT * FROM read_parquet('{glob_path}')"
-            )
+            con.execute(f"CREATE VIEW price_observation AS SELECT * FROM read_parquet('{glob_path}')")
 
         _run_checks(con, result)
     finally:

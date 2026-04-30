@@ -1,0 +1,13 @@
+{% for b in bottles %}
+<tr>
+    <td><a href="/cellar/{{ b.wine_id }}">{{ b.wine_name }}</a></td>
+    <td>{{ b.vintage }}</td>
+    <td>{{ b.cellar_name or "—" }}</td>
+    <td>{{ b.shelf or "—" }}</td>
+    <td>{% if b.price %}CHF {{ "%.2f"|format(b.price) }}{% else %}—{% endif %}</td>
+    <td><span class="badge {% if b.status == 'stored' %}badge-ok{% elif b.status == 'on order' %}badge-warn{% endif %}">{{ b.status }}</span></td>
+</tr>
+{% endfor %}
+{% if not bottles %}
+<tr><td colspan="6" style="text-align:center; color:var(--pico-muted-color);">No bottles found.</td></tr>
+{% endif %}

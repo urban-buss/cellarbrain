@@ -8,8 +8,8 @@ from decimal import Decimal
 import pytest
 
 from cellarbrain import markdown, writer
-from cellarbrain.markdown import dossier_filename
 from cellarbrain.dossier_ops import (
+    _ETL_SECTION_KEYS,
     AGENT_SECTIONS,
     ALLOWED_COMPANION_SECTIONS,
     ALLOWED_SECTIONS,
@@ -17,9 +17,10 @@ from cellarbrain.dossier_ops import (
     ProtectedSectionError,
     TrackedWineNotFoundError,
     WineNotFoundError,
-    _ETL_SECTION_KEYS,
     _all_heading_to_key,
     _filter_sections,
+    _merge_food_groups,
+    _merge_food_tags,
     pending_companion_research,
     pending_research,
     read_companion_dossier,
@@ -30,11 +31,12 @@ from cellarbrain.dossier_ops import (
     update_companion_dossier,
     update_dossier,
 )
-
+from cellarbrain.markdown import dossier_filename
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _now() -> datetime:
     return datetime(2025, 1, 1)
@@ -50,9 +52,13 @@ def _build_entities(tmp_path):
     ]
     appellations = [
         {
-            "appellation_id": 1, "country": "France", "region": "Bordeaux",
-            "subregion": "Saint-Émilion", "classification": "Grand Cru",
-            "etl_run_id": rid, "updated_at": now,
+            "appellation_id": 1,
+            "country": "France",
+            "region": "Bordeaux",
+            "subregion": "Saint-Émilion",
+            "classification": "Grand Cru",
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
     grapes = [
@@ -60,24 +66,45 @@ def _build_entities(tmp_path):
     ]
     wines = [
         {
-            "wine_id": 1, "wine_slug": "domaine-test-cuvee-alpha-2020",
-            "winery_id": 1, "name": "Cuvée Alpha",
-            "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
+            "wine_id": 1,
+            "wine_slug": "domaine-test-cuvee-alpha-2020",
+            "winery_id": 1,
+            "name": "Cuvée Alpha",
+            "vintage": 2020,
+            "is_non_vintage": False,
+            "appellation_id": 1,
             "category": "Red wine",
             "_raw_classification": None,
-            "subcategory": None, "specialty": None,
-            "sweetness": None, "effervescence": None, "volume_ml": 750,
+            "subcategory": None,
+            "specialty": None,
+            "sweetness": None,
+            "effervescence": None,
+            "volume_ml": 750,
             "_raw_volume": None,
-            "container": None, "hue": None, "cork": None, "alcohol_pct": 14.5,
-            "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-            "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-            "opening_type": None, "opening_minutes": None,
-            "drink_from": 2023, "drink_until": 2030,
-            "optimal_from": 2025, "optimal_until": 2028,
-            "original_list_price": None, "original_list_currency": None,
-            "list_price": None, "list_currency": None,
-            "comment": None, "winemaking_notes": None,
-            "is_favorite": True, "is_wishlist": False,
+            "container": None,
+            "hue": None,
+            "cork": None,
+            "alcohol_pct": 14.5,
+            "acidity_g_l": None,
+            "sugar_g_l": None,
+            "ageing_type": None,
+            "ageing_months": None,
+            "farming_type": None,
+            "serving_temp_c": None,
+            "opening_type": None,
+            "opening_minutes": None,
+            "drink_from": 2023,
+            "drink_until": 2030,
+            "optimal_from": 2025,
+            "optimal_until": 2028,
+            "original_list_price": None,
+            "original_list_currency": None,
+            "list_price": None,
+            "list_currency": None,
+            "comment": None,
+            "winemaking_notes": None,
+            "is_favorite": True,
+            "is_wishlist": False,
             "tracked_wine_id": None,
             "full_name": "Domaine Test Cuvée Alpha 2020",
             "grape_type": "varietal",
@@ -88,28 +115,54 @@ def _build_entities(tmp_path):
             "drinking_status": "optimal",
             "age_years": 5,
             "price_tier": "unknown",
+            "bottle_format": "Standard",
+            "price_per_750ml": None,
+            "format_group_id": None,
+            "food_tags": None,
             "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
         {
-            "wine_id": 2, "wine_slug": "domaine-test-cuvee-beta-2019",
-            "winery_id": 1, "name": "Cuvée Beta",
-            "vintage": 2019, "is_non_vintage": False, "appellation_id": 1,
+            "wine_id": 2,
+            "wine_slug": "domaine-test-cuvee-beta-2019",
+            "winery_id": 1,
+            "name": "Cuvée Beta",
+            "vintage": 2019,
+            "is_non_vintage": False,
+            "appellation_id": 1,
             "category": "Red wine",
             "_raw_classification": None,
-            "subcategory": None, "specialty": None,
-            "sweetness": None, "effervescence": None, "volume_ml": 750,
+            "subcategory": None,
+            "specialty": None,
+            "sweetness": None,
+            "effervescence": None,
+            "volume_ml": 750,
             "_raw_volume": None,
-            "container": None, "hue": None, "cork": None, "alcohol_pct": 13.0,
-            "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-            "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-            "opening_type": None, "opening_minutes": None,
-            "drink_from": None, "drink_until": None,
-            "optimal_from": None, "optimal_until": None,
-            "original_list_price": None, "original_list_currency": None,
-            "list_price": None, "list_currency": None,
-            "comment": None, "winemaking_notes": None,
-            "is_favorite": False, "is_wishlist": False,
+            "container": None,
+            "hue": None,
+            "cork": None,
+            "alcohol_pct": 13.0,
+            "acidity_g_l": None,
+            "sugar_g_l": None,
+            "ageing_type": None,
+            "ageing_months": None,
+            "farming_type": None,
+            "serving_temp_c": None,
+            "opening_type": None,
+            "opening_minutes": None,
+            "drink_from": None,
+            "drink_until": None,
+            "optimal_from": None,
+            "optimal_until": None,
+            "original_list_price": None,
+            "original_list_currency": None,
+            "list_price": None,
+            "list_currency": None,
+            "comment": None,
+            "winemaking_notes": None,
+            "is_favorite": False,
+            "is_wishlist": False,
             "tracked_wine_id": None,
             "full_name": "Domaine Test Cuvée Beta 2019",
             "grape_type": "varietal",
@@ -120,35 +173,46 @@ def _build_entities(tmp_path):
             "drinking_status": "unknown",
             "age_years": 6,
             "price_tier": "unknown",
+            "bottle_format": "Standard",
+            "price_per_750ml": None,
+            "format_group_id": None,
+            "food_tags": None,
             "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
     wine_grapes = [
-        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
-        {"wine_id": 2, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+        {"wine_id": 2, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
     bottles = [
         {
-            "bottle_id": 1, "wine_id": 1, "status": "stored",
-            "cellar_id": 1, "shelf": "A1", "bottle_number": 1,
-            "provider_id": 1, "purchase_date": datetime(2023, 6, 1).date(),
+            "bottle_id": 1,
+            "wine_id": 1,
+            "status": "stored",
+            "cellar_id": 1,
+            "shelf": "A1",
+            "bottle_number": 1,
+            "provider_id": 1,
+            "purchase_date": datetime(2023, 6, 1).date(),
             "acquisition_type": "purchase",
             "original_purchase_price": Decimal("25.00"),
             "original_purchase_currency": "CHF",
             "purchase_price": Decimal("25.00"),
-            "purchase_currency": "CHF", "purchase_comment": None,
-            "output_date": None, "output_type": None, "output_comment": None,
+            "purchase_currency": "CHF",
+            "purchase_comment": None,
+            "output_date": None,
+            "output_type": None,
+            "output_comment": None,
             "is_onsite": True,
             "is_in_transit": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Main Cellar", "sort_order": 1,
-         "etl_run_id": rid, "updated_at": now},
+        {"cellar_id": 1, "name": "Main Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
     ]
     providers = [
         {"provider_id": 1, "name": "Wine Shop", "etl_run_id": rid, "updated_at": now},
@@ -157,18 +221,30 @@ def _build_entities(tmp_path):
     pro_ratings: list[dict] = []
     etl_runs = [
         {
-            "run_id": 1, "started_at": now, "finished_at": now,
-            "run_type": "full", "wines_source_hash": "abc",
-            "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-            "total_inserts": 5, "total_updates": 0, "total_deletes": 0,
-            "wines_inserted": 1, "wines_updated": 0,
-            "wines_deleted": 0, "wines_renamed": 0,
+            "run_id": 1,
+            "started_at": now,
+            "finished_at": now,
+            "run_type": "full",
+            "wines_source_hash": "abc",
+            "bottles_source_hash": "def",
+            "bottles_gone_source_hash": None,
+            "total_inserts": 5,
+            "total_updates": 0,
+            "total_deletes": 0,
+            "wines_inserted": 1,
+            "wines_updated": 0,
+            "wines_deleted": 0,
+            "wines_renamed": 0,
         },
     ]
     change_logs = [
         {
-            "change_id": 1, "run_id": 1, "entity_type": "wine",
-            "entity_id": 1, "change_type": "insert", "changed_fields": None,
+            "change_id": 1,
+            "run_id": 1,
+            "entity_type": "wine",
+            "entity_id": 1,
+            "change_type": "insert",
+            "changed_fields": None,
         },
     ]
 
@@ -265,9 +341,7 @@ class TestReadDossierSections:
         assert "wine_id:" in result
 
     def test_multiple_sections(self, data_dir):
-        result = read_dossier_sections(
-            1, data_dir, sections=["identity", "drinking_window"]
-        )
+        result = read_dossier_sections(1, data_dir, sections=["identity", "drinking_window"])
         assert "## Identity" in result
         assert "## Drinking Window" in result
         assert "## Origin" not in result
@@ -332,7 +406,7 @@ class TestFilterSections:
             "Tasting Notes": "tasting_notes",
             "Food Pairings": "food_pairings",
         }
-        assert _ETL_SECTION_KEYS == expected
+        assert expected == _ETL_SECTION_KEYS
 
     def test_all_heading_to_key_includes_agent_sections(self):
         """_all_heading_to_key includes pure agent section headings."""
@@ -365,7 +439,8 @@ class TestFilterSections:
 class TestUpdateDossier:
     def test_update_producer_profile(self, data_dir):
         result = update_dossier(
-            1, "producer_profile",
+            1,
+            "producer_profile",
             "Domaine Test is a family winery in Bordeaux.",
             data_dir,
         )
@@ -376,7 +451,8 @@ class TestUpdateDossier:
 
     def test_update_moves_section_to_populated(self, data_dir):
         update_dossier(
-            1, "producer_profile",
+            1,
+            "producer_profile",
             "Test content",
             data_dir,
         )
@@ -402,8 +478,11 @@ class TestUpdateDossier:
 
     def test_agent_log_custom_agent_name(self, data_dir):
         update_dossier(
-            1, "agent_log", "Price check done",
-            data_dir, agent_name="pricing",
+            1,
+            "agent_log",
+            "Price check done",
+            data_dir,
+            agent_name="pricing",
         )
         content = read_dossier(1, data_dir)
         assert "(pricing)" in content
@@ -425,16 +504,14 @@ class TestUpdateDossier:
             update_dossier(1, "wine_description", "   \n  ", data_dir)
 
     def test_empty_content_does_not_modify_dossier(self, data_dir):
-        path = list(
-            (data_dir / "wines").rglob("0001-*.md")
-        )[0]
+        path = list((data_dir / "wines").rglob("0001-*.md"))[0]
         before = path.read_text(encoding="utf-8")
         with pytest.raises(ValueError):
             update_dossier(1, "wine_description", "", data_dir)
         assert path.read_text(encoding="utf-8") == before
 
     def test_all_allowed_section_keys(self):
-        assert ALLOWED_SECTIONS == frozenset(AGENT_SECTIONS.keys())
+        assert frozenset(AGENT_SECTIONS.keys()) == ALLOWED_SECTIONS
 
     def test_multiple_updates_to_same_section(self, data_dir):
         update_dossier(1, "wine_description", "Draft 1", data_dir)
@@ -451,7 +528,8 @@ class TestUpdateDossier:
         assert "wine_description" not in _extract_pending(content)
 
         update_dossier(
-            1, "wine_description",
+            1,
+            "wine_description",
             "*Not yet researched. Pending agent action.*",
             data_dir,
         )
@@ -465,7 +543,8 @@ class TestUpdateDossier:
 
         update_dossier(1, "wine_description", "Temporary content", data_dir)
         update_dossier(
-            1, "wine_description",
+            1,
+            "wine_description",
             "*Not yet researched. Pending agent action.*",
             data_dir,
         )
@@ -475,7 +554,8 @@ class TestUpdateDossier:
 
     def test_ratings_reviews_subsection(self, data_dir):
         update_dossier(
-            1, "ratings_reviews",
+            1,
+            "ratings_reviews",
             "Parker 95/100\nSuckling 93/100",
             data_dir,
         )
@@ -491,30 +571,70 @@ class TestUpdateDossier:
 
         # Simulate ETL regeneration by re-generating the dossier
         from cellarbrain import markdown
+
         dossier_path = resolve_dossier_path(1, data_dir)
         existing = dossier_path.read_text(encoding="utf-8")
-        wine = {"wine_id": 1, "winery_id": 1, "name": None, "vintage": 2020,
-                "is_non_vintage": False, "appellation_id": None, "category": "red",
-                "subcategory": None, "specialty": None, "sweetness": None,
-                "effervescence": None, "volume_ml": 750, "container": None,
-                "hue": None, "cork": None, "alcohol_pct": None,
-                "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-                "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-                "opening_type": None, "opening_minutes": None,
-                "drink_from": None, "drink_until": None,
-                "optimal_from": None, "optimal_until": None,
-                "list_price": None, "list_currency": None,
-                "original_list_price": None, "original_list_currency": None,
-                "comment": None, "winemaking_notes": None,
-                "is_favorite": False, "is_wishlist": False, "tracked_wine_id": None,
-                "full_name": None, "grape_type": "unknown", "primary_grape": None,
-                "grape_summary": None, "drinking_status": "unknown", "age_years": None,
-                "price_tier": "unknown", "etl_run_id": 1,
-                "updated_at": "2025-06-01T12:00:00"}
+        wine = {
+            "wine_id": 1,
+            "winery_id": 1,
+            "name": None,
+            "vintage": 2020,
+            "is_non_vintage": False,
+            "appellation_id": None,
+            "category": "red",
+            "subcategory": None,
+            "specialty": None,
+            "sweetness": None,
+            "effervescence": None,
+            "volume_ml": 750,
+            "container": None,
+            "hue": None,
+            "cork": None,
+            "alcohol_pct": None,
+            "acidity_g_l": None,
+            "sugar_g_l": None,
+            "ageing_type": None,
+            "ageing_months": None,
+            "farming_type": None,
+            "serving_temp_c": None,
+            "opening_type": None,
+            "opening_minutes": None,
+            "drink_from": None,
+            "drink_until": None,
+            "optimal_from": None,
+            "optimal_until": None,
+            "list_price": None,
+            "list_currency": None,
+            "original_list_price": None,
+            "original_list_currency": None,
+            "comment": None,
+            "winemaking_notes": None,
+            "is_favorite": False,
+            "is_wishlist": False,
+            "tracked_wine_id": None,
+            "full_name": None,
+            "grape_type": "unknown",
+            "primary_grape": None,
+            "grape_summary": None,
+            "drinking_status": "unknown",
+            "age_years": None,
+            "price_tier": "unknown",
+            "bottle_format": "Standard",
+            "price_per_750ml": None,
+            "etl_run_id": 1,
+            "updated_at": "2025-06-01T12:00:00",
+        }
         regenerated = markdown.render_wine_dossier(
-            wine=wine, winery_name="Domaine Test", appellation=None,
-            grapes=[], bottles=[], cellar_names={}, provider_names={},
-            tastings=[], pro_ratings=[], current_year=2025,
+            wine=wine,
+            winery_name="Domaine Test",
+            appellation=None,
+            grapes=[],
+            bottles=[],
+            cellar_names={},
+            provider_names={},
+            tastings=[],
+            pro_ratings=[],
+            current_year=2025,
             existing_content=existing,
         )
         dossier_path.write_text(regenerated, encoding="utf-8")
@@ -592,9 +712,11 @@ class TestPendingResearch:
 def _extract_populated(content: str) -> list[str]:
     """Extract agent_sections_populated list from frontmatter."""
     import re
+
     m = re.search(
         r"^agent_sections_populated:\s*\n((?:\s+-\s+.+\n)*)",
-        content, re.MULTILINE,
+        content,
+        re.MULTILINE,
     )
     if not m:
         return []
@@ -604,9 +726,11 @@ def _extract_populated(content: str) -> list[str]:
 def _extract_pending(content: str) -> list[str]:
     """Extract agent_sections_pending list from frontmatter."""
     import re
+
     m = re.search(
         r"^agent_sections_pending:\s*\n((?:\s+-\s+.+\n)*)",
-        content, re.MULTILINE,
+        content,
+        re.MULTILINE,
     )
     if not m:
         return []
@@ -632,9 +756,13 @@ def _build_companion_entities(tmp_path):
     ]
     appellations = [
         {
-            "appellation_id": 1, "country": "France", "region": "Bordeaux",
-            "subregion": "Saint-Émilion", "classification": "Grand Cru",
-            "etl_run_id": rid, "updated_at": now,
+            "appellation_id": 1,
+            "country": "France",
+            "region": "Bordeaux",
+            "subregion": "Saint-Émilion",
+            "classification": "Grand Cru",
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
     grapes = [
@@ -642,24 +770,45 @@ def _build_companion_entities(tmp_path):
     ]
     wines = [
         {
-            "wine_id": 1, "wine_slug": "domaine-test-cuvee-alpha-2020",
-            "winery_id": 1, "name": "Cuvée Alpha",
-            "vintage": 2020, "is_non_vintage": False, "appellation_id": 1,
+            "wine_id": 1,
+            "wine_slug": "domaine-test-cuvee-alpha-2020",
+            "winery_id": 1,
+            "name": "Cuvée Alpha",
+            "vintage": 2020,
+            "is_non_vintage": False,
+            "appellation_id": 1,
             "category": "Red wine",
             "_raw_classification": None,
-            "subcategory": None, "specialty": None,
-            "sweetness": None, "effervescence": None, "volume_ml": 750,
+            "subcategory": None,
+            "specialty": None,
+            "sweetness": None,
+            "effervescence": None,
+            "volume_ml": 750,
             "_raw_volume": None,
-            "container": None, "hue": None, "cork": None, "alcohol_pct": 14.5,
-            "acidity_g_l": None, "sugar_g_l": None, "ageing_type": None,
-            "ageing_months": None, "farming_type": None, "serving_temp_c": None,
-            "opening_type": None, "opening_minutes": None,
-            "drink_from": 2023, "drink_until": 2030,
-            "optimal_from": 2025, "optimal_until": 2028,
-            "original_list_price": None, "original_list_currency": None,
-            "list_price": None, "list_currency": None,
-            "comment": None, "winemaking_notes": None,
-            "is_favorite": True, "is_wishlist": False,
+            "container": None,
+            "hue": None,
+            "cork": None,
+            "alcohol_pct": 14.5,
+            "acidity_g_l": None,
+            "sugar_g_l": None,
+            "ageing_type": None,
+            "ageing_months": None,
+            "farming_type": None,
+            "serving_temp_c": None,
+            "opening_type": None,
+            "opening_minutes": None,
+            "drink_from": 2023,
+            "drink_until": 2030,
+            "optimal_from": 2025,
+            "optimal_until": 2028,
+            "original_list_price": None,
+            "original_list_currency": None,
+            "list_price": None,
+            "list_currency": None,
+            "comment": None,
+            "winemaking_notes": None,
+            "is_favorite": True,
+            "is_wishlist": False,
             "tracked_wine_id": 90_001,
             "full_name": "Domaine Test Cuvée Alpha 2020",
             "grape_type": "varietal",
@@ -670,19 +819,28 @@ def _build_companion_entities(tmp_path):
             "drinking_status": "optimal",
             "age_years": 5,
             "price_tier": "unknown",
+            "bottle_format": "Standard",
+            "price_per_750ml": None,
+            "format_group_id": None,
+            "food_tags": None,
             "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
 
     slug = companion_markdown.companion_dossier_slug(90_001, "Domaine Test", "Cuvée Alpha")
     tracked_wines = [
         {
-            "tracked_wine_id": 90_001, "winery_id": 1, "wine_name": "Cuvée Alpha",
-            "category": "Red wine", "appellation_id": 1,
+            "tracked_wine_id": 90_001,
+            "winery_id": 1,
+            "wine_name": "Cuvée Alpha",
+            "category": "Red wine",
+            "appellation_id": 1,
             "dossier_path": f"tracked/{slug}",
             "is_deleted": False,
-            "etl_run_id": rid, "updated_at": now,
+            "etl_run_id": rid,
+            "updated_at": now,
         },
     ]
 
@@ -692,8 +850,7 @@ def _build_companion_entities(tmp_path):
         "grape": grapes,
         "wine": wines,
         "wine_grape": [
-            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-             "etl_run_id": rid, "updated_at": now},
+            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": rid, "updated_at": now},
         ],
         "bottle": [],
         "cellar": [],
@@ -705,22 +862,42 @@ def _build_companion_entities(tmp_path):
 
     for name, rows in entities.items():
         writer.write_parquet(name, rows, tmp_path)
-    writer.write_parquet("etl_run", [
-        {
-            "run_id": 1, "started_at": now, "finished_at": now,
-            "run_type": "full", "wines_source_hash": "abc",
-            "bottles_source_hash": "def", "bottles_gone_source_hash": None,
-            "total_inserts": 5, "total_updates": 0, "total_deletes": 0,
-            "wines_inserted": 1, "wines_updated": 0,
-            "wines_deleted": 0, "wines_renamed": 0,
-        },
-    ], tmp_path)
-    writer.write_parquet("change_log", [
-        {
-            "change_id": 1, "run_id": 1, "entity_type": "wine",
-            "entity_id": 1, "change_type": "insert", "changed_fields": None,
-        },
-    ], tmp_path)
+    writer.write_parquet(
+        "etl_run",
+        [
+            {
+                "run_id": 1,
+                "started_at": now,
+                "finished_at": now,
+                "run_type": "full",
+                "wines_source_hash": "abc",
+                "bottles_source_hash": "def",
+                "bottles_gone_source_hash": None,
+                "total_inserts": 5,
+                "total_updates": 0,
+                "total_deletes": 0,
+                "wines_inserted": 1,
+                "wines_updated": 0,
+                "wines_deleted": 0,
+                "wines_renamed": 0,
+            },
+        ],
+        tmp_path,
+    )
+    writer.write_parquet(
+        "change_log",
+        [
+            {
+                "change_id": 1,
+                "run_id": 1,
+                "entity_type": "wine",
+                "entity_id": 1,
+                "change_type": "insert",
+                "changed_fields": None,
+            },
+        ],
+        tmp_path,
+    )
 
     # Generate wine dossiers
     markdown.generate_dossiers(entities, tmp_path, current_year=2025)
@@ -729,6 +906,69 @@ def _build_companion_entities(tmp_path):
     companion_markdown.generate_companion_dossiers(entities, tmp_path, settings)
 
     return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# TestMergeFoodTags
+# ---------------------------------------------------------------------------
+
+
+class TestMergeFoodTags:
+    def test_adds_tags_to_empty_list(self):
+        text = "---\nwine_id: 1\nfood_tags: []\nagent_sections_populated: []\n---\n"
+        result = _merge_food_tags(text, ["duck-confit", "raclette"])
+        assert "- duck-confit" in result
+        assert "- raclette" in result
+
+    def test_preserves_existing_tags(self):
+        text = "---\nwine_id: 1\nfood_tags:\n  - existing-tag\nagent_sections_populated: []\n---\n"
+        result = _merge_food_tags(text, ["new-tag"])
+        assert "- existing-tag" in result
+        assert "- new-tag" in result
+
+    def test_deduplicates_tags(self):
+        text = "---\nwine_id: 1\nfood_tags:\n  - duck-confit\nagent_sections_populated: []\n---\n"
+        result = _merge_food_tags(text, ["duck-confit", "raclette"])
+        assert result.count("duck-confit") == 1
+        assert "- raclette" in result
+
+    def test_inserts_before_agent_sections_when_missing(self):
+        text = "---\nwine_id: 1\nagent_sections_populated: []\n---\n"
+        result = _merge_food_tags(text, ["raclette"])
+        assert "food_tags:" in result
+        assert "- raclette" in result
+        ft_pos = result.index("food_tags:")
+        ap_pos = result.index("agent_sections_populated:")
+        assert ft_pos < ap_pos
+
+
+class TestMergeFoodGroups:
+    def test_adds_groups_to_empty_list(self):
+        text = "---\nwine_id: 1\nfood_tags: []\nfood_groups: []\nagent_sections_populated: []\n---\n"
+        result = _merge_food_groups(text, ["heavy", "French"])
+        assert "- heavy" in result
+        assert "- French" in result
+
+    def test_preserves_existing_groups(self):
+        text = "---\nwine_id: 1\nfood_tags: []\nfood_groups:\n  - existing-group\nagent_sections_populated: []\n---\n"
+        result = _merge_food_groups(text, ["new-group"])
+        assert "- existing-group" in result
+        assert "- new-group" in result
+
+    def test_deduplicates_groups(self):
+        text = "---\nwine_id: 1\nfood_tags: []\nfood_groups:\n  - heavy\nagent_sections_populated: []\n---\n"
+        result = _merge_food_groups(text, ["heavy", "French"])
+        assert result.count("- heavy") == 1
+        assert "- French" in result
+
+    def test_inserts_after_food_tags_when_missing(self):
+        text = "---\nwine_id: 1\nfood_tags: []\nagent_sections_populated: []\n---\n"
+        result = _merge_food_groups(text, ["grilled"])
+        assert "food_groups:" in result
+        assert "- grilled" in result
+        fg_pos = result.index("food_groups:")
+        ap_pos = result.index("agent_sections_populated:")
+        assert fg_pos < ap_pos
 
 
 @pytest.fixture()
@@ -763,7 +1003,9 @@ class TestCompanionDossierOps:
 
     def test_read_companion_filtered(self, companion_dir):
         result = read_companion_dossier(
-            90_001, companion_dir, sections=["producer_deep_dive"],
+            90_001,
+            companion_dir,
+            sections=["producer_deep_dive"],
         )
         assert "## Producer Deep Dive" in result
         assert "## Buying Guide" not in result
@@ -775,7 +1017,8 @@ class TestCompanionDossierOps:
 
     def test_update_companion_section(self, companion_dir):
         result = update_companion_dossier(
-            90_001, "producer_deep_dive",
+            90_001,
+            "producer_deep_dive",
             "Domaine Test is a premier Bordeaux estate.",
             companion_dir,
         )
@@ -789,13 +1032,19 @@ class TestCompanionDossierOps:
     def test_update_companion_protected_section_raises(self, companion_dir):
         with pytest.raises(ProtectedSectionError, match="not an allowed companion"):
             update_companion_dossier(
-                90_001, "identity", "hacked", companion_dir,
+                90_001,
+                "identity",
+                "hacked",
+                companion_dir,
             )
 
     def test_update_companion_nonexistent_raises(self, companion_dir):
         with pytest.raises(TrackedWineNotFoundError):
             update_companion_dossier(
-                999, "producer_deep_dive", "content", companion_dir,
+                999,
+                "producer_deep_dive",
+                "content",
+                companion_dir,
             )
 
     def test_companion_empty_content_raises(self, companion_dir):
@@ -815,7 +1064,10 @@ class TestCompanionDossierOps:
     def test_pending_decreases_after_update(self, companion_dir):
         result_before = pending_companion_research(companion_dir)
         update_companion_dossier(
-            90_001, "producer_deep_dive", "content", companion_dir,
+            90_001,
+            "producer_deep_dive",
+            "content",
+            companion_dir,
         )
         result_after = pending_companion_research(companion_dir)
         # Still pending but fewer sections
@@ -827,7 +1079,7 @@ class TestCompanionDossierOps:
         assert "No companion dossiers found" in result
 
     def test_companion_sections_constants(self):
-        assert ALLOWED_COMPANION_SECTIONS == frozenset(COMPANION_SECTIONS.keys())
+        assert frozenset(COMPANION_SECTIONS.keys()) == ALLOWED_COMPANION_SECTIONS
         assert "producer_deep_dive" in ALLOWED_COMPANION_SECTIONS
         assert "vintage_tracker" in ALLOWED_COMPANION_SECTIONS
         assert "buying_guide" in ALLOWED_COMPANION_SECTIONS
@@ -843,7 +1095,8 @@ class TestLogging:
     def test_update_dossier_logs_info(self, data_dir, caplog):
         with caplog.at_level("INFO", logger="cellarbrain.dossier_ops"):
             update_dossier(
-                1, "producer_profile",
+                1,
+                "producer_profile",
                 "Test content for logging.",
                 data_dir,
             )
@@ -852,7 +1105,6 @@ class TestLogging:
         assert "section=producer_profile" in caplog.text
 
     def test_protected_section_logs_warning(self, data_dir, caplog):
-        with caplog.at_level("WARNING", logger="cellarbrain.dossier_ops"):
-            with pytest.raises(ProtectedSectionError):
-                update_dossier(1, "identity", "Bad content", data_dir)
+        with caplog.at_level("WARNING", logger="cellarbrain.dossier_ops"), pytest.raises(ProtectedSectionError):
+            update_dossier(1, "identity", "Bad content", data_dir)
         assert "Protected section write attempt" in caplog.text

@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from cellarbrain.sommelier.schemas import PAIRING_DATASET_SCHEMA
 from cellarbrain.sommelier.text_builder import build_food_text, build_wine_text
 
-
 # ---------------------------------------------------------------------------
 # Wine Definitions
 # ---------------------------------------------------------------------------
@@ -236,6 +235,26 @@ _CUISINE_AFFINITY: dict[str, dict[str, float]] = {
     "American": {"full_red_tannic": 0.10, "bold_red_spicy": 0.10},
     "British": {"medium_red_balanced": 0.05, "rich_white_oaked": 0.05, "fortified": 0.10},
     "Georgian": {"orange_natural": 0.20, "medium_red_balanced": 0.10},
+    "Indonesian": {"aromatic_white": 0.15, "bold_red_spicy": 0.05, "rosé": 0.05},
+    "Malaysian": {"aromatic_white": 0.15, "rosé": 0.10, "light_white_crisp": 0.05},
+    "Brazilian": {"bold_red_spicy": 0.10, "medium_red_balanced": 0.10, "rosé": 0.05},
+    "Argentine": {"full_red_tannic": 0.15, "bold_red_spicy": 0.10, "medium_red_balanced": 0.10},
+    "Peruvian": {"aromatic_white": 0.10, "rosé": 0.10, "light_white_crisp": 0.05},
+    "African": {"aromatic_white": 0.10, "bold_red_spicy": 0.10, "rosé": 0.05},
+    "Scandinavian": {"light_white_crisp": 0.10, "aromatic_white": 0.10, "light_red_elegant": 0.05},
+    "Hungarian": {"medium_red_balanced": 0.10, "bold_red_spicy": 0.05, "aromatic_white": 0.05},
+    "Polish": {"aromatic_white": 0.05, "light_red_elegant": 0.05, "medium_red_balanced": 0.05},
+    "Ukrainian": {"medium_red_balanced": 0.05, "light_red_elegant": 0.05},
+    "Balkan": {"medium_red_balanced": 0.10, "bold_red_spicy": 0.05},
+    "Czech": {"aromatic_white": 0.05, "light_red_elegant": 0.05, "medium_red_balanced": 0.05},
+    "Venezuelan": {"rosé": 0.05, "aromatic_white": 0.05, "light_white_crisp": 0.05},
+    "Central American": {"rosé": 0.05, "aromatic_white": 0.05},
+    "Filipino": {"aromatic_white": 0.10, "rosé": 0.05, "light_white_crisp": 0.05},
+    "Chilean": {"medium_red_balanced": 0.10, "bold_red_spicy": 0.05, "light_white_crisp": 0.05},
+    "Cuban": {"rosé": 0.05, "light_white_crisp": 0.05},
+    "Belgian": {"light_red_elegant": 0.05, "aromatic_white": 0.05, "sparkling": 0.05},
+    "Russian": {"light_red_elegant": 0.05, "aromatic_white": 0.05},
+    "Caribbean": {"rosé": 0.05, "aromatic_white": 0.05, "sparkling": 0.05},
 }
 
 # Flavour bridge bonuses
@@ -257,6 +276,15 @@ _FLAVOUR_BRIDGES: dict[str, dict[str, float]] = {
     "coconut": {"aromatic_white": 0.05, "rosé": 0.05},
     "aromatic": {"aromatic_white": 0.10, "rosé": 0.05},
     "floral": {"aromatic_white": 0.10, "rosé": 0.05, "light_white_crisp": 0.05},
+    "savory": {"medium_red_balanced": 0.03, "bold_red_spicy": 0.03, "full_red_tannic": 0.02},
+    "citrusy": {"light_white_crisp": 0.10, "aromatic_white": 0.05, "sparkling": 0.05},
+    "buttery": {"rich_white_oaked": 0.10, "sparkling": 0.05, "light_white_crisp": 0.03},
+    "crispy": {"sparkling": 0.05, "light_white_crisp": 0.03, "rosé": 0.03},
+    "delicate": {"light_white_crisp": 0.05, "aromatic_white": 0.05, "sparkling": 0.03},
+    "fruity": {"aromatic_white": 0.05, "rosé": 0.05, "sweet_dessert": 0.05},
+    "robust": {"full_red_tannic": 0.05, "bold_red_spicy": 0.05, "medium_red_balanced": 0.03},
+    "peppery": {"bold_red_spicy": 0.05, "medium_red_balanced": 0.03, "light_red_elegant": 0.03},
+    "sour": {"light_white_crisp": 0.05, "sparkling": 0.05},
 }
 
 # Dessert/sweet dish special handling
@@ -267,7 +295,12 @@ _DESSERT_KEYWORDS = {"cake", "pie", "tart", "pudding", "mousse", "crème", "souf
                      "strudel", "gulab", "mochi", "panna cotta", "mille-feuille",
                      "profiteroles", "fondant", "macaron", "croissant", "brioche",
                      "galette", "clafoutis", "cannoli", "panettone", "affogato",
-                     "vermicelles", "zabaglione", "knafeh", "loukoumades"}
+                     "vermicelles", "zabaglione", "knafeh", "loukoumades",
+                     "brûlée", "bingsu", "rasmalai", "torte", "stollen",
+                     "canelé", "galaktoboureko", "künefe", "medovik",
+                     "eton mess", "kirschtorte", "nusstorte",
+                     "dobos", "trdelník", "cheesecake", "lava cake",
+                     "gelato", "truffles", "posset", "tres leches"}
 
 
 def _is_dessert(dish_name: str, cuisine: str) -> bool:
@@ -426,6 +459,14 @@ class Pair:
     style: str
     pairing_score: float
     pairing_reason: str
+    # Transient scoring metadata — used by _rebalance_scores() to regenerate
+    # reason text after score redistribution. Not written to Parquet.
+    _food_weight: str | None = None
+    _protein: str | None = None
+    _wine: Wine | None = None
+    _wine_style_key: str | None = None
+    _flavour_profile: list[str] | None = None
+    _dish_name: str | None = None
 
 
 def _build_food_text_from_row(row: dict) -> str:
@@ -512,6 +553,12 @@ def generate_pairs(catalogue_path: Path, seed: int = 42) -> list[Pair]:
             style=wine.style,
             pairing_score=round(score, 3),
             pairing_reason=reason,
+            _food_weight=dish["weight_class"],
+            _protein=dish["protein"],
+            _wine=wine,
+            _wine_style_key=style_key,
+            _flavour_profile=dish["flavour_profile"],
+            _dish_name=dish["dish_name"],
         ))
         return True
 
@@ -604,6 +651,14 @@ def generate_pairs(catalogue_path: Path, seed: int = 42) -> list[Pair]:
         ("Indian", "aromatic_white"), ("Thai", "aromatic_white"),
         ("Georgian", "orange_natural"), ("Greek", "rosé"),
         ("German", "aromatic_white"), ("Austrian", "light_white_crisp"),
+        ("Indonesian", "aromatic_white"), ("Indonesian", "bold_red_spicy"),
+        ("Malaysian", "aromatic_white"), ("Malaysian", "rosé"),
+        ("Brazilian", "bold_red_spicy"), ("Brazilian", "medium_red_balanced"),
+        ("Argentine", "full_red_tannic"), ("Argentine", "bold_red_spicy"),
+        ("Peruvian", "aromatic_white"), ("Peruvian", "rosé"),
+        ("African", "aromatic_white"), ("African", "bold_red_spicy"),
+        ("Scandinavian", "light_white_crisp"), ("Scandinavian", "aromatic_white"),
+        ("Hungarian", "medium_red_balanced"), ("Filipino", "aromatic_white"),
     ]
     for cuisine_name, style_key in regional_combos:
         cuisine_dishes = [d for d in dish_rows if d["cuisine"] == cuisine_name]
@@ -656,6 +711,17 @@ def _rebalance_scores(pairs: list[Pair], rng: random.Random) -> list[Pair]:
         new_score = max(0.01, min(0.99, round(new_score, 3)))
 
         # Regenerate reason for new score
+        new_reason = pair.pairing_reason  # fallback if metadata missing
+        if pair._wine is not None and pair._food_weight is not None:
+            new_reason = _generate_reason(
+                score=new_score,
+                food_weight=pair._food_weight,
+                protein=pair._protein,
+                wine=pair._wine,
+                wine_style_key=pair._wine_style_key,
+                flavour_profile=pair._flavour_profile or [],
+                dish_name=pair._dish_name or "",
+            )
         rebalanced.append(Pair(
             food_text=pair.food_text,
             ingredients=pair.ingredients,
@@ -664,7 +730,13 @@ def _rebalance_scores(pairs: list[Pair], rng: random.Random) -> list[Pair]:
             region=pair.region,
             style=pair.style,
             pairing_score=new_score,
-            pairing_reason=pair.pairing_reason,
+            pairing_reason=new_reason,
+            _food_weight=pair._food_weight,
+            _protein=pair._protein,
+            _wine=pair._wine,
+            _wine_style_key=pair._wine_style_key,
+            _flavour_profile=pair._flavour_profile,
+            _dish_name=pair._dish_name,
         ))
 
     return rebalanced

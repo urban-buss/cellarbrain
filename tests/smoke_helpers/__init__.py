@@ -18,7 +18,7 @@ class SmokeConfig:
 
     raw_dir: Path
     output_dir: Path
-    folders: list[str]          # ordered; first = full load
+    folders: list[str]  # ordered; first = full load
     python_version: str
     cellarbrain_version: str
 

@@ -9,32 +9,27 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from cellarbrain.incremental import (
     ENTITY_ORDER,
-    PK_FIELD,
     WineDeletion,
     WineMatch,
-    annotate_classified_wines,
-    annotate_full_load,
-    classify_wines,
-    compute_file_hash,
-    load_change_log,
-    load_etl_runs,
-    load_existing,
-    next_run_id,
-    sync,
     _detect_renames,
     _detect_winery_renames,
     _diff_rows,
     _match_by_fingerprint,
-    _natural_key,
     _stabilize_entity,
+    annotate_classified_wines,
+    annotate_full_load,
+    classify_wines,
+    compute_file_hash,
+    load_existing,
+    next_run_id,
+    sync,
 )
 from cellarbrain.settings import IdentityConfig
-from cellarbrain.writer import SCHEMAS, write_parquet
 from cellarbrain.transform import assign_dossier_paths
+from cellarbrain.writer import SCHEMAS, write_parquet
 
 _NOW = datetime(2025, 6, 1, 12, 0, 0)
 _LATER = datetime(2025, 7, 1, 12, 0, 0)
@@ -45,6 +40,7 @@ _EVEN_LATER = datetime(2025, 8, 1, 12, 0, 0)
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_entity(tmp_path: Path, entity_type: str, rows: list[dict]) -> None:
     write_parquet(entity_type, rows, tmp_path)
 
@@ -52,44 +48,73 @@ def _write_entity(tmp_path: Path, entity_type: str, rows: list[dict]) -> None:
 def _write_empty(tmp_path: Path, entity_type: str) -> None:
     schema = SCHEMAS[entity_type]
     table = pa.table(
-        {f.name: pa.array([], type=f.type) for f in schema}, schema=schema,
+        {f.name: pa.array([], type=f.type) for f in schema},
+        schema=schema,
     )
     pq.write_table(table, tmp_path / f"{entity_type}.parquet")
 
 
-def _minimal_wine(wine_id: int, winery_id: int, name: str, vintage: int,
-                   *, appellation_id: int | None = None,
-                   alcohol_pct: float | None = None,
-                   comment: str | None = None,
-                   dossier_path: str | None = None,
-                   wine_slug: str | None = None,
-                   _raw_volume: str | None = None,
-                   _raw_classification: str | None = None,
-                   _raw_grapes: str | None = None,
-                   winery_name: str | None = None,
-                   run_id: int = 1, ts: datetime = _NOW) -> dict:
+def _minimal_wine(
+    wine_id: int,
+    winery_id: int,
+    name: str,
+    vintage: int,
+    *,
+    appellation_id: int | None = None,
+    alcohol_pct: float | None = None,
+    comment: str | None = None,
+    dossier_path: str | None = None,
+    wine_slug: str | None = None,
+    _raw_volume: str | None = None,
+    _raw_classification: str | None = None,
+    _raw_grapes: str | None = None,
+    winery_name: str | None = None,
+    run_id: int = 1,
+    ts: datetime = _NOW,
+) -> dict:
     from cellarbrain.transform import wine_slug as compute_slug
+
     slug = wine_slug or compute_slug(winery_name or "", name, str(vintage))
     d: dict = {
-        "wine_id": wine_id, "wine_slug": slug,
-        "winery_id": winery_id, "name": name,
-        "vintage": vintage, "is_non_vintage": False,
-        "appellation_id": appellation_id, "category": "red",
+        "wine_id": wine_id,
+        "wine_slug": slug,
+        "winery_id": winery_id,
+        "name": name,
+        "vintage": vintage,
+        "is_non_vintage": False,
+        "appellation_id": appellation_id,
+        "category": "red",
         "_raw_classification": _raw_classification,
-        "subcategory": None, "specialty": None, "sweetness": None,
-        "effervescence": None, "volume_ml": 750,
+        "subcategory": None,
+        "specialty": None,
+        "sweetness": None,
+        "effervescence": None,
+        "volume_ml": 750,
         "_raw_volume": _raw_volume,
         "container": None,
-        "hue": None, "cork": None,
-        "alcohol_pct": alcohol_pct, "acidity_g_l": None, "sugar_g_l": None,
-        "ageing_type": None, "ageing_months": None, "farming_type": None,
-        "serving_temp_c": None, "opening_type": None,
-        "opening_minutes": None, "drink_from": None, "drink_until": None,
-        "optimal_from": None, "optimal_until": None,
-        "original_list_price": None, "original_list_currency": None,
-        "list_price": None, "list_currency": None,
-        "comment": comment, "winemaking_notes": None,
-        "is_favorite": False, "is_wishlist": False,
+        "hue": None,
+        "cork": None,
+        "alcohol_pct": alcohol_pct,
+        "acidity_g_l": None,
+        "sugar_g_l": None,
+        "ageing_type": None,
+        "ageing_months": None,
+        "farming_type": None,
+        "serving_temp_c": None,
+        "opening_type": None,
+        "opening_minutes": None,
+        "drink_from": None,
+        "drink_until": None,
+        "optimal_from": None,
+        "optimal_until": None,
+        "original_list_price": None,
+        "original_list_currency": None,
+        "list_price": None,
+        "list_currency": None,
+        "comment": comment,
+        "winemaking_notes": None,
+        "is_favorite": False,
+        "is_wishlist": False,
         "tracked_wine_id": None,
         "full_name": f"{name} {vintage}",
         "grape_type": "unknown",
@@ -99,114 +124,201 @@ def _minimal_wine(wine_id: int, winery_id: int, name: str, vintage: int,
         "drinking_status": "unknown",
         "age_years": None,
         "price_tier": "unknown",
+        "bottle_format": "Standard",
+        "price_per_750ml": None,
+        "format_group_id": None,
+        "food_tags": None,
         "is_deleted": False,
-        "etl_run_id": run_id, "updated_at": ts,
+        "etl_run_id": run_id,
+        "updated_at": ts,
     }
     if dossier_path is not None:
         d["dossier_path"] = dossier_path
     return d
 
 
-def _minimal_bottle(bottle_id: int, wine_id: int, cellar_id: int,
-                     *, shelf: str = "A1", bottle_number: int = 1,
-                     provider_id: int | None = 1,
-                     status: str = "stored",
-                     output_date: date | None = None,
-                     output_type: str | None = None,
-                     output_comment: str | None = None,
-                     run_id: int = 1, ts: datetime = _NOW) -> dict:
+def _minimal_bottle(
+    bottle_id: int,
+    wine_id: int,
+    cellar_id: int,
+    *,
+    shelf: str = "A1",
+    bottle_number: int = 1,
+    provider_id: int | None = 1,
+    status: str = "stored",
+    output_date: date | None = None,
+    output_type: str | None = None,
+    output_comment: str | None = None,
+    run_id: int = 1,
+    ts: datetime = _NOW,
+) -> dict:
     return {
-        "bottle_id": bottle_id, "wine_id": wine_id,
+        "bottle_id": bottle_id,
+        "wine_id": wine_id,
         "status": status,
-        "cellar_id": cellar_id, "shelf": shelf,
-        "bottle_number": bottle_number, "provider_id": provider_id,
+        "cellar_id": cellar_id,
+        "shelf": shelf,
+        "bottle_number": bottle_number,
+        "provider_id": provider_id,
         "purchase_date": date(2024, 1, 1),
         "acquisition_type": "market_price",
-        "original_purchase_price": Decimal("25.00"), "original_purchase_currency": "CHF",
-        "purchase_price": Decimal("25.00"), "purchase_currency": "CHF",
+        "original_purchase_price": Decimal("25.00"),
+        "original_purchase_currency": "CHF",
+        "purchase_price": Decimal("25.00"),
+        "purchase_currency": "CHF",
         "purchase_comment": None,
         "output_date": output_date,
         "output_type": output_type,
         "output_comment": output_comment,
         "is_onsite": True,
         "is_in_transit": False,
-        "etl_run_id": run_id, "updated_at": ts,
+        "etl_run_id": run_id,
+        "updated_at": ts,
     }
 
 
-def _minimal_tasting(tasting_id: int, wine_id: int,
-                      *, tasting_date: date = date(2024, 6, 1),
-                      note: str | None = "Good",
-                      score: float | None = 16.0, max_score: int | None = 20,
-                      run_id: int = 1, ts: datetime = _NOW) -> dict:
+def _minimal_tasting(
+    tasting_id: int,
+    wine_id: int,
+    *,
+    tasting_date: date = date(2024, 6, 1),
+    note: str | None = "Good",
+    score: float | None = 16.0,
+    max_score: int | None = 20,
+    run_id: int = 1,
+    ts: datetime = _NOW,
+) -> dict:
     return {
-        "tasting_id": tasting_id, "wine_id": wine_id,
-        "tasting_date": tasting_date, "note": note,
-        "score": score, "max_score": max_score,
-        "etl_run_id": run_id, "updated_at": ts,
+        "tasting_id": tasting_id,
+        "wine_id": wine_id,
+        "tasting_date": tasting_date,
+        "note": note,
+        "score": score,
+        "max_score": max_score,
+        "etl_run_id": run_id,
+        "updated_at": ts,
     }
 
 
-def _minimal_pro_rating(rating_id: int, wine_id: int,
-                          *, source: str = "Parker",
-                          score: float = 92.0, max_score: int = 100,
-                          run_id: int = 1, ts: datetime = _NOW) -> dict:
+def _minimal_pro_rating(
+    rating_id: int,
+    wine_id: int,
+    *,
+    source: str = "Parker",
+    score: float = 92.0,
+    max_score: int = 100,
+    run_id: int = 1,
+    ts: datetime = _NOW,
+) -> dict:
     return {
-        "rating_id": rating_id, "wine_id": wine_id,
-        "source": source, "score": score, "max_score": max_score,
+        "rating_id": rating_id,
+        "wine_id": wine_id,
+        "source": source,
+        "score": score,
+        "max_score": max_score,
         "review_text": None,
-        "etl_run_id": run_id, "updated_at": ts,
+        "etl_run_id": run_id,
+        "updated_at": ts,
     }
 
 
 def _seed_full(tmp_path: Path) -> None:
     """Write a rich initial dataset covering all entity types."""
-    _write_entity(tmp_path, "winery", [
-        {"winery_id": 1, "name": "Alpha", "etl_run_id": 1, "updated_at": _NOW},
-        {"winery_id": 2, "name": "Beta", "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "appellation", [
-        {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-         "subregion": None, "classification": None,
-         "etl_run_id": 1, "updated_at": _NOW},
-        {"appellation_id": 2, "country": "Italy", "region": "Piedmont",
-         "subregion": None, "classification": None,
-         "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "grape", [
-        {"grape_id": 1, "name": "Merlot", "etl_run_id": 1, "updated_at": _NOW},
-        {"grape_id": 2, "name": "Nebbiolo", "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "cellar", [
-        {"cellar_id": 1, "name": "01 Main", "sort_order": 1,
-         "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "provider", [
-        {"provider_id": 1, "name": "Wine Shop", "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "wine", [
-        _minimal_wine(100, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0,
-                      dossier_path="cellar/0100-cuvee-x-2020.md"),
-        _minimal_wine(101, 2, "Barolo Y", 2019, appellation_id=2,
-                      dossier_path="cellar/0101-barolo-y-2019.md"),
-    ])
-    _write_entity(tmp_path, "wine_grape", [
-        {"wine_id": 100, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": 1, "updated_at": _NOW},
-        {"wine_id": 101, "grape_id": 2, "percentage": 100.0, "sort_order": 1,
-         "etl_run_id": 1, "updated_at": _NOW},
-    ])
-    _write_entity(tmp_path, "bottle", [
-        _minimal_bottle(200, 100, 1, shelf="A1", bottle_number=1),
-        _minimal_bottle(201, 100, 1, shelf="A1", bottle_number=2),
-        _minimal_bottle(202, 101, 1, shelf="B1", bottle_number=1),
-    ])
-    _write_entity(tmp_path, "tasting", [
-        _minimal_tasting(300, 100, tasting_date=date(2024, 6, 1)),
-    ])
-    _write_entity(tmp_path, "pro_rating", [
-        _minimal_pro_rating(400, 100, source="Parker", score=92.0),
-    ])
+    _write_entity(
+        tmp_path,
+        "winery",
+        [
+            {"winery_id": 1, "name": "Alpha", "etl_run_id": 1, "updated_at": _NOW},
+            {"winery_id": 2, "name": "Beta", "etl_run_id": 1, "updated_at": _NOW},
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "appellation",
+        [
+            {
+                "appellation_id": 1,
+                "country": "France",
+                "region": "Bordeaux",
+                "subregion": None,
+                "classification": None,
+                "etl_run_id": 1,
+                "updated_at": _NOW,
+            },
+            {
+                "appellation_id": 2,
+                "country": "Italy",
+                "region": "Piedmont",
+                "subregion": None,
+                "classification": None,
+                "etl_run_id": 1,
+                "updated_at": _NOW,
+            },
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "grape",
+        [
+            {"grape_id": 1, "name": "Merlot", "etl_run_id": 1, "updated_at": _NOW},
+            {"grape_id": 2, "name": "Nebbiolo", "etl_run_id": 1, "updated_at": _NOW},
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "cellar",
+        [
+            {"cellar_id": 1, "name": "01 Main", "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "provider",
+        [
+            {"provider_id": 1, "name": "Wine Shop", "etl_run_id": 1, "updated_at": _NOW},
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "wine",
+        [
+            _minimal_wine(
+                100, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0, dossier_path="cellar/0100-cuvee-x-2020.md"
+            ),
+            _minimal_wine(101, 2, "Barolo Y", 2019, appellation_id=2, dossier_path="cellar/0101-barolo-y-2019.md"),
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "wine_grape",
+        [
+            {"wine_id": 100, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+            {"wine_id": 101, "grape_id": 2, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "bottle",
+        [
+            _minimal_bottle(200, 100, 1, shelf="A1", bottle_number=1),
+            _minimal_bottle(201, 100, 1, shelf="A1", bottle_number=2),
+            _minimal_bottle(202, 101, 1, shelf="B1", bottle_number=1),
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "tasting",
+        [
+            _minimal_tasting(300, 100, tasting_date=date(2024, 6, 1)),
+        ],
+    )
+    _write_entity(
+        tmp_path,
+        "pro_rating",
+        [
+            _minimal_pro_rating(400, 100, source="Parker", score=92.0),
+        ],
+    )
 
 
 def _build_new_entities(**overrides: list[dict]) -> dict[str, list[dict]]:
@@ -217,10 +329,8 @@ def _build_new_entities(**overrides: list[dict]) -> dict[str, list[dict]]:
             {"winery_id": 2, "name": "Beta"},
         ],
         "appellation": [
-            {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-             "subregion": None, "classification": None},
-            {"appellation_id": 2, "country": "Italy", "region": "Piedmont",
-             "subregion": None, "classification": None},
+            {"appellation_id": 1, "country": "France", "region": "Bordeaux", "subregion": None, "classification": None},
+            {"appellation_id": 2, "country": "Italy", "region": "Piedmont", "subregion": None, "classification": None},
         ],
         "grape": [
             {"grape_id": 1, "name": "Merlot"},
@@ -237,10 +347,8 @@ def _build_new_entities(**overrides: list[dict]) -> dict[str, list[dict]]:
             _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
         ],
         "wine_grape": [
-            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1,
-             "etl_run_id": 1, "updated_at": _NOW},
-            {"wine_id": 2, "grape_id": 2, "percentage": 100.0, "sort_order": 1,
-             "etl_run_id": 1, "updated_at": _NOW},
+            {"wine_id": 1, "grape_id": 1, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+            {"wine_id": 2, "grape_id": 2, "percentage": 100.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
         ],
         "bottle": [
             _minimal_bottle(1, 1, 1, shelf="A1", bottle_number=1),
@@ -263,6 +371,7 @@ def _build_new_entities(**overrides: list[dict]) -> dict[str, list[dict]]:
 # compute_file_hash
 # ---------------------------------------------------------------------------
 
+
 class TestComputeFileHash:
     def test_deterministic(self, tmp_path):
         p = tmp_path / "a.txt"
@@ -281,20 +390,34 @@ class TestComputeFileHash:
 # next_run_id / load helpers
 # ---------------------------------------------------------------------------
 
+
 class TestNextRunId:
     def test_empty_dir(self, tmp_path):
         assert next_run_id(tmp_path) == 1
 
     def test_after_one_run(self, tmp_path):
-        write_parquet("etl_run", [{
-            "run_id": 1, "started_at": _NOW, "finished_at": _NOW,
-            "run_type": "full", "wines_source_hash": "a",
-            "bottles_source_hash": "b", "bottles_gone_source_hash": None,
-            "total_inserts": 1,
-            "total_updates": 0, "total_deletes": 0,
-            "wines_inserted": 1, "wines_updated": 0,
-            "wines_deleted": 0, "wines_renamed": 0,
-        }], tmp_path)
+        write_parquet(
+            "etl_run",
+            [
+                {
+                    "run_id": 1,
+                    "started_at": _NOW,
+                    "finished_at": _NOW,
+                    "run_type": "full",
+                    "wines_source_hash": "a",
+                    "bottles_source_hash": "b",
+                    "bottles_gone_source_hash": None,
+                    "total_inserts": 1,
+                    "total_updates": 0,
+                    "total_deletes": 0,
+                    "wines_inserted": 1,
+                    "wines_updated": 0,
+                    "wines_deleted": 0,
+                    "wines_renamed": 0,
+                }
+            ],
+            tmp_path,
+        )
         assert next_run_id(tmp_path) == 2
 
 
@@ -308,6 +431,7 @@ class TestLoadExisting:
 # ---------------------------------------------------------------------------
 # _stabilize_entity
 # ---------------------------------------------------------------------------
+
 
 class TestStabilizeEntity:
     def test_identity_when_no_old(self):
@@ -342,8 +466,8 @@ class TestStabilizeEntity:
             {"winery_id": 2, "name": "Gamma"},
         ]
         result, remap = _stabilize_entity(new, old, "winery", {})
-        assert remap[1] == 5       # Alpha → reuse old ID
-        assert remap[2] == 6       # Gamma → max(5) + 1
+        assert remap[1] == 5  # Alpha → reuse old ID
+        assert remap[2] == 6  # Gamma → max(5) + 1
 
     def test_fk_remapping_applied(self):
         """Wine rows should have winery_id remapped before NK comparison."""
@@ -351,8 +475,11 @@ class TestStabilizeEntity:
             _minimal_wine(wine_id=100, winery_id=10, name="CuvéeX", vintage=2020),
         ]
         new_wines = [
-            {**_minimal_wine(wine_id=1, winery_id=1, name="CuvéeX", vintage=2020),
-             "etl_run_id": None, "updated_at": None},
+            {
+                **_minimal_wine(wine_id=1, winery_id=1, name="CuvéeX", vintage=2020),
+                "etl_run_id": None,
+                "updated_at": None,
+            },
         ]
         # winery fresh-id 1 → stable 10
         remappings = {"winery": {1: 10}}
@@ -370,6 +497,7 @@ class TestStabilizeEntity:
 # ---------------------------------------------------------------------------
 # _diff_rows
 # ---------------------------------------------------------------------------
+
 
 class TestDiffRows:
     def test_all_inserts(self):
@@ -393,8 +521,7 @@ class TestDiffRows:
         assert annotated[0]["updated_at"] == _NOW
 
     def test_update_detected(self):
-        old = [{"winery_id": 1, "name": "Alpha", "sort_order": 1,
-                "etl_run_id": 1, "updated_at": _NOW}]
+        old = [{"winery_id": 1, "name": "Alpha", "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW}]
         new = [{"winery_id": 1, "name": "Alpha", "sort_order": 2}]
         annotated, changes = _diff_rows(new, old, "cellar", 2, _LATER)
         assert len(changes) == 1
@@ -420,8 +547,8 @@ class TestDiffRows:
             {"winery_id": 2, "name": "Beta", "etl_run_id": 1, "updated_at": _NOW},
         ]
         new = [
-            {"winery_id": 1, "name": "Alpha"},         # unchanged
-            {"winery_id": 3, "name": "Gamma"},          # insert
+            {"winery_id": 1, "name": "Alpha"},  # unchanged
+            {"winery_id": 3, "name": "Gamma"},  # insert
         ]
         _, changes = _diff_rows(new, old, "winery", 2, _LATER)
         types = {c["change_type"] for c in changes}
@@ -430,6 +557,7 @@ class TestDiffRows:
     def test_float32_roundtrip_not_spurious(self):
         """float32 precision loss from Parquet should not trigger updates."""
         import struct
+
         val64 = 14.123456789
         val32 = struct.unpack("f", struct.pack("f", val64))[0]
         old = [{"winery_id": 1, "name": "A", "alcohol": val32, "etl_run_id": 1, "updated_at": _NOW}]
@@ -454,6 +582,7 @@ class TestDiffRows:
 # ---------------------------------------------------------------------------
 # Wine rename detection (stabilisation + diff)
 # ---------------------------------------------------------------------------
+
 
 class TestStabilizeWineRename:
     """Partial-NK fallback in _stabilize_entity preserves wine_id on name change."""
@@ -535,6 +664,7 @@ class TestDiffRowsRename:
 # Fuzzy wine rename matching
 # ---------------------------------------------------------------------------
 
+
 class TestFuzzyWineMatch:
     """Fuzzy matching in _stabilize_entity for wines with similar names."""
 
@@ -611,8 +741,7 @@ class TestSyncFuzzyWineRename:
         ents = _build_new_entities(
             wine=[
                 # Slightly different name (accent change)
-                _minimal_wine(1, 1, "Cuvée X Reserve", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée X Reserve", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
@@ -620,23 +749,20 @@ class TestSyncFuzzyWineRename:
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER, identity_config=ic)
         wine = [w for w in stabilised["wine"] if w["name"] == "Cuvée X Reserve"][0]
         assert wine["wine_id"] == 100  # preserved
-        renames = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "rename"]
         assert len(renames) == 1
 
     def test_fuzzy_disabled_falls_back_to_insert_delete(self, tmp_path):
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X Reserve", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée X Reserve", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         ic = IdentityConfig(enable_fuzzy_match=False)
         _, changes, _ = sync(ents, tmp_path, 2, _LATER, identity_config=ic)
-        renames = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "rename"]
         # 1-to-1 partial key match → still detected (not fuzzy)
         assert len(renames) == 1
 
@@ -645,13 +771,20 @@ class TestSyncFuzzyWineRename:
 # annotate_full_load
 # ---------------------------------------------------------------------------
 
+
 class TestAnnotateFullLoad:
     def test_all_inserts(self, tmp_path):
         entities = {
             "winery": [{"winery_id": 1, "name": "A"}],
-            "appellation": [], "grape": [], "cellar": [], "provider": [],
-            "wine": [], "wine_grape": [], "bottle": [],
-            "tasting": [], "pro_rating": [],
+            "appellation": [],
+            "grape": [],
+            "cellar": [],
+            "provider": [],
+            "wine": [],
+            "wine_grape": [],
+            "bottle": [],
+            "tasting": [],
+            "pro_rating": [],
         }
         annotated, changes = annotate_full_load(entities, tmp_path, 1, _NOW)
         assert len(changes) == 1
@@ -662,9 +795,15 @@ class TestAnnotateFullLoad:
     def test_change_ids_sequential(self, tmp_path):
         entities = {
             "winery": [{"winery_id": 1, "name": "A"}, {"winery_id": 2, "name": "B"}],
-            "appellation": [], "grape": [], "cellar": [], "provider": [],
-            "wine": [], "wine_grape": [], "bottle": [],
-            "tasting": [], "pro_rating": [],
+            "appellation": [],
+            "grape": [],
+            "cellar": [],
+            "provider": [],
+            "wine": [],
+            "wine_grape": [],
+            "bottle": [],
+            "tasting": [],
+            "pro_rating": [],
         }
         _, changes = annotate_full_load(entities, tmp_path, 1, _NOW)
         assert [c["change_id"] for c in changes] == [1, 2]
@@ -673,11 +812,11 @@ class TestAnnotateFullLoad:
         """Full load keeps existing tombstones not present in new data."""
         # Write existing data including a tombstone
         existing = [
-            _minimal_wine(100, 1, "Cuvée X", 2020,
-                          dossier_path="cellar/0100-cuvee-x-2020.md"),
-            {**_minimal_wine(101, 1, "Barolo Y", 2019,
-                             dossier_path="cellar/0101-barolo-y-2019.md"),
-             "is_deleted": True},
+            _minimal_wine(100, 1, "Cuvée X", 2020, dossier_path="cellar/0100-cuvee-x-2020.md"),
+            {
+                **_minimal_wine(101, 1, "Barolo Y", 2019, dossier_path="cellar/0101-barolo-y-2019.md"),
+                "is_deleted": True,
+            },
         ]
         schema = SCHEMAS["wine"]
         table = pa.Table.from_pylist(existing, schema=schema)
@@ -685,7 +824,7 @@ class TestAnnotateFullLoad:
         for et in ENTITY_ORDER:
             if et not in ("winery", "wine"):
                 _write_empty(tmp_path, et)
-        _write_entity(tmp_path, "winery", [{"winery_id": 1, "name": "A", "etl_run_id": 1, "updated_at": _NOW}])  # noqa: E501
+        _write_entity(tmp_path, "winery", [{"winery_id": 1, "name": "A", "etl_run_id": 1, "updated_at": _NOW}])
         # Full load with only wine 100 (tombstone 101 not in new data)
         entities = {
             "winery": [{"winery_id": 1, "name": "A"}],
@@ -704,20 +843,28 @@ class TestAnnotateFullLoad:
 # sync (end-to-end) — basic
 # ---------------------------------------------------------------------------
 
+
 class TestSync:
     def _seed(self, tmp_path: Path) -> None:
-        _write_entity(tmp_path, "winery", [
-            {"winery_id": 1, "name": "Alpha", "etl_run_id": 1, "updated_at": _NOW},
-            {"winery_id": 2, "name": "Beta", "etl_run_id": 1, "updated_at": _NOW},
-        ])
+        _write_entity(
+            tmp_path,
+            "winery",
+            [
+                {"winery_id": 1, "name": "Alpha", "etl_run_id": 1, "updated_at": _NOW},
+                {"winery_id": 2, "name": "Beta", "etl_run_id": 1, "updated_at": _NOW},
+            ],
+        )
         for et in ENTITY_ORDER:
             if et == "winery":
                 continue
             if et == "wine":
-                _write_entity(tmp_path, "wine", [
-                    _minimal_wine(100, 1, "Cuvée X", 2020,
-                                  dossier_path="archive/0100-cuvee-x-2020.md"),
-                ])
+                _write_entity(
+                    tmp_path,
+                    "wine",
+                    [
+                        _minimal_wine(100, 1, "Cuvée X", 2020, dossier_path="archive/0100-cuvee-x-2020.md"),
+                    ],
+                )
             else:
                 _write_empty(tmp_path, et)
 
@@ -765,16 +912,14 @@ class TestSync:
             new_entities.setdefault(et, [])
 
         _, changes, _ = sync(new_entities, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["change_type"] == "delete"
-                   and c["entity_type"] == "winery"]
+        deletes = [c for c in changes if c["change_type"] == "delete" and c["entity_type"] == "winery"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 2
 
     def test_wine_fk_remapped(self, tmp_path):
         self._seed(tmp_path)
         new_entities = {
-            "winery": [{"winery_id": 1, "name": "Alpha"},
-                        {"winery_id": 2, "name": "Beta"}],
+            "winery": [{"winery_id": 1, "name": "Alpha"}, {"winery_id": 2, "name": "Beta"}],
             "wine": [
                 _minimal_wine(1, 1, "Cuvée X", 2020),
                 _minimal_wine(2, 1, "Cuvée Y", 2021),
@@ -787,17 +932,32 @@ class TestSync:
         new_wine = [w for w in stabilised["wine"] if w["name"] == "Cuvée Y"]
         assert len(new_wine) == 1
         assert new_wine[0]["winery_id"] == 1
-        wine_inserts = [c for c in changes if c["entity_type"] == "wine"
-                        and c["change_type"] == "insert"]
+        wine_inserts = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "insert"]
         assert len(wine_inserts) == 1
 
     def test_change_ids_continue_from_existing(self, tmp_path):
-        write_parquet("change_log", [
-            {"change_id": 1, "run_id": 1, "entity_type": "winery",
-             "entity_id": 1, "change_type": "insert", "changed_fields": None},
-            {"change_id": 2, "run_id": 1, "entity_type": "winery",
-             "entity_id": 2, "change_type": "insert", "changed_fields": None},
-        ], tmp_path)
+        write_parquet(
+            "change_log",
+            [
+                {
+                    "change_id": 1,
+                    "run_id": 1,
+                    "entity_type": "winery",
+                    "entity_id": 1,
+                    "change_type": "insert",
+                    "changed_fields": None,
+                },
+                {
+                    "change_id": 2,
+                    "run_id": 1,
+                    "entity_type": "winery",
+                    "entity_id": 2,
+                    "change_type": "insert",
+                    "changed_fields": None,
+                },
+            ],
+            tmp_path,
+        )
 
         self._seed(tmp_path)
         new_entities = {
@@ -819,6 +979,7 @@ class TestSync:
 # Full scenario tests (rich seed)
 # ---------------------------------------------------------------------------
 
+
 class TestSyncLookupEntities:
     """Lookup entity changes: winery, appellation, grape, cellar, provider."""
 
@@ -832,8 +993,7 @@ class TestSyncLookupEntities:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "winery"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "winery" and c["change_type"] == "insert"]
         assert len(inserts) == 1
         gamma = [w for w in stabilised["winery"] if w["name"] == "Gamma"]
         assert gamma[0]["winery_id"] == 3
@@ -845,8 +1005,7 @@ class TestSyncLookupEntities:
             winery=[{"winery_id": 1, "name": "Alpha"}],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["entity_type"] == "winery"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes if c["entity_type"] == "winery" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 2
 
@@ -854,17 +1013,25 @@ class TestSyncLookupEntities:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             appellation=[
-                {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-                 "subregion": None, "classification": None},
-                {"appellation_id": 2, "country": "Italy", "region": "Piedmont",
-                 "subregion": None, "classification": None},
-                {"appellation_id": 3, "country": "Spain", "region": "Rioja",
-                 "subregion": None, "classification": None},
+                {
+                    "appellation_id": 1,
+                    "country": "France",
+                    "region": "Bordeaux",
+                    "subregion": None,
+                    "classification": None,
+                },
+                {
+                    "appellation_id": 2,
+                    "country": "Italy",
+                    "region": "Piedmont",
+                    "subregion": None,
+                    "classification": None,
+                },
+                {"appellation_id": 3, "country": "Spain", "region": "Rioja", "subregion": None, "classification": None},
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "appellation"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "appellation" and c["change_type"] == "insert"]
         assert len(inserts) == 1
 
     def test_new_grape_insert(self, tmp_path):
@@ -877,8 +1044,7 @@ class TestSyncLookupEntities:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "grape"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "grape" and c["change_type"] == "insert"]
         assert len(inserts) == 1
         cab = [g for g in stabilised["grape"] if g["name"] == "Cabernet Sauvignon"]
         assert cab[0]["grape_id"] == 3
@@ -892,8 +1058,7 @@ class TestSyncLookupEntities:
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "cellar"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "cellar" and c["change_type"] == "insert"]
         assert len(inserts) == 1
 
     def test_new_provider_insert(self, tmp_path):
@@ -905,8 +1070,7 @@ class TestSyncLookupEntities:
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "provider"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "provider" and c["change_type"] == "insert"]
         assert len(inserts) == 1
 
 
@@ -917,14 +1081,12 @@ class TestSyncWineChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1,
-                              alcohol_pct=14.0, comment="Excellent vintage"),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0, comment="Excellent vintage"),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        updates = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "update"]
+        updates = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "update"]
         assert len(updates) == 1
         assert updates[0]["entity_id"] == 100
         assert "comment" in json.loads(updates[0]["changed_fields"])
@@ -937,14 +1099,12 @@ class TestSyncWineChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1,
-                              alcohol_pct=15.0),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=15.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        updates = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "update"]
+        updates = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "update"]
         assert len(updates) == 1
         assert "alcohol_pct" in json.loads(updates[0]["changed_fields"])
 
@@ -952,14 +1112,12 @@ class TestSyncWineChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=2,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=2, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        updates = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "update"]
+        updates = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "update"]
         assert len(updates) == 1
         assert "appellation_id" in json.loads(updates[0]["changed_fields"])
 
@@ -973,8 +1131,7 @@ class TestSyncWineChanges:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "insert"]
         assert len(inserts) == 1
         new_wine = [w for w in stabilised["wine"] if w["name"] == "Cuvée Z"]
         assert new_wine[0]["wine_id"] == 102
@@ -989,8 +1146,7 @@ class TestSyncWineChanges:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 101
         # Tombstone retained: both wines present, removed one is_deleted=True
@@ -1010,6 +1166,7 @@ class TestSyncWineChanges:
         stabilised2, _, _ = sync(ents2, tmp_path, 2, _LATER)
         assign_dossier_paths(stabilised2)
         from cellarbrain.writer import write_all
+
         write_all(stabilised2, tmp_path)
         # Run 3: wine 101 is back
         ents3 = _build_new_entities(
@@ -1040,14 +1197,12 @@ class TestSyncWineRename:
         ents = _build_new_entities(
             wine=[
                 # Rename "Cuvée X" → "Cuvée Prestige" (same winery, vintage)
-                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        renames = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "rename"]
         assert len(renames) == 1
         assert renames[0]["entity_id"] == 100
         assert "name" in json.loads(renames[0]["changed_fields"])
@@ -1056,8 +1211,7 @@ class TestSyncWineRename:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
@@ -1073,20 +1227,16 @@ class TestSyncWineRename:
         ents = _build_new_entities(
             wine=[
                 # Replace "Cuvée X 2020" with "Cuvée Prestige 2021" (different vintage)
-                _minimal_wine(1, 1, "Cuvée Prestige", 2021, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée Prestige", 2021, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        renames = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "rename"]
         assert len(renames) == 0
         # Should be insert + delete instead
-        inserts = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "insert"]
-        deletes = [c for c in changes if c["entity_type"] == "wine"
-                   and c["change_type"] == "delete"]
+        inserts = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "insert"]
+        deletes = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "delete"]
         assert len(inserts) == 1
         assert len(deletes) == 1
 
@@ -1095,15 +1245,12 @@ class TestSyncWineRename:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         stabilised, _, _ = sync(ents, tmp_path, 2, _LATER)
-        bottles_for_renamed = [
-            b for b in stabilised["bottle"] if b["wine_id"] == 100
-        ]
+        bottles_for_renamed = [b for b in stabilised["bottle"] if b["wine_id"] == 100]
         # Originally 2 bottles for wine 100 ("Cuvée X")
         assert len(bottles_for_renamed) == 2
 
@@ -1112,8 +1259,7 @@ class TestSyncWineRename:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1,
-                              alcohol_pct=14.0),
+                _minimal_wine(1, 1, "Cuvée Prestige", 2020, appellation_id=1, alcohol_pct=14.0),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
@@ -1126,6 +1272,7 @@ class TestSyncWineRename:
 # ---------------------------------------------------------------------------
 # Winery rename detection
 # ---------------------------------------------------------------------------
+
 
 class TestDetectWineryRenames:
     """Unit tests for the structural heuristic."""
@@ -1174,7 +1321,7 @@ class TestDetectWineryRenames:
         ]
         new_w = [
             {"winery_id": 1, "name": "Alpha Wines"},  # appeared
-            {"winery_id": 2, "name": "Beta"},          # matched
+            {"winery_id": 2, "name": "Beta"},  # matched
         ]
         old_wines = [{"winery_id": 10}]
         new_wines = [{"winery_id": 1}]
@@ -1195,8 +1342,7 @@ class TestSyncWineryRename:
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        renames = [c for c in changes if c["entity_type"] == "winery"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "winery" and c["change_type"] == "rename"]
         assert len(renames) == 1
         assert renames[0]["entity_id"] == 1  # old stable winery_id
         assert "name" in json.loads(renames[0]["changed_fields"])
@@ -1232,8 +1378,7 @@ class TestSyncWineryRename:
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        renames = [c for c in changes if c["entity_type"] == "winery"
-                   and c["change_type"] == "rename"]
+        renames = [c for c in changes if c["entity_type"] == "winery" and c["change_type"] == "rename"]
         # Counts differ (old=1, new=2) → no rename
         assert len(renames) == 0
 
@@ -1257,14 +1402,12 @@ class TestSyncCascadingInserts:
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
 
-        winery_inserts = [c for c in changes if c["entity_type"] == "winery"
-                          and c["change_type"] == "insert"]
+        winery_inserts = [c for c in changes if c["entity_type"] == "winery" and c["change_type"] == "insert"]
         assert len(winery_inserts) == 1
         gamma_winery = [w for w in stabilised["winery"] if w["name"] == "Gamma"]
         assert gamma_winery[0]["winery_id"] == 3
 
-        wine_inserts = [c for c in changes if c["entity_type"] == "wine"
-                        and c["change_type"] == "insert"]
+        wine_inserts = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "insert"]
         assert len(wine_inserts) == 1
         new_wine = [w for w in stabilised["wine"] if w["name"] == "Gamma Reserve"]
         assert new_wine[0]["winery_id"] == 3
@@ -1273,12 +1416,21 @@ class TestSyncCascadingInserts:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             appellation=[
-                {"appellation_id": 1, "country": "France", "region": "Bordeaux",
-                 "subregion": None, "classification": None},
-                {"appellation_id": 2, "country": "Italy", "region": "Piedmont",
-                 "subregion": None, "classification": None},
-                {"appellation_id": 3, "country": "Spain", "region": "Rioja",
-                 "subregion": None, "classification": None},
+                {
+                    "appellation_id": 1,
+                    "country": "France",
+                    "region": "Bordeaux",
+                    "subregion": None,
+                    "classification": None,
+                },
+                {
+                    "appellation_id": 2,
+                    "country": "Italy",
+                    "region": "Piedmont",
+                    "subregion": None,
+                    "classification": None,
+                },
+                {"appellation_id": 3, "country": "Spain", "region": "Rioja", "subregion": None, "classification": None},
             ],
             wine=[
                 _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0),
@@ -1287,11 +1439,9 @@ class TestSyncCascadingInserts:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        app_inserts = [c for c in changes if c["entity_type"] == "appellation"
-                       and c["change_type"] == "insert"]
+        app_inserts = [c for c in changes if c["entity_type"] == "appellation" and c["change_type"] == "insert"]
         assert len(app_inserts) == 1
-        wine_inserts = [c for c in changes if c["entity_type"] == "wine"
-                        and c["change_type"] == "insert"]
+        wine_inserts = [c for c in changes if c["entity_type"] == "wine" and c["change_type"] == "insert"]
         assert len(wine_inserts) == 1
         new_wine = [w for w in stabilised["wine"] if w["name"] == "Rioja Reserve"]
         assert new_wine[0]["appellation_id"] == 3
@@ -1311,8 +1461,7 @@ class TestSyncBottleChanges:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "bottle"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "bottle" and c["change_type"] == "insert"]
         assert len(inserts) == 1
         new_bottle = [b for b in stabilised["bottle"] if b["bottle_number"] == 3]
         assert new_bottle[0]["wine_id"] == 100
@@ -1328,8 +1477,7 @@ class TestSyncBottleChanges:
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["entity_type"] == "bottle"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes if c["entity_type"] == "bottle" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 201
 
@@ -1359,16 +1507,13 @@ class TestSyncTastingChanges:
         ents = _build_new_entities(
             tasting=[
                 _minimal_tasting(1, 1, tasting_date=date(2024, 6, 1)),
-                _minimal_tasting(2, 1, tasting_date=date(2025, 3, 15),
-                                 note="Improved", score=17.0),
+                _minimal_tasting(2, 1, tasting_date=date(2025, 3, 15), note="Improved", score=17.0),
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "tasting"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "tasting" and c["change_type"] == "insert"]
         assert len(inserts) == 1
-        new_tasting = [t for t in stabilised["tasting"]
-                       if t["tasting_date"] == date(2025, 3, 15)]
+        new_tasting = [t for t in stabilised["tasting"] if t["tasting_date"] == date(2025, 3, 15)]
         assert new_tasting[0]["wine_id"] == 100
         assert new_tasting[0]["note"] == "Improved"
         assert new_tasting[0]["etl_run_id"] == 2
@@ -1377,13 +1522,11 @@ class TestSyncTastingChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             tasting=[
-                _minimal_tasting(1, 1, tasting_date=date(2024, 6, 1),
-                                 note="Actually great", score=18.0),
+                _minimal_tasting(1, 1, tasting_date=date(2024, 6, 1), note="Actually great", score=18.0),
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        updates = [c for c in changes if c["entity_type"] == "tasting"
-                   and c["change_type"] == "update"]
+        updates = [c for c in changes if c["entity_type"] == "tasting" and c["change_type"] == "update"]
         assert len(updates) == 1
         changed = json.loads(updates[0]["changed_fields"])
         assert "note" in changed
@@ -1393,8 +1536,7 @@ class TestSyncTastingChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(tasting=[])
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["entity_type"] == "tasting"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes if c["entity_type"] == "tasting" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 300
 
@@ -1411,11 +1553,9 @@ class TestSyncProRatingChanges:
             ],
         )
         stabilised, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        inserts = [c for c in changes if c["entity_type"] == "pro_rating"
-                   and c["change_type"] == "insert"]
+        inserts = [c for c in changes if c["entity_type"] == "pro_rating" and c["change_type"] == "insert"]
         assert len(inserts) == 1
-        new_rating = [r for r in stabilised["pro_rating"]
-                      if r["source"] == "Suckling"]
+        new_rating = [r for r in stabilised["pro_rating"] if r["source"] == "Suckling"]
         assert new_rating[0]["wine_id"] == 100
         assert new_rating[0]["etl_run_id"] == 2
 
@@ -1423,8 +1563,7 @@ class TestSyncProRatingChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(pro_rating=[])
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        deletes = [c for c in changes if c["entity_type"] == "pro_rating"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes if c["entity_type"] == "pro_rating" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == 400
 
@@ -1436,12 +1575,16 @@ class TestSyncWineGrapeChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine_grape=[
-                {"wine_id": 1, "grape_id": 1, "percentage": 80.0, "sort_order": 1,
-                 "etl_run_id": 1, "updated_at": _NOW},
-                {"wine_id": 1, "grape_id": 2, "percentage": 20.0, "sort_order": 2,
-                 "etl_run_id": 1, "updated_at": _NOW},
-                {"wine_id": 2, "grape_id": 2, "percentage": 100.0, "sort_order": 1,
-                 "etl_run_id": 1, "updated_at": _NOW},
+                {"wine_id": 1, "grape_id": 1, "percentage": 80.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+                {"wine_id": 1, "grape_id": 2, "percentage": 20.0, "sort_order": 2, "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "wine_id": 2,
+                    "grape_id": 2,
+                    "percentage": 100.0,
+                    "sort_order": 1,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
@@ -1455,8 +1598,14 @@ class TestSyncWineGrapeChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine_grape=[
-                {"wine_id": 2, "grape_id": 2, "percentage": 100.0, "sort_order": 1,
-                 "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "wine_id": 2,
+                    "grape_id": 2,
+                    "percentage": 100.0,
+                    "sort_order": 1,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
@@ -1468,15 +1617,19 @@ class TestSyncWineGrapeChanges:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             wine_grape=[
-                {"wine_id": 1, "grape_id": 1, "percentage": 85.0, "sort_order": 1,
-                 "etl_run_id": 1, "updated_at": _NOW},
-                {"wine_id": 2, "grape_id": 2, "percentage": 100.0, "sort_order": 1,
-                 "etl_run_id": 1, "updated_at": _NOW},
+                {"wine_id": 1, "grape_id": 1, "percentage": 85.0, "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+                {
+                    "wine_id": 2,
+                    "grape_id": 2,
+                    "percentage": 100.0,
+                    "sort_order": 1,
+                    "etl_run_id": 1,
+                    "updated_at": _NOW,
+                },
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)
-        wg_updates = [c for c in changes if c["entity_type"] == "wine_grape"
-                      and c["change_type"] == "update"]
+        wg_updates = [c for c in changes if c["entity_type"] == "wine_grape" and c["change_type"] == "update"]
         assert len(wg_updates) == 1
         assert "percentage" in json.loads(wg_updates[0]["changed_fields"])
 
@@ -1519,8 +1672,7 @@ class TestSyncMultipleChanges:
         assert len(by_type.get(("bottle", "insert"), [])) == 1
         assert len(by_type.get(("tasting", "insert"), [])) == 1
 
-        new_bottle = [b for b in stabilised["bottle"]
-                      if b["shelf"] == "C1" and b["bottle_number"] == 1]
+        new_bottle = [b for b in stabilised["bottle"] if b["shelf"] == "C1" and b["bottle_number"] == 1]
         new_wine = [w for w in stabilised["wine"] if w["name"] == "Gamma Res"]
         assert new_bottle[0]["wine_id"] == new_wine[0]["wine_id"]
 
@@ -1530,8 +1682,7 @@ class TestSyncMultipleChanges:
         ents = _build_new_entities(
             wine=[
                 # Cuvée X updated (comment changed)
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1,
-                              alcohol_pct=14.0, comment="Updated comment"),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0, comment="Updated comment"),
                 # Barolo Y removed (not in list)
                 # New wine added
                 _minimal_wine(3, 1, "New Cuvée", 2023),
@@ -1564,6 +1715,7 @@ class TestSyncConsecutiveRuns:
         )
         stable1, changes1, _ = sync(ents1, tmp_path, 2, _LATER)
         from cellarbrain.writer import write_all
+
         assign_dossier_paths(stable1)
         write_all(stable1, tmp_path)
 
@@ -1604,6 +1756,7 @@ class TestSyncConsecutiveRuns:
         )
         stable1, _, _ = sync(ents1, tmp_path, 2, _LATER)
         from cellarbrain.writer import write_all
+
         assign_dossier_paths(stable1)
         write_all(stable1, tmp_path)
 
@@ -1617,8 +1770,7 @@ class TestSyncConsecutiveRuns:
             ],
         )
         _, changes2, _ = sync(ents2, tmp_path, 3, _EVEN_LATER)
-        deletes = [c for c in changes2 if c["entity_type"] == "wine"
-                   and c["change_type"] == "delete"]
+        deletes = [c for c in changes2 if c["entity_type"] == "wine" and c["change_type"] == "delete"]
         assert len(deletes) == 1
         assert deletes[0]["entity_id"] == temp_id
 
@@ -1629,22 +1781,21 @@ class TestSyncConsecutiveRuns:
         # Sync 1: update wine comment
         ents1 = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1,
-                              alcohol_pct=14.0, comment="New comment"),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0, comment="New comment"),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
         stable1, changes1, _ = sync(ents1, tmp_path, 2, _LATER)
         assert any(c["change_type"] == "update" for c in changes1)
         from cellarbrain.writer import write_all
+
         assign_dossier_paths(stable1)
         write_all(stable1, tmp_path)
 
         # Sync 2: exact same (post-update) data
         ents2 = _build_new_entities(
             wine=[
-                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1,
-                              alcohol_pct=14.0, comment="New comment"),
+                _minimal_wine(1, 1, "Cuvée X", 2020, appellation_id=1, alcohol_pct=14.0, comment="New comment"),
                 _minimal_wine(2, 2, "Barolo Y", 2019, appellation_id=2),
             ],
         )
@@ -1655,6 +1806,7 @@ class TestSyncConsecutiveRuns:
 # ---------------------------------------------------------------------------
 # Slug-based wine classification (28a)
 # ---------------------------------------------------------------------------
+
 
 def _existing_wine(
     wine_id: int,
@@ -1948,7 +2100,8 @@ class TestDetectRenames:
     def test_rename_integrated_in_classify(self):
         existing = [
             _existing_wine(
-                5, "champagne-pommery-nv",
+                5,
+                "champagne-pommery-nv",
                 winery_name="Champagne Pommery",
                 name="",
                 is_non_vintage=True,
@@ -1988,23 +2141,24 @@ class TestLogging:
 # annotate_classified_wines
 # ---------------------------------------------------------------------------
 
-class TestAnnotateClassifiedWines:
 
+class TestAnnotateClassifiedWines:
     def test_new_wines_stamped_as_inserts(self):
         wines = [
-            _minimal_wine(1, 1, "Alpha", 2020, run_id=0,
-                          ts=datetime(2000, 1, 1)),
-            _minimal_wine(2, 1, "Beta", 2021, run_id=0,
-                          ts=datetime(2000, 1, 1)),
+            _minimal_wine(1, 1, "Alpha", 2020, run_id=0, ts=datetime(2000, 1, 1)),
+            _minimal_wine(2, 1, "Beta", 2021, run_id=0, ts=datetime(2000, 1, 1)),
         ]
         matches = [
-            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1,
-                      status="new"),
-            WineMatch(csv_row_index=2, slug="beta-2021", wine_id=2,
-                      status="new"),
+            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1, status="new"),
+            WineMatch(csv_row_index=2, slug="beta-2021", wine_id=2, status="new"),
         ]
         result, changes = annotate_classified_wines(
-            wines, [], matches, [], run_id=5, now=_NOW,
+            wines,
+            [],
+            matches,
+            [],
+            run_id=5,
+            now=_NOW,
         )
         assert len(result) == 2
         assert all(w["etl_run_id"] == 5 for w in result)
@@ -2015,30 +2169,35 @@ class TestAnnotateClassifiedWines:
 
     def test_existing_unchanged_preserves_metadata(self):
         old = _minimal_wine(1, 1, "Alpha", 2020, run_id=3, ts=_NOW)
-        new = _minimal_wine(1, 1, "Alpha", 2020, run_id=0,
-                            ts=datetime(2000, 1, 1))
+        new = _minimal_wine(1, 1, "Alpha", 2020, run_id=0, ts=datetime(2000, 1, 1))
         matches = [
-            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1,
-                      status="existing"),
+            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1, status="existing"),
         ]
         result, changes = annotate_classified_wines(
-            [new], [old], matches, [], run_id=5, now=_LATER,
+            [new],
+            [old],
+            matches,
+            [],
+            run_id=5,
+            now=_LATER,
         )
         assert result[0]["etl_run_id"] == 3
         assert result[0]["updated_at"] == _NOW
         assert len(changes) == 0
 
     def test_existing_changed_updates_metadata(self):
-        old = _minimal_wine(1, 1, "Alpha", 2020, alcohol_pct=13.0,
-                            run_id=3, ts=_NOW)
-        new = _minimal_wine(1, 1, "Alpha", 2020, alcohol_pct=14.5,
-                            run_id=0, ts=datetime(2000, 1, 1))
+        old = _minimal_wine(1, 1, "Alpha", 2020, alcohol_pct=13.0, run_id=3, ts=_NOW)
+        new = _minimal_wine(1, 1, "Alpha", 2020, alcohol_pct=14.5, run_id=0, ts=datetime(2000, 1, 1))
         matches = [
-            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1,
-                      status="existing"),
+            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1, status="existing"),
         ]
         result, changes = annotate_classified_wines(
-            [new], [old], matches, [], run_id=5, now=_LATER,
+            [new],
+            [old],
+            matches,
+            [],
+            run_id=5,
+            now=_LATER,
         )
         assert result[0]["etl_run_id"] == 5
         assert result[0]["updated_at"] == _LATER
@@ -2050,14 +2209,17 @@ class TestAnnotateClassifiedWines:
     def test_revived_wine(self):
         old = _minimal_wine(1, 1, "Alpha", 2020, run_id=3, ts=_NOW)
         old["is_deleted"] = True
-        new = _minimal_wine(1, 1, "Alpha", 2020, run_id=0,
-                            ts=datetime(2000, 1, 1))
+        new = _minimal_wine(1, 1, "Alpha", 2020, run_id=0, ts=datetime(2000, 1, 1))
         matches = [
-            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1,
-                      status="revived"),
+            WineMatch(csv_row_index=1, slug="alpha-2020", wine_id=1, status="revived"),
         ]
         result, changes = annotate_classified_wines(
-            [new], [old], matches, [], run_id=5, now=_LATER,
+            [new],
+            [old],
+            matches,
+            [],
+            run_id=5,
+            now=_LATER,
         )
         assert result[0]["is_deleted"] is False
         assert result[0]["etl_run_id"] == 5
@@ -2068,15 +2230,17 @@ class TestAnnotateClassifiedWines:
 
     def test_renamed_wine(self):
         old = _minimal_wine(1, 1, "Alpha", 2020, run_id=3, ts=_NOW)
-        new = _minimal_wine(1, 1, "Alpha Reserva", 2020, run_id=0,
-                            ts=datetime(2000, 1, 1))
+        new = _minimal_wine(1, 1, "Alpha Reserva", 2020, run_id=0, ts=datetime(2000, 1, 1))
         matches = [
-            WineMatch(csv_row_index=1, slug="alpha-reserva-2020",
-                      wine_id=1, status="renamed",
-                      old_slug="alpha-2020"),
+            WineMatch(csv_row_index=1, slug="alpha-reserva-2020", wine_id=1, status="renamed", old_slug="alpha-2020"),
         ]
         result, changes = annotate_classified_wines(
-            [new], [old], matches, [], run_id=5, now=_LATER,
+            [new],
+            [old],
+            matches,
+            [],
+            run_id=5,
+            now=_LATER,
         )
         assert result[0]["etl_run_id"] == 5
         assert len(changes) == 1
@@ -2085,11 +2249,15 @@ class TestAnnotateClassifiedWines:
     def test_deleted_wines_become_tombstones(self):
         old = _minimal_wine(1, 1, "Alpha", 2020, run_id=3, ts=_NOW)
         deletions = [
-            WineDeletion(wine_id=1, slug="alpha-2020",
-                         was_already_deleted=False),
+            WineDeletion(wine_id=1, slug="alpha-2020", was_already_deleted=False),
         ]
         result, changes = annotate_classified_wines(
-            [], [old], [], deletions, run_id=5, now=_LATER,
+            [],
+            [old],
+            [],
+            deletions,
+            run_id=5,
+            now=_LATER,
         )
         assert len(result) == 1
         assert result[0]["is_deleted"] is True
@@ -2101,11 +2269,15 @@ class TestAnnotateClassifiedWines:
         old = _minimal_wine(1, 1, "Alpha", 2020, run_id=3, ts=_NOW)
         old["is_deleted"] = True
         deletions = [
-            WineDeletion(wine_id=1, slug="alpha-2020",
-                         was_already_deleted=True),
+            WineDeletion(wine_id=1, slug="alpha-2020", was_already_deleted=True),
         ]
         result, changes = annotate_classified_wines(
-            [], [old], [], deletions, run_id=5, now=_LATER,
+            [],
+            [old],
+            [],
+            deletions,
+            run_id=5,
+            now=_LATER,
         )
         assert len(result) == 1
         assert result[0]["is_deleted"] is True
@@ -2117,8 +2289,8 @@ class TestAnnotateClassifiedWines:
 # sync / annotate_full_load with skip_entities
 # ---------------------------------------------------------------------------
 
-class TestSkipEntities:
 
+class TestSkipEntities:
     def test_sync_skip_entities_passes_through(self, tmp_path):
         """Skipped entities are passed through without stabilisation."""
         wine = _minimal_wine(1, 1, "Alpha", 2020)
@@ -2136,7 +2308,10 @@ class TestSkipEntities:
             "pro_rating": [],
         }
         result, changes, _ = sync(
-            entities, tmp_path, 1, _NOW,
+            entities,
+            tmp_path,
+            1,
+            _NOW,
             skip_entities=frozenset({"wine"}),
         )
         # Wine should be the exact same list (not re-stabilised)
@@ -2147,8 +2322,7 @@ class TestSkipEntities:
 
     def test_annotate_full_load_skip_entities(self, tmp_path):
         """Skipped entities are not annotated by full load."""
-        wine = _minimal_wine(1, 1, "Alpha", 2020, run_id=0,
-                             ts=datetime(2000, 1, 1))
+        wine = _minimal_wine(1, 1, "Alpha", 2020, run_id=0, ts=datetime(2000, 1, 1))
         entities = {
             "winery": [],
             "appellation": [],
@@ -2163,7 +2337,10 @@ class TestSkipEntities:
             "pro_rating": [],
         }
         result, changes = annotate_full_load(
-            entities, tmp_path, 5, _LATER,
+            entities,
+            tmp_path,
+            5,
+            _LATER,
             skip_entities=frozenset({"wine"}),
         )
         # Wine metadata should NOT be overwritten

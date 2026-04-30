@@ -91,15 +91,29 @@ raw_dir = "raw"        # change if CSVs are in a different location
 
 ### Common configuration options
 
-#### Offsite and in-transit cellars
+#### Cellar classification rules
 
 ```toml
-# Bottles in these cellars are flagged as offsite
-offsite_cellars = ["Off-site Storage", "Wine Locker"]
+# Ordered rules — first match wins. Default classification is "onsite".
+# Patterns use fnmatch glob syntax (*, ?, [abc], [!abc]).
 
-# Bottles in these cellars are tracked but excluded from inventory counts
-in_transit_cellars = ["99 Orders & Subscriptions"]
+[[cellar_rules]]
+pattern = "03*"
+classification = "offsite"
+
+[[cellar_rules]]
+pattern = "99*"
+classification = "in_transit"
 ```
+
+Legacy flat lists are still supported:
+
+```toml
+# offsite_cellars = ["Off-site Storage", "Wine Locker"]
+# in_transit_cellars = ["99 Orders & Subscriptions"]
+```
+
+> **Note:** `cellar_rules` and `offsite_cellars`/`in_transit_cellars` are mutually exclusive.
 
 #### Price tiers
 
@@ -283,7 +297,34 @@ The MCP server also reads:
 | `CELLARBRAIN_DATA_DIR` | Path to the Parquet data directory (default: `output`) |
 | `CELLARBRAIN_CONFIG` | Path to `cellarbrain.toml` config file |
 
-## 7. Development Setup
+## 7. Web Explorer (optional)
+
+The Web Explorer is a local dashboard for browsing observability data, cellar contents, and running interactive queries. It requires `starlette`, `jinja2`, and `uvicorn` (included in core dependencies).
+
+```bash
+# Start the dashboard (default: http://localhost:8017)
+cellarbrain dashboard
+
+# Custom port
+cellarbrain dashboard --port 9000
+```
+
+Prerequisites:
+- **Observability pages** require a DuckDB log store (created on first `cellarbrain mcp` run)
+- **Cellar pages** require Parquet output from `cellarbrain etl`
+
+The dashboard is read-only by default. Write tools in the workbench can be enabled via `[dashboard]` config:
+
+```toml
+[dashboard]
+port = 8017
+workbench_read_only = true
+workbench_allow = ["log_price"]
+```
+
+See [cli-reference.md](cli-reference.md#cellarbrain-dashboard) for the full page list.
+
+## 8. Development Setup
 
 For contributors and local development:
 

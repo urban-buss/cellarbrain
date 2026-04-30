@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% set active_nav = "bottles" %}
+{% block title %}Bottle Inventory — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Bottle Inventory{% endblock %}
+
+{% block content %}
+<div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
+    <div class="period-selector">
+        {% for v, label in [("stored", "Stored"), ("on_order", "On Order"), ("consumed", "Consumed"), ("all", "All")] %}
+        <a href="/bottles?view={{ v }}&cellar={{ cellar_filter }}&category={{ category }}"
+           hx-get="/bottles?view={{ v }}&cellar={{ cellar_filter }}&category={{ category }}"
+           hx-target="#bottle-tbody" hx-swap="innerHTML"
+           class="{% if view == v %}active{% endif %}">{{ label }}</a>
+        {% endfor %}
+    </div>
+    <div style="margin-left:1rem;">
+        <select name="cellar" style="font-size:0.85rem; padding:0.2rem 0.5rem;"
+                hx-get="/bottles" hx-target="#bottle-tbody" hx-swap="innerHTML"
+                hx-include="[name='view_val'],[name='category']">
+            <option value="">All cellars</option>
+            {% for c in cellar_names %}
+            <option value="{{ c }}" {% if cellar_filter == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+        </select>
+        <input type="hidden" name="view_val" value="{{ view }}">
+    </div>
+</div>
+
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            {% set base_params = "view=" ~ view ~ "&cellar=" ~ cellar_filter ~ "&category=" ~ category %}
+            {% for col_id, col_label in [("wine_name", "Wine"), ("vintage", "Vintage"), ("cellar_name", "Cellar"), ("shelf", "Shelf"), ("price", "Price"), ("status", "Status")] %}
+            <th>
+                <a href="/bottles?{{ base_params }}&sort={{ col_id }}&dir={% if sort == col_id and not desc %}desc{% else %}asc{% endif %}"
+                   hx-get="/bottles?{{ base_params }}&sort={{ col_id }}&dir={% if sort == col_id and not desc %}desc{% else %}asc{% endif %}"
+                   hx-target="#bottle-tbody" hx-swap="innerHTML">
+                    {{ col_label }}{% if sort == col_id %}{{ " ▼" if desc else " ▲" }}{% endif %}
+                </a>
+            </th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody id="bottle-tbody">
+        {% include "partials/bottle_rows.html" %}
+    </tbody>
+</table>
+</figure>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+    <span style="font-size:0.85rem; color:var(--pico-muted-color);">
+        {{ total }} bottle{{ "s" if total != 1 }}
+    </span>
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+        {% if page > 1 %}
+        <a href="/bottles?page={{ page - 1 }}&{{ base_params }}&sort={{ sort }}&dir={% if desc %}desc{% else %}asc{% endif %}"
+           role="button" class="outline secondary" style="font-size:0.8rem; padding:0.2rem 0.6rem;">← Prev</a>
+        {% endif %}
+        <span style="font-size:0.85rem;">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="/bottles?page={{ page + 1 }}&{{ base_params }}&sort={{ sort }}&dir={% if desc %}desc{% else %}asc{% endif %}"
+           role="button" class="outline secondary" style="font-size:0.8rem; padding:0.2rem 0.6rem;">Next →</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

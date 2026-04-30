@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active_nav = "stats" %}
+
+{% block page_title %}Cellar Statistics{% endblock %}
+
+{% block content %}
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="value">{{ overview.wines or 0 }}</div>
+        <div class="label">Wines</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.bottles or 0 }}</div>
+        <div class="label">Bottles</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ "{:,.0f}".format(overview.total_value or 0) }}</div>
+        <div class="label">Total Value (CHF)</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.avg_price|int if overview.avg_price else "—" }}</div>
+        <div class="label">Avg Price</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.ready or 0 }}</div>
+        <div class="label">Ready to Drink</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.countries or 0 }}</div>
+        <div class="label">Countries</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.regions or 0 }}</div>
+        <div class="label">Regions</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.on_order or 0 }}</div>
+        <div class="label">On Order</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ "{:,.0f}".format(overview.on_order_value or 0) }}</div>
+        <div class="label">On Order (CHF)</div>
+    </div>
+</div>
+
+<div data-toggle-group style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
+    <label style="font-size:0.85rem; margin:0;">Group by:</label>
+    {% for opt in [("country", "Country"), ("region", "Region"), ("category", "Category"), ("vintage", "Vintage"), ("winery_name", "Winery"), ("drinking_status", "Status")] %}
+    <a href="/stats?group_by={{ opt[0] }}"
+       hx-get="/stats?group_by={{ opt[0] }}" hx-target="#stats-content" hx-push-url="true"
+       class="{% if group_by == opt[0] %}contrast{% else %}outline secondary{% endif %}"
+       role="button" style="font-size:0.75rem; padding:0.2rem 0.6rem;">
+        {{ opt[1] }}
+    </a>
+    {% endfor %}
+</div>
+
+<div id="stats-content">
+    {% include "partials/stats_content.html" %}
+</div>
+{% endblock %}

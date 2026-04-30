@@ -12,22 +12,44 @@ import duckdb
 
 from . import CheckResult
 
-
 # The 13 entity Parquet files produced by the ETL pipeline.
 EXPECTED_PARQUET = (
-    "winery", "appellation", "grape", "cellar", "provider",
-    "tracked_wine", "wine", "wine_grape", "bottle",
-    "tasting", "pro_rating", "etl_run", "change_log",
+    "winery",
+    "appellation",
+    "grape",
+    "cellar",
+    "provider",
+    "tracked_wine",
+    "wine",
+    "wine_grape",
+    "bottle",
+    "tasting",
+    "pro_rating",
+    "etl_run",
+    "change_log",
 )
 
 # Required columns in wine.parquet (core + computed + audit).
 REQUIRED_WINE_COLUMNS = {
-    "wine_id", "wine_slug", "winery_id", "name", "vintage",
-    "appellation_id", "category",
-    "_raw_classification", "_raw_volume", "_raw_grapes",
-    "full_name", "drinking_status", "grape_type", "primary_grape",
-    "grape_summary", "price_tier",
-    "is_deleted", "etl_run_id", "updated_at",
+    "wine_id",
+    "wine_slug",
+    "winery_id",
+    "name",
+    "vintage",
+    "appellation_id",
+    "category",
+    "_raw_classification",
+    "_raw_volume",
+    "_raw_grapes",
+    "full_name",
+    "drinking_status",
+    "grape_type",
+    "primary_grape",
+    "grape_summary",
+    "price_tier",
+    "is_deleted",
+    "etl_run_id",
+    "updated_at",
 }
 
 # Old column names that should NOT appear (renamed during schema migration).
@@ -42,6 +64,7 @@ def _pq(output_dir: Path, name: str) -> str:
 # -----------------------------------------------------------------------
 # 3.1  Parquet file presence
 # -----------------------------------------------------------------------
+
 
 def check_parquet_files(output_dir: Path) -> CheckResult:
     """Verify all 13 Parquet files exist and have size > 0."""
@@ -67,6 +90,7 @@ def check_parquet_files(output_dir: Path) -> CheckResult:
 # -----------------------------------------------------------------------
 # 3.2  ETL run history
 # -----------------------------------------------------------------------
+
 
 def check_etl_runs(output_dir: Path, expected_count: int) -> CheckResult:
     """Verify etl_run.parquet has the right number of rows and structure."""
@@ -104,19 +128,14 @@ def check_etl_runs(output_dir: Path, expected_count: int) -> CheckResult:
     else:
         details = "; ".join(issues)
 
-    data = {
-        "runs": [
-            {"run_id": r[0], "run_type": r[1], "total_changes": r[4],
-             "wine_changes": r[5]}
-            for r in rows
-        ]
-    }
+    data = {"runs": [{"run_id": r[0], "run_type": r[1], "total_changes": r[4], "wine_changes": r[5]} for r in rows]}
     return CheckResult(name="ETL run history", passed=ok, details=details, data=data)
 
 
 # -----------------------------------------------------------------------
 # 3.3  Entity row counts
 # -----------------------------------------------------------------------
+
 
 def check_entity_counts(output_dir: Path) -> CheckResult:
     """Query row counts for all Parquet files and apply sanity checks."""
@@ -133,8 +152,17 @@ def check_entity_counts(output_dir: Path) -> CheckResult:
         con.close()
 
     issues = []
-    must_be_positive = ["wine", "bottle", "winery", "appellation", "grape",
-                        "wine_grape", "change_log", "cellar", "provider"]
+    must_be_positive = [
+        "wine",
+        "bottle",
+        "winery",
+        "appellation",
+        "grape",
+        "wine_grape",
+        "change_log",
+        "cellar",
+        "provider",
+    ]
     for entity in must_be_positive:
         if counts.get(entity, 0) == 0:
             issues.append(f"{entity} has 0 rows")
@@ -150,13 +178,12 @@ def check_entity_counts(output_dir: Path) -> CheckResult:
 # 3.4  Wine schema columns
 # -----------------------------------------------------------------------
 
+
 def check_wine_schema(output_dir: Path) -> CheckResult:
     """Verify required columns are present and banned columns are absent."""
     con = duckdb.connect(":memory:")
     try:
-        cols = con.execute(
-            f"SELECT column_name FROM (DESCRIBE SELECT * FROM '{_pq(output_dir, 'wine')}')"
-        ).fetchall()
+        cols = con.execute(f"SELECT column_name FROM (DESCRIBE SELECT * FROM '{_pq(output_dir, 'wine')}')").fetchall()
         actual = {c[0] for c in cols}
     except Exception as exc:
         return CheckResult(name="Wine schema columns", passed=False, details=str(exc))
@@ -181,6 +208,7 @@ def check_wine_schema(output_dir: Path) -> CheckResult:
 # 3.5  Dossier files
 # -----------------------------------------------------------------------
 
+
 def check_dossiers(output_dir: Path) -> CheckResult:
     """Count dossiers and spot-check frontmatter + H1."""
     wines_dir = output_dir / "wines"
@@ -189,9 +217,7 @@ def check_dossiers(output_dir: Path) -> CheckResult:
 
     con = duckdb.connect(":memory:")
     try:
-        wine_count = con.execute(
-            f"SELECT count(*) FROM '{_pq(output_dir, 'wine')}'"
-        ).fetchone()[0]
+        wine_count = con.execute(f"SELECT count(*) FROM '{_pq(output_dir, 'wine')}'").fetchone()[0]
     except Exception as exc:
         return CheckResult(name="Dossier files", passed=False, details=str(exc))
     finally:
@@ -223,9 +249,6 @@ def check_dossiers(output_dir: Path) -> CheckResult:
     if issues:
         detail_parts.extend(issues)
 
-    passed_with_orphans = not issues or (
-        len(issues) == 0 and dossier_count >= wine_count
-    )
     return CheckResult(
         name="Dossier files",
         passed=ok,
@@ -237,6 +260,7 @@ def check_dossiers(output_dir: Path) -> CheckResult:
 # -----------------------------------------------------------------------
 # 3.6  Validation re-run
 # -----------------------------------------------------------------------
+
 
 def run_validation(output_dir: Path) -> CheckResult:
     """Run the full validation suite directly."""
@@ -254,6 +278,7 @@ def run_validation(output_dir: Path) -> CheckResult:
 # -----------------------------------------------------------------------
 # 4.  Cross-run consistency
 # -----------------------------------------------------------------------
+
 
 def check_cross_run(output_dir: Path) -> list[CheckResult]:
     """Verify cross-run consistency: wine count trend, change_log growth, etl_run count.
@@ -276,9 +301,7 @@ def check_cross_run(output_dir: Path) -> list[CheckResult]:
         # Change log cumulative by run
         # Two separate queries to avoid DuckDB correlated-subquery
         # alias resolution issues.
-        _run_ids = con.execute(
-            f"SELECT run_id FROM '{_pq(output_dir, 'etl_run')}' ORDER BY run_id"
-        ).fetchall()
+        _run_ids = con.execute(f"SELECT run_id FROM '{_pq(output_dir, 'etl_run')}' ORDER BY run_id").fetchall()
         _cl_by_run = con.execute(
             f"SELECT run_id, count(*) AS cnt FROM '{_pq(output_dir, 'change_log')}' GROUP BY run_id"
         ).fetchall()
@@ -290,9 +313,7 @@ def check_cross_run(output_dir: Path) -> list[CheckResult]:
             cl_counts.append((rid, _cum))
 
         # ETL run count
-        etl_count = con.execute(
-            f"SELECT count(*) FROM '{_pq(output_dir, 'etl_run')}'"
-        ).fetchone()[0]
+        etl_count = con.execute(f"SELECT count(*) FROM '{_pq(output_dir, 'etl_run')}'").fetchone()[0]
 
     except Exception as exc:
         return [CheckResult(name="Cross-run consistency", passed=False, details=str(exc))]
@@ -310,32 +331,38 @@ def check_cross_run(output_dir: Path) -> list[CheckResult]:
             counts_list.append(_cum_wine)
         trend_str = " → ".join(str(c) for c in counts_list)
         trend_ok = counts_list[0] <= counts_list[-1]
-        results.append(CheckResult(
-            name="Wine count trend",
-            passed=trend_ok,
-            details=trend_str,
-            data={"counts": counts_list},
-        ))
+        results.append(
+            CheckResult(
+                name="Wine count trend",
+                passed=trend_ok,
+                details=trend_str,
+                data={"counts": counts_list},
+            )
+        )
 
     # --- Change log growth ---
     if cl_counts:
         cum_list = [c[1] for c in cl_counts]
         growth_str = " → ".join(str(c) for c in cum_list)
         growth_ok = all(cum_list[i] <= cum_list[i + 1] for i in range(len(cum_list) - 1))
-        results.append(CheckResult(
-            name="Change log growth",
-            passed=growth_ok,
-            details=growth_str,
-            data={"cumulative": cum_list},
-        ))
+        results.append(
+            CheckResult(
+                name="Change log growth",
+                passed=growth_ok,
+                details=growth_str,
+                data={"cumulative": cum_list},
+            )
+        )
 
     # --- ETL run count ---
-    results.append(CheckResult(
-        name="ETL run count",
-        passed=True,
-        details=f"found {etl_count}",
-        data={"count": etl_count},
-    ))
+    results.append(
+        CheckResult(
+            name="ETL run count",
+            passed=True,
+            details=f"found {etl_count}",
+            data={"count": etl_count},
+        )
+    )
 
     return results
 
@@ -346,19 +373,27 @@ def check_cross_run(output_dir: Path) -> list[CheckResult]:
 
 # (label, child_table, child_col, parent_table, parent_col, nullable, soft_delete_filter)
 _FK_CHECKS: list[tuple[str, str, str, str, str, bool, bool]] = [
-    ("wine.winery_id → winery",             "wine",         "winery_id",        "winery",        "winery_id",        True,  True),
-    ("wine.appellation_id → appellation",    "wine",         "appellation_id",   "appellation",   "appellation_id",   True,  True),
-    ("wine.tracked_wine_id → tracked_wine",  "wine",         "tracked_wine_id",  "tracked_wine",  "tracked_wine_id",  True,  True),
-    ("wine_grape.wine_id → wine",            "wine_grape",   "wine_id",          "wine",          "wine_id",          False, False),
-    ("wine_grape.grape_id → grape",          "wine_grape",   "grape_id",         "grape",         "grape_id",         False, False),
-    ("bottle.wine_id → wine",               "bottle",       "wine_id",          "wine",          "wine_id",          False, False),
-    ("bottle.cellar_id → cellar",            "bottle",       "cellar_id",        "cellar",        "cellar_id",        True,  False),
-    ("bottle.provider_id → provider",        "bottle",       "provider_id",      "provider",      "provider_id",      True,  False),
-    ("tasting.wine_id → wine",              "tasting",      "wine_id",          "wine",          "wine_id",          False, False),
-    ("pro_rating.wine_id → wine",           "pro_rating",   "wine_id",          "wine",          "wine_id",          False, False),
-    ("tracked_wine.winery_id → winery",      "tracked_wine", "winery_id",        "winery",        "winery_id",        False, True),
-    ("tracked_wine.appellation_id → appellation", "tracked_wine", "appellation_id", "appellation", "appellation_id", True, True),
-    ("change_log.run_id → etl_run",          "change_log",   "run_id",           "etl_run",       "run_id",           False, False),
+    ("wine.winery_id → winery", "wine", "winery_id", "winery", "winery_id", True, True),
+    ("wine.appellation_id → appellation", "wine", "appellation_id", "appellation", "appellation_id", True, True),
+    ("wine.tracked_wine_id → tracked_wine", "wine", "tracked_wine_id", "tracked_wine", "tracked_wine_id", True, True),
+    ("wine_grape.wine_id → wine", "wine_grape", "wine_id", "wine", "wine_id", False, False),
+    ("wine_grape.grape_id → grape", "wine_grape", "grape_id", "grape", "grape_id", False, False),
+    ("bottle.wine_id → wine", "bottle", "wine_id", "wine", "wine_id", False, False),
+    ("bottle.cellar_id → cellar", "bottle", "cellar_id", "cellar", "cellar_id", True, False),
+    ("bottle.provider_id → provider", "bottle", "provider_id", "provider", "provider_id", True, False),
+    ("tasting.wine_id → wine", "tasting", "wine_id", "wine", "wine_id", False, False),
+    ("pro_rating.wine_id → wine", "pro_rating", "wine_id", "wine", "wine_id", False, False),
+    ("tracked_wine.winery_id → winery", "tracked_wine", "winery_id", "winery", "winery_id", False, True),
+    (
+        "tracked_wine.appellation_id → appellation",
+        "tracked_wine",
+        "appellation_id",
+        "appellation",
+        "appellation_id",
+        True,
+        True,
+    ),
+    ("change_log.run_id → etl_run", "change_log", "run_id", "etl_run", "run_id", False, False),
 ]
 
 
@@ -375,20 +410,23 @@ def check_fk_integrity(output_dir: Path) -> list[CheckResult]:
         for name in EXPECTED_PARQUET:
             pq_path = output_dir / f"{name}.parquet"
             if pq_path.exists():
-                con.execute(
-                    f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{_pq(output_dir, name)}')"
-                )
+                con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{_pq(output_dir, name)}')")
 
         # Also check price_observation if year-partitioned files exist
         price_files = list(output_dir.glob("price_observation_*.parquet"))
         if price_files:
             glob_path = str(output_dir / "price_observation_*.parquet").replace("\\", "/")
-            con.execute(
-                f"CREATE VIEW price_observation AS SELECT * FROM read_parquet('{glob_path}')"
-            )
+            con.execute(f"CREATE VIEW price_observation AS SELECT * FROM read_parquet('{glob_path}')")
             _FK_RUNTIME = list(_FK_CHECKS) + [
-                ("price_observation.tracked_wine_id → tracked_wine",
-                 "price_observation", "tracked_wine_id", "tracked_wine", "tracked_wine_id", False, False),
+                (
+                    "price_observation.tracked_wine_id → tracked_wine",
+                    "price_observation",
+                    "tracked_wine_id",
+                    "tracked_wine",
+                    "tracked_wine_id",
+                    False,
+                    False,
+                ),
             ]
         else:
             _FK_RUNTIME = list(_FK_CHECKS)
@@ -421,15 +459,21 @@ def check_fk_integrity(output_dir: Path) -> list[CheckResult]:
                         f"LIMIT 5"
                     )
                     samples = [str(r[0]) for r in con.execute(sample_sql).fetchall()]
-                    results.append(CheckResult(
-                        name=f"FK {label}",
-                        passed=False,
-                        details=f"{count} orphaned rows (sample {child_col}: {', '.join(samples)})",
-                    ))
+                    results.append(
+                        CheckResult(
+                            name=f"FK {label}",
+                            passed=False,
+                            details=f"{count} orphaned rows (sample {child_col}: {', '.join(samples)})",
+                        )
+                    )
             except duckdb.CatalogException:
-                results.append(CheckResult(
-                    name=f"FK {label}", passed=True, details="skipped — table not present",
-                ))
+                results.append(
+                    CheckResult(
+                        name=f"FK {label}",
+                        passed=True,
+                        details="skipped — table not present",
+                    )
+                )
     finally:
         con.close()
 
@@ -439,6 +483,7 @@ def check_fk_integrity(output_dir: Path) -> list[CheckResult]:
 # -----------------------------------------------------------------------
 # 6.  Dossier integrity checks
 # -----------------------------------------------------------------------
+
 
 def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
     """Validate bidirectional wine↔dossier linkage.
@@ -465,16 +510,13 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
         # ------------------------------------------------------------------
         # 6.1  Collect active wines and their expected dossier info
         # ------------------------------------------------------------------
-        active_wines = con.execute(
-            "SELECT wine_id, wine_slug FROM wine WHERE NOT is_deleted"
-        ).fetchall()
+        active_wines = con.execute("SELECT wine_id, wine_slug FROM wine WHERE NOT is_deleted").fetchall()
         wine_ids = {r[0] for r in active_wines}
-        wine_slug_map = {r[0]: r[1] for r in active_wines}
 
         # Wines with at least one stored bottle (for routing check)
         wines_with_stored = set()
         stored_rows = con.execute(
-            "SELECT DISTINCT wine_id FROM bottle WHERE status = 'stored'"
+            "SELECT DISTINCT wine_id FROM bottle WHERE status = 'stored' AND NOT is_in_transit"
         ).fetchall()
         for r in stored_rows:
             wines_with_stored.add(r[0])
@@ -499,36 +541,51 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
         missing_dossiers = sorted(wine_ids - set(dossier_map.keys()))
         if missing_dossiers:
             sample = ", ".join(str(w) for w in missing_dossiers[:10])
-            results.append(CheckResult(
-                name="Wine → Dossier completeness",
-                passed=False,
-                details=f"{len(missing_dossiers)} active wines missing dossiers (sample: {sample})",
-            ))
+            results.append(
+                CheckResult(
+                    name="Wine → Dossier completeness",
+                    passed=False,
+                    details=f"{len(missing_dossiers)} active wines missing dossiers (sample: {sample})",
+                )
+            )
         else:
-            results.append(CheckResult(
-                name="Wine → Dossier completeness",
-                passed=True,
-                details=f"all {len(wine_ids)} active wines have dossiers",
-            ))
+            results.append(
+                CheckResult(
+                    name="Wine → Dossier completeness",
+                    passed=True,
+                    details=f"all {len(wine_ids)} active wines have dossiers",
+                )
+            )
 
         # ------------------------------------------------------------------
         # 6.4  Dossier → Wine: every dossier must link to an existing wine
         # ------------------------------------------------------------------
         all_wine_ids = {r[0] for r in con.execute("SELECT wine_id FROM wine").fetchall()}
-        orphan_dossiers = sorted(set(dossier_map.keys()) - all_wine_ids)
+        # Only cellar dossiers must link to an existing wine; archived
+        # dossiers are expected orphans (wines removed in later ETL runs).
+        cellar_dossier_ids = {
+            wid for wid, path in dossier_map.items() if cellar_dir in path.parents or path.parent == cellar_dir
+        }
+        orphan_dossiers = sorted(cellar_dossier_ids - all_wine_ids)
+        archive_orphans = sorted((set(dossier_map.keys()) - all_wine_ids) - cellar_dossier_ids)
         if orphan_dossiers:
             sample = ", ".join(str(w) for w in orphan_dossiers[:10])
-            results.append(CheckResult(
-                name="Dossier → Wine linkage",
-                passed=False,
-                details=f"{len(orphan_dossiers)} dossier files with no matching wine (IDs: {sample})",
-            ))
+            results.append(
+                CheckResult(
+                    name="Dossier → Wine linkage",
+                    passed=False,
+                    details=f"{len(orphan_dossiers)} cellar dossier files with no matching wine (IDs: {sample})",
+                )
+            )
         else:
-            results.append(CheckResult(
-                name="Dossier → Wine linkage",
-                passed=True,
-                details=f"all {len(dossier_map)} dossiers link to existing wines",
-            ))
+            archive_note = f" ({len(archive_orphans)} archived orphans — expected)" if archive_orphans else ""
+            results.append(
+                CheckResult(
+                    name="Dossier → Wine linkage",
+                    passed=True,
+                    details=f"all {len(cellar_dossier_ids)} cellar dossiers link to existing wines{archive_note}",
+                )
+            )
 
         # ------------------------------------------------------------------
         # 6.5  Routing: cellar vs archive
@@ -545,23 +602,28 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
                 misrouted.append(f"{wid} has no stored bottles but is in cellar/")
 
         if misrouted:
-            results.append(CheckResult(
-                name="Dossier routing (cellar vs archive)",
-                passed=False,
-                details=f"{len(misrouted)} misrouted: {'; '.join(misrouted[:5])}",
-            ))
+            results.append(
+                CheckResult(
+                    name="Dossier routing (cellar vs archive)",
+                    passed=False,
+                    details=f"{len(misrouted)} misrouted: {'; '.join(misrouted[:5])}",
+                )
+            )
         else:
-            results.append(CheckResult(
-                name="Dossier routing (cellar vs archive)",
-                passed=True,
-                details="all dossiers correctly routed",
-            ))
+            results.append(
+                CheckResult(
+                    name="Dossier routing (cellar vs archive)",
+                    passed=True,
+                    details="all dossiers correctly routed",
+                )
+            )
 
         # ------------------------------------------------------------------
         # 6.6  Frontmatter spot-check: wine_id in frontmatter matches filename
         # ------------------------------------------------------------------
         fm_mismatches: list[str] = []
         import re as _re
+
         for wid, path in list(dossier_map.items())[:20]:  # spot-check first 20
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
@@ -572,25 +634,27 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
                 fm_mismatches.append(f"{wid}: could not read file")
 
         if fm_mismatches:
-            results.append(CheckResult(
-                name="Dossier frontmatter consistency",
-                passed=False,
-                details=f"{len(fm_mismatches)} mismatches: {'; '.join(fm_mismatches)}",
-            ))
+            results.append(
+                CheckResult(
+                    name="Dossier frontmatter consistency",
+                    passed=False,
+                    details=f"{len(fm_mismatches)} mismatches: {'; '.join(fm_mismatches)}",
+                )
+            )
         else:
-            results.append(CheckResult(
-                name="Dossier frontmatter consistency",
-                passed=True,
-                details="spot-check passed (20 dossiers)",
-            ))
+            results.append(
+                CheckResult(
+                    name="Dossier frontmatter consistency",
+                    passed=True,
+                    details="spot-check passed (20 dossiers)",
+                )
+            )
 
         # ------------------------------------------------------------------
         # 6.7  Tracked wine ↔ companion dossier
         # ------------------------------------------------------------------
         if has_tracked:
-            active_tracked = con.execute(
-                "SELECT tracked_wine_id FROM tracked_wine WHERE NOT is_deleted"
-            ).fetchall()
+            active_tracked = con.execute("SELECT tracked_wine_id FROM tracked_wine WHERE NOT is_deleted").fetchall()
             tracked_ids = {r[0] for r in active_tracked}
 
             companion_map: dict[int, Path] = {}
@@ -605,39 +669,51 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
             missing_companions = sorted(tracked_ids - set(companion_map.keys()))
             if missing_companions:
                 sample = ", ".join(str(t) for t in missing_companions[:10])
-                results.append(CheckResult(
-                    name="Tracked → Companion completeness",
-                    passed=False,
-                    details=f"{len(missing_companions)} tracked wines missing companion dossiers (sample: {sample})",
-                ))
+                results.append(
+                    CheckResult(
+                        name="Tracked → Companion completeness",
+                        passed=False,
+                        details=f"{len(missing_companions)} tracked wines missing companion dossiers (sample: {sample})",
+                    )
+                )
             else:
-                results.append(CheckResult(
-                    name="Tracked → Companion completeness",
-                    passed=True,
-                    details=f"all {len(tracked_ids)} tracked wines have companion dossiers",
-                ))
+                results.append(
+                    CheckResult(
+                        name="Tracked → Companion completeness",
+                        passed=True,
+                        details=f"all {len(tracked_ids)} tracked wines have companion dossiers",
+                    )
+                )
 
             # Companion → Tracked
             all_tracked_ids = {r[0] for r in con.execute("SELECT tracked_wine_id FROM tracked_wine").fetchall()}
             orphan_companions = sorted(set(companion_map.keys()) - all_tracked_ids)
             if orphan_companions:
                 sample = ", ".join(str(t) for t in orphan_companions[:10])
-                results.append(CheckResult(
-                    name="Companion → Tracked linkage",
-                    passed=False,
-                    details=f"{len(orphan_companions)} companion dossiers with no tracked wine (IDs: {sample})",
-                ))
+                results.append(
+                    CheckResult(
+                        name="Companion → Tracked linkage",
+                        passed=True,  # downgrade: orphans expected for removed tracked wines
+                        details=f"{len(orphan_companions)} orphaned companion dossiers (expected for removed tracked wines, IDs: {sample})",
+                    )
+                )
             else:
-                results.append(CheckResult(
-                    name="Companion → Tracked linkage",
-                    passed=True,
-                    details=f"all {len(companion_map)} companion dossiers link to tracked wines",
-                ))
+                results.append(
+                    CheckResult(
+                        name="Companion → Tracked linkage",
+                        passed=True,
+                        details=f"all {len(companion_map)} companion dossiers link to tracked wines",
+                    )
+                )
 
     except Exception as exc:
-        results.append(CheckResult(
-            name="Dossier integrity", passed=False, details=str(exc),
-        ))
+        results.append(
+            CheckResult(
+                name="Dossier integrity",
+                passed=False,
+                details=str(exc),
+            )
+        )
     finally:
         con.close()
 

@@ -24,7 +24,7 @@ raw/*.csv → vinocell_reader → parsers / vinocell_parsers → classify_wines 
 |--------|------|
 | `settings` | Frozen dataclasses + TOML loader. `load_settings()` merges built-in defaults → `cellarbrain.toml` → env vars → CLI flags. Includes currency, identity, wishlist, dossier config. |
 | `vinocell_reader` | Read UTF-16 LE tab-delimited CSV exports. Handles duplicate "Pro Ratings" header. Empty→None conversion. Remaps Vinocell CSV headers to canonical column names via `VINOCELL_COLUMN_MAP`. |
-| `reader_protocol` | `CellarReader` Protocol defining the structural interface for source-specific reader modules. Documentation-only; not enforced at runtime. |
+| `slugify` | URL-safe slug generation for wine identifiers. `make_slug()` (winery + name + vintage) and `companion_slug()` (winery + wine name, no vintage). Used by `transform`, `markdown`, and `companion_markdown`. |
 | `parsers` | Generic field-level parsing: grapes, dates, volumes, decimals, slugs, booleans. None in → None out for optional; ValueError for required. |
 | `vinocell_parsers` | Vinocell-specific field parsers: category map, vintage, rating line formats, acquisition/output type enums, wine-name cleaning, cellar sort order, opening time. |
 | `transform` | Build normalised entities from raw CSV rows. Lookup entities (winery, appellation, grape, cellar, provider), core entities (wine, wine_grape, bottle, tasting, pro_rating), derived (tracked_wine). Provides `wine_slug()` and `wine_fingerprint()` for slug-based wine ID stabilisation. `build_wines()` accepts optional pre-assigned IDs from `classify_wines()`. |
@@ -38,8 +38,11 @@ raw/*.csv → vinocell_reader → parsers / vinocell_parsers → classify_wines 
 | `query` | DuckDB layer over Parquet. Dual-connection model. SQL validation (read-only). Search, statistics, price tracking, wishlist alerts. |
 | `validate` | DuckDB-based checks: FK integrity, PK uniqueness, domain constraints, row-count sanity. |
 | `mcp_server` | 15 thin data tools + 8 resources + prompts via FastMCP. No LLM reasoning in server code. |
-| `cli` | Subcommand router: `etl`, `validate`, `query`, `stats`, `dossier`, `mcp`, `recalc`, `wishlist`. Legacy compat for flat args. |
-| `log` | Configure stdlib logging: stderr handler + optional `RotatingFileHandler`. Suppress noisy third-party loggers. |
+| `cli` | Subcommand router: `etl`, `validate`, `query`, `stats`, `dossier`, `mcp`, `recalc`, `wishlist`, `logs`. Legacy compat for flat args. |
+| `log` | Configure stdlib logging: stderr handler + optional `RotatingFileHandler`. `JsonFormatter` for structured JSON log lines. Suppress noisy third-party loggers. |
+| `observability` | Structured event capture for MCP tool/resource/prompt invocations. `ToolEvent` dataclass, `EventCollector` with session/turn tracking, buffered DuckDB log store, auto-pruning. |
+| `dashboard` | Starlette web app for browsing observability data, cellar contents, SQL playground, and MCP tool workbench. Sub-modules: `app` (routes), `queries` (obs query functions), `cellar_queries` (cellar view queries), `workbench` (tool introspection + execution), `dossier_render` (Markdown→HTML). Templates use HTMX + Pico CSS + Chart.js. |
+| `email_poll` | IMAP polling daemon for automated Vinocell CSV ingestion. Sub-modules: `grouping` (batch detection, pure functions), `placement` (snapshot + flush), `imap` (IMAP client wrapper), `credentials` (keyring + env var resolution), `etl_runner` (subprocess ETL invocation). Optional dependency: `imapclient`, `keyring`. |
 
 ## Data Flow: A Single ETL Run
 

@@ -110,7 +110,7 @@ class TestFoodCatalogueCoverage:
 
     def test_cuisine_diversity(self, catalogue):
         cuisines = set(catalogue.column("cuisine").to_pylist())
-        assert len(cuisines) >= 15, f"Only {len(cuisines)} cuisines"
+        assert len(cuisines) >= 25, f"Only {len(cuisines)} cuisines"
 
     def test_weight_distribution(self, catalogue):
         total = len(catalogue)
@@ -138,6 +138,35 @@ class TestFoodCatalogueCoverage:
     def test_italian_cuisine_present(self, catalogue):
         count = sum(1 for v in catalogue.column("cuisine").to_pylist() if v == "Italian")
         assert count >= 80, f"Only {count} Italian dishes"
+
+    def test_game_protein_coverage(self, catalogue):
+        count = sum(1 for v in catalogue.column("protein").to_pylist() if v == "game")
+        assert count >= 14, f"Only {count} game dishes, need at least 14"
+
+    def test_cuisine_label_consistency(self, catalogue):
+        """Verify well-known dishes carry the correct cuisine label."""
+        expected_cuisines = {
+            "satay-chicken": "Malaysian",
+            "laksa": "Malaysian",
+            "rendang": "Indonesian",
+            "nasi-goreng": "Indonesian",
+            "gado-gado": "Indonesian",
+            "empanadas": "Argentine",
+            "asado": "Argentine",
+            "feijoada": "Brazilian",
+            "acaraje": "Brazilian",
+            "pao-de-queijo": "Brazilian",
+            "arepa-de-queso": "Venezuelan",
+            "pupusa": "Central American",
+        }
+        ids = catalogue.column("dish_id").to_pylist()
+        cuisines = catalogue.column("cuisine").to_pylist()
+        dish_to_cuisine = dict(zip(ids, cuisines))
+        for dish_id, expected in expected_cuisines.items():
+            if dish_id in dish_to_cuisine:
+                assert dish_to_cuisine[dish_id] == expected, (
+                    f"{dish_id}: expected {expected}, got {dish_to_cuisine[dish_id]}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +259,28 @@ class TestPairingDatasetDistribution:
     def test_ingredients_not_empty(self, pairings):
         for i, row in enumerate(pairings.column("ingredients").to_pylist()):
             assert len(row) >= 1, f"Row {i} has empty ingredients"
+
+    def test_reason_score_coherence(self, pairings):
+        """Verify reason text sentiment aligns with score band.
+
+        Excellent pairs (>= 0.8) should never contain negative language;
+        bad pairs (< 0.2) should never contain positive language.
+        """
+        positive_re = re.compile(r"\b(beautifully|excellent|perfectly|harmonises|wonderful)\b", re.IGNORECASE)
+        negative_re = re.compile(r"\b(clashes|metallic|mismatch|detracts|vanishes)\b", re.IGNORECASE)
+        # "overwhelms" excluded — used in positive context ("rather than overwhelms")
+        scores = pairings.column("pairing_score").to_pylist()
+        reasons = pairings.column("pairing_reason").to_pylist()
+        bad_high, bad_low = 0, 0
+        for score, reason in zip(scores, reasons):
+            if score >= 0.8 and negative_re.search(reason):
+                bad_high += 1
+            if score < 0.2 and positive_re.search(reason):
+                bad_low += 1
+        total = len(scores)
+        # Allow small tolerance (< 1%) for edge cases
+        assert bad_high / total < 0.01, f"{bad_high} excellent pairs have negative language"
+        assert bad_low / total < 0.01, f"{bad_low} bad pairs have positive language"
 
 
 # ---------------------------------------------------------------------------

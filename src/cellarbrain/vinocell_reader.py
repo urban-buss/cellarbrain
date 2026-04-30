@@ -6,7 +6,6 @@ import csv
 import io
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Vinocell CSV header → canonical column name mapping
 # ---------------------------------------------------------------------------
@@ -79,20 +78,40 @@ def _remap_columns(
 # Minimum required headers for each CSV type (structural constants)
 # ---------------------------------------------------------------------------
 
-WINES_REQUIRED_HEADERS: frozenset[str] = frozenset({
-    "Winery", "Name", "Year", "Country", "Category", "Volume",
-    "Favorite", "Wishlist",
-})
+WINES_REQUIRED_HEADERS: frozenset[str] = frozenset(
+    {
+        "Winery",
+        "Name",
+        "Year",
+        "Country",
+        "Category",
+        "Volume",
+        "Favorite",
+        "Wishlist",
+    }
+)
 
-BOTTLES_REQUIRED_HEADERS: frozenset[str] = frozenset({
-    "Winery", "Name", "Year",
-    "Cellar", "Input date", "Input type",
-})
+BOTTLES_REQUIRED_HEADERS: frozenset[str] = frozenset(
+    {
+        "Winery",
+        "Name",
+        "Year",
+        "Cellar",
+        "Input date",
+        "Input type",
+    }
+)
 
-BOTTLES_GONE_REQUIRED_HEADERS: frozenset[str] = frozenset({
-    "Winery", "Name", "Year",
-    "Input date", "Output date", "Output type",
-})
+BOTTLES_GONE_REQUIRED_HEADERS: frozenset[str] = frozenset(
+    {
+        "Winery",
+        "Name",
+        "Year",
+        "Input date",
+        "Output date",
+        "Output type",
+    }
+)
 
 # Columns that exist only in one file type — used to detect swapped files.
 _WINES_DISCRIMINATOR = "Tasting"
@@ -114,19 +133,17 @@ def _read_csv(
         text = p.read_text(encoding=encoding)
     except FileNotFoundError:
         raise FileNotFoundError(
-            f"CSV file not found: {path}. "
-            "Check the file path and ensure the CSV export exists."
+            f"CSV file not found: {path}. Check the file path and ensure the CSV export exists."
         ) from None
     except UnicodeDecodeError as exc:
         raise ValueError(
-            f"Cannot read {p.name}: encoding is not {encoding}. "
-            f"Is this a valid wine cellar CSV export? (Detail: {exc})"
+            f"Cannot read {p.name}: encoding is not {encoding}. Is this a valid wine cellar CSV export? (Detail: {exc})"
         ) from exc
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     try:
         headers = next(reader)
     except StopIteration:
-        raise ValueError(f"CSV file is empty: {path}")
+        raise ValueError(f"CSV file is empty: {path}") from None
     if len(headers) < 2:
         raise ValueError(
             f"{p.name} has only {len(headers)} column(s). "
@@ -159,9 +176,7 @@ def _row_to_dict(headers: list[str], row: list[str]) -> dict[str, str | None]:
     Raises ValueError if the row has a different number of columns than headers.
     """
     if len(row) != len(headers):
-        raise ValueError(
-            f"Row has {len(row)} columns but expected {len(headers)}"
-        )
+        raise ValueError(f"Row has {len(row)} columns but expected {len(headers)}")
     d: dict[str, str | None] = {}
     for h, v in zip(headers, row):
         d[h] = v.strip() if v.strip() else None
@@ -197,10 +212,7 @@ def read_wines_csv(path: str | Path) -> list[dict[str, str | None]]:
     if len(pro_indices) == 2:
         headers[pro_indices[1]] = "Pro Ratings Detail"
 
-    return [
-        _remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP)
-        for row in rows
-    ]
+    return [_remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP) for row in rows]
 
 
 def read_bottles_csv(path: str | Path) -> list[dict[str, str | None]]:
@@ -222,10 +234,7 @@ def read_bottles_csv(path: str | Path) -> list[dict[str, str | None]]:
         )
 
     _validate_headers(headers, BOTTLES_REQUIRED_HEADERS, "Bottles CSV")
-    return [
-        _remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP)
-        for row in rows
-    ]
+    return [_remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP) for row in rows]
 
 
 def read_bottles_gone_csv(path: str | Path) -> list[dict[str, str | None]]:
@@ -237,7 +246,4 @@ def read_bottles_gone_csv(path: str | Path) -> list[dict[str, str | None]]:
     """
     headers, rows = _read_csv(path)
     _validate_headers(headers, BOTTLES_GONE_REQUIRED_HEADERS, "Bottles-gone CSV")
-    return [
-        _remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP)
-        for row in rows
-    ]
+    return [_remap_columns(_row_to_dict(headers, row), VINOCELL_COLUMN_MAP) for row in rows]

@@ -13,15 +13,17 @@ Precedence (highest → lowest):
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import tomllib
-from dataclasses import dataclass, field, fields as dataclass_fields
-
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 
 # ---------------------------------------------------------------------------
 # Sub-config dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class PathsConfig:
@@ -92,13 +94,16 @@ class AgentSection:
 @dataclass(frozen=True)
 class CurrencyConfig:
     default: str = "CHF"
-    rates: dict[str, float] = field(default_factory=lambda: {
-        "EUR": 0.93,
-        "USD": 0.88,
-        "GBP": 1.11,
-        "AUD": 0.56,
-        "CAD": 0.62,
-    })
+    rates: dict[str, float] = field(
+        default_factory=lambda: {
+            "EUR": 0.93,
+            "USD": 0.88,
+            "GBP": 1.11,
+            "AUD": 0.56,
+            "CAD": 0.62,
+            "RON": 0.18,
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -122,34 +127,48 @@ class LoggingConfig:
     backup_count: int = 3
     format: str = "%(asctime)s %(levelname)-8s %(name)s \u2014 %(message)s"
     date_format: str = "%Y-%m-%d %H:%M:%S"
+    turn_gap_seconds: float = 2.0
+    slow_threshold_ms: float = 2000.0
+    log_db: str | None = None
+    retention_days: int = 90
 
 
 @dataclass(frozen=True)
 class WishlistConfig:
     sections: tuple[str, ...] = (
-        "producer_deep_dive", "vintage_tracker",
-        "buying_guide", "price_tracker",
+        "producer_deep_dive",
+        "vintage_tracker",
+        "buying_guide",
+        "price_tracker",
     )
     scan_cadence_days: int = 7
     alert_window_days: int = 30
     price_drop_alert_pct: float = 10.0
     wishlist_subdir: str = "tracked"
-    retailers: dict[str, str] = field(default_factory=lambda: {
-        "gerstl": "gerstl.ch",
-        "martel": "martel.ch",
-        "flaschenpost": "flaschenpost.ch",
-        "moevenpick": "moevenpick-wein.com",
-        "weinauktion": "weinauktion.ch",
-        "wine_ch": "wine.ch",
-        "juan_sanchez": "juan-sanchez.ch",
-        "globalwine": "globalwine.ch",
-        "divo": "divo.ch",
-        "schuler": "schuler.ch",
-    })
-    bottle_sizes: dict[str, int] = field(default_factory=lambda: {
-        "half": 375, "standard": 750, "magnum": 1500,
-        "double_magnum": 3000, "jeroboam": 5000, "imperial": 6000,
-    })
+    retailers: dict[str, str] = field(
+        default_factory=lambda: {
+            "gerstl": "gerstl.ch",
+            "martel": "martel.ch",
+            "flaschenpost": "flaschenpost.ch",
+            "moevenpick": "moevenpick-wein.com",
+            "weinauktion": "weinauktion.ch",
+            "wine_ch": "wine.ch",
+            "juan_sanchez": "juan-sanchez.ch",
+            "globalwine": "globalwine.ch",
+            "divo": "divo.ch",
+            "schuler": "schuler.ch",
+        }
+    )
+    bottle_sizes: dict[str, int] = field(
+        default_factory=lambda: {
+            "half": 375,
+            "standard": 750,
+            "magnum": 1500,
+            "double_magnum": 3000,
+            "jeroboam": 5000,
+            "imperial": 6000,
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -176,11 +195,68 @@ class SommelierConfig:
     warmup_ratio: float = 0.1
     eval_split: float = 0.1
     auto_retrain_threshold: int = 100
+    auto_food_tags: bool = True
+
+
+@dataclass(frozen=True)
+class CellarRule:
+    """A single cellar classification rule.
+
+    Matches cellar names using ``fnmatch.fnmatchcase`` glob patterns.
+    Exact names work as patterns too (they match only themselves).
+    """
+
+    pattern: str
+    classification: str  # "onsite" | "offsite" | "in_transit"
+
+
+CELLAR_CLASSIFICATIONS = frozenset({"onsite", "offsite", "in_transit"})
+
+
+@dataclass(frozen=True)
+class BackupConfig:
+    """Backup and restore configuration."""
+
+    backup_dir: str = "bkp"
+    max_backups: int = 5
+    include_sommelier: bool = False
+    include_logs: bool = False
+
+
+@dataclass(frozen=True)
+class DashboardConfig:
+    """Dashboard configuration."""
+
+    port: int = 8017
+    workbench_read_only: bool = True
+    workbench_allow: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    """IMAP email ingestion daemon configuration."""
+
+    imap_host: str = "imap.mail.me.com"
+    imap_port: int = 993
+    use_ssl: bool = True
+    mailbox: str = "INBOX"
+    subject_filter: str = "[VinoCell] CSV file"
+    sender_filter: str = ""
+    poll_interval: int = 60
+    batch_window: int = 300
+    expected_files: tuple[str, ...] = (
+        "export-wines.csv",
+        "export-bottles-stored.csv",
+        "export-bottles-gone.csv",
+    )
+    processed_action: str = "flag"
+    processed_folder: str = "VinoCell/Processed"
 
 
 # ---------------------------------------------------------------------------
 # Default builders (called once per Settings construction)
 # ---------------------------------------------------------------------------
+
 
 def _default_classification_short() -> dict[str, str]:
     return {
@@ -440,7 +516,7 @@ def _default_search_synonyms() -> dict[str, str]:
         # -- Stopwords (value="") — dropped from query ---------------------
         "weingut": "",
         "domaine": "",
-        "château": "",   # e.g. "Château Mouton" → just "Mouton"
+        "château": "",  # e.g. "Château Mouton" → just "Mouton"
         "bodega": "",
         "cantina": "",
         "tenuta": "",
@@ -482,6 +558,7 @@ def _default_search_synonyms() -> dict[str, str]:
 # Top-level Settings
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Settings:
     paths: PathsConfig = field(default_factory=PathsConfig)
@@ -501,6 +578,7 @@ class Settings:
     )
     offsite_cellars: tuple[str, ...] = ()
     in_transit_cellars: tuple[str, ...] = ()
+    cellar_rules: tuple[CellarRule, ...] = ()
     currency: CurrencyConfig = field(default_factory=CurrencyConfig)
     etl: EtlConfig = field(default_factory=EtlConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
@@ -508,6 +586,9 @@ class Settings:
     wishlist: WishlistConfig = field(default_factory=WishlistConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     sommelier: SommelierConfig = field(default_factory=SommelierConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    ingest: IngestConfig = field(default_factory=IngestConfig)
+    backup: BackupConfig = field(default_factory=BackupConfig)
     companion_sections: tuple[AgentSection, ...] = field(
         default_factory=_default_companion_sections,
     )
@@ -556,6 +637,7 @@ class Settings:
 # ---------------------------------------------------------------------------
 # TOML loading
 # ---------------------------------------------------------------------------
+
 
 def _validate_keys(
     section_name: str,
@@ -633,6 +715,64 @@ def _parse_agent_sections(raw: list[dict]) -> tuple[AgentSection, ...]:
             ),
         )
     return tuple(sections)
+
+
+def _parse_cellar_rules(raw: list[dict]) -> tuple[CellarRule, ...]:
+    """Parse ``[[cellar_rules]]`` TOML entries into ``CellarRule`` tuples."""
+    rules: list[CellarRule] = []
+    for i, entry in enumerate(raw):
+        pattern = entry.get("pattern")
+        classification = entry.get("classification")
+        if not pattern or not classification:
+            raise ValueError(
+                f"cellar_rules[{i}]: each entry must have 'pattern' and 'classification'",
+            )
+        rules.append(CellarRule(pattern=pattern, classification=classification))
+    return tuple(rules)
+
+
+def _legacy_to_rules(
+    offsite: tuple[str, ...],
+    in_transit: tuple[str, ...],
+) -> tuple[CellarRule, ...]:
+    """Convert legacy flat cellar lists to rules (exact names are valid glob patterns)."""
+    rules: list[CellarRule] = []
+    for name in offsite:
+        rules.append(CellarRule(pattern=name, classification="offsite"))
+    for name in in_transit:
+        rules.append(CellarRule(pattern=name, classification="in_transit"))
+    return tuple(rules)
+
+
+def _validate_cellar_rules(rules: tuple[CellarRule, ...]) -> None:
+    """Validate cellar rules at load time."""
+    import fnmatch as _fnmatch
+
+    for i, rule in enumerate(rules):
+        if rule.classification not in CELLAR_CLASSIFICATIONS:
+            raise ValueError(
+                f"cellar_rules[{i}]: invalid classification "
+                f"'{rule.classification}' — must be one of "
+                f"{', '.join(sorted(CELLAR_CLASSIFICATIONS))}",
+            )
+        try:
+            _fnmatch.translate(rule.pattern)
+        except Exception as exc:
+            raise ValueError(
+                f"cellar_rules[{i}]: invalid glob pattern '{rule.pattern}': {exc}",
+            ) from exc
+
+
+_CURRENCY_SIDECAR_FILE = "currency-rates.json"
+
+
+def _load_currency_sidecar(data_dir: str) -> dict[str, float]:
+    """Load agent-managed currency rates from the sidecar JSON file."""
+    path = pathlib.Path(data_dir) / _CURRENCY_SIDECAR_FILE
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_settings(
@@ -739,6 +879,23 @@ def load_settings(
     else:
         in_transit_cellars = ()
 
+    # Cellar rules — new rule-based system with legacy fallback
+    has_rules = "cellar_rules" in raw
+    has_legacy = "offsite_cellars" in raw or "in_transit_cellars" in raw
+    if has_rules and has_legacy:
+        raise ValueError(
+            "Config error: 'cellar_rules' and legacy 'offsite_cellars' / "
+            "'in_transit_cellars' cannot both be present. "
+            "Use cellar_rules or the legacy flat lists, not both."
+        )
+    if has_rules:
+        cellar_rules = _parse_cellar_rules(raw["cellar_rules"])
+        _validate_cellar_rules(cellar_rules)
+    elif has_legacy:
+        cellar_rules = _legacy_to_rules(offsite_cellars, in_transit_cellars)
+    else:
+        cellar_rules = ()
+
     # Tables — merge
     classification_short = _default_classification_short()
     if "classification_short" in raw:
@@ -756,12 +913,41 @@ def load_settings(
         _validate_keys("sommelier", sommelier_raw, SommelierConfig)
     sommelier = SommelierConfig(**sommelier_raw) if sommelier_raw else SommelierConfig()
 
+    # Dashboard — simple scalar config
+    dashboard_raw = raw.get("dashboard", {})
+    if dashboard_raw:
+        _validate_keys("dashboard", dashboard_raw, DashboardConfig)
+    dashboard = DashboardConfig(**dashboard_raw) if dashboard_raw else DashboardConfig()
+
+    # Ingest — scalar config with tuple conversion for expected_files
+    ingest_raw = raw.get("ingest", {})
+    if ingest_raw:
+        ingest_kw: dict = dict(ingest_raw)
+        if "expected_files" in ingest_kw:
+            ingest_kw["expected_files"] = tuple(ingest_kw["expected_files"])
+        _validate_keys("ingest", ingest_kw, IngestConfig)
+        ingest = IngestConfig(**ingest_kw)
+    else:
+        ingest = IngestConfig()
+
+    # Backup — simple scalar config
+    backup_raw = raw.get("backup", {})
+    if backup_raw:
+        _validate_keys("backup", backup_raw, BackupConfig)
+    backup = BackupConfig(**backup_raw) if backup_raw else BackupConfig()
+
     # Currency — table merge for rates
     currency_raw = raw.get("currency", {})
     currency_default = currency_raw.get("default", "CHF")
     currency_rates = CurrencyConfig().rates.copy()
     if "rates" in currency_raw:
         currency_rates.update(currency_raw["rates"])
+
+    # Merge agent-managed sidecar rates (highest priority)
+    data_dir_for_sidecar = os.environ.get("CELLARBRAIN_DATA_DIR") or paths_raw.get("data_dir", PathsConfig().data_dir)
+    sidecar = _load_currency_sidecar(data_dir_for_sidecar)
+    currency_rates.update(sidecar)
+
     currency = CurrencyConfig(default=currency_default, rates=currency_rates)
 
     # -- Env var post-override ----------------------------------------------
@@ -787,6 +973,7 @@ def load_settings(
         classification_short=classification_short,
         offsite_cellars=offsite_cellars,
         in_transit_cellars=in_transit_cellars,
+        cellar_rules=cellar_rules,
         currency=currency,
         etl=etl,
         identity=identity,
@@ -794,6 +981,9 @@ def load_settings(
         wishlist=wishlist,
         search=search,
         sommelier=sommelier,
+        dashboard=dashboard,
+        ingest=ingest,
+        backup=backup,
         companion_sections=companion_sections,
         config_source=str(resolved) if resolved else None,
     )

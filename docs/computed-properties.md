@@ -108,17 +108,73 @@ Default tiers (configurable via `cellarbrain.toml`):
 
 Returns `"unknown"` when price is `None`.
 
+**Note:** As of v0.18, `price_tier` is computed from `price_per_750ml` (volume-normalised price) rather than raw `list_price`. This means a CHF 25 half-bottle (375 mL) is tiered as `"premium"` (equivalent CHF 50 per 750 mL), not `"everyday"`.
+
+## Bottle Format
+
+`compute_bottle_format(volume_ml) → str`
+
+Maps a volume in mL to a human-readable bottle format label.
+
+| Volume | Label |
+|--------|-------|
+| 187 | `"Piccolo"` |
+| 375 | `"Half Bottle"` |
+| 500 | `"500 mL"` |
+| 750 | `"Standard"` |
+| 1000 | `"1 L"` |
+| 1500 | `"Magnum"` |
+| 3000 | `"Jéroboam"` |
+| 4500 | `"Rehoboam"` |
+| 6000 | `"Methuselah"` |
+| 9000 | `"Salmanazar"` |
+| 12000 | `"Balthazar"` |
+| 15000 | `"Nebuchadnezzar"` |
+| 18000 | `"Melchior"` |
+| other | `"{volume} mL"` |
+
+## Price Per 750 mL
+
+`compute_price_per_750ml(price, volume_ml) → Decimal | None`
+
+Normalises any price to the equivalent cost of a standard 750 mL bottle.
+
+Formula: `price × (750 / volume_ml)`, rounded to 2 decimal places.
+
+| Price | Volume | Result |
+|-------|--------|--------|
+| 25.00 | 375 | 50.00 |
+| 25.00 | 750 | 25.00 |
+| 80.00 | 1500 | 40.00 |
+| 45.00 | 500 | 67.50 |
+| None | 750 | None |
+
+## Cellar Classification
+
+`classify_cellar(cellar_name, rules) → str`
+
+Classifies a cellar name using an ordered list of `CellarRule` tuples. First matching rule wins. Returns one of `"onsite"`, `"offsite"`, or `"in_transit"`. Returns `"onsite"` for `None` cellar names or when no rule matches.
+
+Each rule has a `pattern` and `classification`. Patterns use `fnmatch.fnmatchcase` glob syntax:
+
+| Pattern | Matches | Example |
+|---------|---------|----------|
+| `"Main cellar"` | Exact name only | literal match |
+| `"03*"` | Names starting with `03` | `"03 Schmidhof 2"` |
+| `"0[345]*"` | Names starting with `03`, `04`, or `05` | `"04 Bahnmatt 17"` |
+| `"*"` | Everything (catch-all) | any cellar name |
+
 ## On-site Detection
 
-`compute_is_onsite(cellar_name, offsite_cellars, in_transit_cellars) → bool`
+`compute_is_onsite(cellar_name, ..., rules=...) → bool`
 
-Returns `False` if `cellar_name` is in the `offsite_cellars` or `in_transit_cellars` tuple. `None` cellar → `True`.
+When `rules` is provided, delegates to `classify_cellar()` and returns `True` when the result is `"onsite"`. Legacy flat-list signatures are still supported for backward compatibility.
 
 ## In-Transit Detection
 
-`compute_is_in_transit(cellar_name, in_transit_cellars) → bool`
+`compute_is_in_transit(cellar_name, ..., rules=...) → bool`
 
-Returns `True` if `cellar_name` is in the `in_transit_cellars` tuple. Used to identify bottles on order or in transit — typically assigned to a virtual cellar (e.g. “99 Orders & Subscriptions”). `None` cellar → `False`.
+When `rules` is provided, delegates to `classify_cellar()` and returns `True` when the result is `"in_transit"`. Legacy flat-list signatures are still supported.
 
 ## Currency Conversion
 
@@ -137,6 +193,8 @@ Modifies wine dicts **in-place** across three passes:
 |------|-----------|-------------|
 | 1 — Grape properties | `grape_type`, `primary_grape`, `grape_summary` | `wine_grapes`, `grape_names` |
 | 2 — Full name | `full_name` | Pass 1 results, `winery_names`, `appellation_map`, `classification_short` |
-| 3 — Status & pricing | `drinking_status`, `age_years`, `list_price`, `list_currency`, `price_tier` | `current_year`, `settings` (currency config, price tiers) |
+| 3 — Status & pricing | `drinking_status`, `age_years`, `list_price`, `list_currency`, `price_per_750ml`, `bottle_format`, `price_tier` | `current_year`, `settings` (currency config, price tiers) |
 
 Pass 3 only runs when `current_year` is provided.
+
+In Pass 3, `price_per_750ml` is computed from `list_price` and `volume_ml` before `price_tier`, so that `price_tier` uses the volume-normalised price.

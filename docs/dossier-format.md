@@ -58,6 +58,11 @@ original_list_currency: "CHF"
 drinking_status: "optimal"
 age_years: 10
 price_tier: "premium"
+format_group_id: 25
+format_siblings:
+  - wine_id: 42
+    bottle_format: "Magnum"
+    volume_ml: 1500
 etl_run_id: 1
 updated_at: "2025-06-01T12:00:00"
 agent_sections_populated:
@@ -72,7 +77,7 @@ agent_sections_pending:
 ---
 ```
 
-`bottles_consumed` counts bottles with status ≠ `stored`. `bottles_on_order` counts bottles with `status = 'stored'` and `is_in_transit = true` (ordered but not yet physically present). `bottles_total` = `bottles_in_cellar` + `bottles_consumed`. `drinking_status`, `age_years`, and `price_tier` are computed fields refreshed by ETL and `cellarbrain recalc`.
+`bottles_consumed` counts bottles with status ≠ `stored`. `bottles_on_order` counts bottles with `status = 'stored'` and `is_in_transit = true` (ordered but not yet physically present). `bottles_total` = `bottles_in_cellar` + `bottles_consumed`. `drinking_status`, `age_years`, and `price_tier` are computed fields refreshed by ETL and `cellarbrain recalc`. `format_group_id` is the `wine_id` of the Standard variant when the wine belongs to a format group (multiple bottle sizes); `format_siblings` lists the other members.
 
 ---
 
@@ -84,23 +89,24 @@ The file is divided into clearly delimited sections. Each is tagged with its dat
 |---|---|---|---|
 | 1 | YAML Frontmatter | ETL | *(always included)* |
 | 2 | Identity | ETL | `identity` |
-| 3 | Origin | ETL | `origin` |
-| 4 | Grapes | ETL | `grapes` |
-| 5 | Characteristics | ETL | `characteristics` |
-| 6 | Drinking Window | ETL | `drinking_window` |
-| 7 | Cellar Inventory | ETL | `cellar_inventory` |
-| 8 | Purchase History | ETL | `purchase_history` |
-| 9 | Consumption History | ETL | `consumption_history` |
-| 10 | Owner Notes | ETL | `owner_notes` |
-| 11 | Ratings & Reviews | Mixed | `ratings_reviews` |
-| 12 | Tasting Notes | Mixed | `tasting_notes` |
-| 13 | Food Pairings | Mixed | `food_pairings` |
-| 14 | Producer Profile | Agent | `producer_profile` |
-| 15 | Vintage Report | Agent | `vintage_report` |
-| 16 | Wine Description | Agent | `wine_description` |
-| 17 | Market & Availability | Agent | `market_availability` |
-| 18 | Similar Wines | Agent | `similar_wines` |
-| 19 | Agent Log | Agent | `agent_log` |
+| 3 | Related Formats | ETL | `related_formats` |
+| 4 | Origin | ETL | `origin` |
+| 5 | Grapes | ETL | `grapes` |
+| 6 | Characteristics | ETL | `characteristics` |
+| 7 | Drinking Window | ETL | `drinking_window` |
+| 8 | Cellar Inventory | ETL | `cellar_inventory` |
+| 9 | Purchase History | ETL | `purchase_history` |
+| 10 | Consumption History | ETL | `consumption_history` |
+| 11 | Owner Notes | ETL | `owner_notes` |
+| 12 | Ratings & Reviews | Mixed | `ratings_reviews` |
+| 13 | Tasting Notes | Mixed | `tasting_notes` |
+| 14 | Food Pairings | Mixed | `food_pairings` |
+| 15 | Producer Profile | Agent | `producer_profile` |
+| 16 | Vintage Report | Agent | `vintage_report` |
+| 17 | Wine Description | Agent | `wine_description` |
+| 18 | Market & Availability | Agent | `market_availability` |
+| 19 | Similar Wines | Agent | `similar_wines` |
+| 20 | Agent Log | Agent | `agent_log` |
 
 ---
 
@@ -144,6 +150,19 @@ When `sections` is omitted, the full dossier is returned.
 | **Vintage** | 2016 |
 | **Category** | Red |
 | **Volume** | 750 mL |
+```
+
+### Related Formats (ETL)
+
+Only rendered when the wine belongs to a format group (same winery/name/vintage in multiple bottle sizes). The current wine's row is bolded. Sorted by volume.
+
+```markdown
+## Related Formats
+
+| Format | Volume | Wine ID | Drinking Window |
+|---|---|---|---|
+| **Standard** | **750 mL** | **25** | **2024 – 2030** |
+| Magnum | 1500 mL | 42 | 2024 – 2030 |
 ```
 
 ### Drinking Window (ETL)

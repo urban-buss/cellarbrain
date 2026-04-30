@@ -100,6 +100,18 @@ All subcommands accept `-d <path>` to point at a different data directory
 
 ---
 
+## Web Explorer
+
+A local web dashboard for browsing your cellar, observability data, and running queries interactively.
+
+```bash
+cellarbrain dashboard          # opens at http://localhost:8017
+```
+
+Pages: overview, tool usage, errors, sessions, latency charts, live tail (SSE), cellar browser, bottles, drinking window, tracked wines, SQL playground, statistics, and workbench. Requires a prior ETL run and MCP log store.
+
+---
+
 ## MCP server
 
 The MCP server exposes 7 read/write tools for AI agents (Claude, OpenClaw,

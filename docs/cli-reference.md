@@ -184,6 +184,87 @@ cellarbrain mcp --transport sse --port 8080
 
 ---
 
+## `cellarbrain logs`
+
+Query the MCP observability log store (DuckDB). The log store is created automatically when the MCP server starts.
+
+```bash
+# Tail recent events (default)
+cellarbrain logs
+
+# Show recent errors
+cellarbrain logs --errors
+
+# Usage summary (call counts + avg latency per tool)
+cellarbrain logs --usage
+
+# Latency percentiles (p50, p95, p99)
+cellarbrain logs --latency
+
+# Session overview
+cellarbrain logs --sessions
+
+# Look back 48 hours, show 50 events
+cellarbrain logs --since 48 --tail 50
+
+# Prune old events per retention_days setting
+cellarbrain logs --prune
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--errors` | — | Show recent error events |
+| `--usage` | — | Show per-tool call count and latency summary |
+| `--latency` | — | Show latency percentiles (p50/p95/p99) per tool |
+| `--sessions` | — | Show session summary (events, turns, errors) |
+| `--tail` | `20` | Number of recent events to display |
+| `--since` | `24` | Hours to look back |
+| `--prune` | — | Delete events older than `retention_days` setting |
+
+---
+
+## `cellarbrain dashboard`
+
+Start the Web Explorer dashboard — a local Starlette web app for browsing observability data, cellar contents, and running interactive queries.
+
+```bash
+# Start on default port (8017)
+cellarbrain dashboard
+
+# Custom port
+cellarbrain dashboard --port 9000
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `8017` (or `dashboard.port` from config) | HTTP port to listen on |
+
+### Prerequisites
+
+- A DuckDB log store must exist (created automatically on first MCP server run via `cellarbrain mcp`)
+- For cellar pages: Parquet output must exist (`cellarbrain etl` must have been run)
+
+### Pages
+
+| Path | Description |
+|------|-------------|
+| `/` | Observability overview — KPIs, hourly volume chart, top tools |
+| `/tools` | Per-tool usage table with call count, avg/p95 latency, error rate |
+| `/errors` | Filterable error log with detail drill-down |
+| `/sessions` | Session list → turn list → turn event detail |
+| `/latency` | Latency percentiles, histogram, and time-series chart |
+| `/live` | Live event tail via Server-Sent Events (SSE) |
+| `/cellar` | Paginated wine browser with search, category, region, status filters |
+| `/bottles` | Bottle inventory with stored/consumed/on-order tabs |
+| `/drinking` | Wines currently in their optimal drinking window |
+| `/tracked` | Tracked wines and price history |
+| `/sql` | SQL Playground — run read-only queries against cellar views |
+| `/stats` | Cellar statistics with group-by selector and chart |
+| `/workbench` | Interactive MCP tool runner (read-only tools by default) |
+| `/dossier/{wine_id}` | Rendered wine dossier (Markdown → HTML) |
+
+---
+
 ## Legacy Interface
 
 For backward compatibility, if the first argument ends in `.csv`, the legacy flat interface is used:
@@ -240,3 +321,51 @@ cellarbrain rebuild-indexes [--food-only] [--wine-only]
 | `--wine-only` | Only rebuild the wine index |
 
 Loads the trained model, encodes all food catalogue entries and/or wines with `bottles_stored > 0`, and saves FAISS `IndexFlatIP` indexes. The wine index is also auto-rebuilt after each ETL run when `sommelier.enabled = true`.
+
+---
+
+## `cellarbrain ingest`
+
+Start the IMAP email ingestion daemon that monitors a mailbox for Vinocell CSV export emails, groups them into complete batches, writes snapshot folders, flushes the `raw/` working set, and triggers the ETL pipeline.
+
+```bash
+# Start polling daemon (foreground, runs until stopped)
+cellarbrain ingest
+
+# Single poll cycle, then exit (for cron/testing)
+cellarbrain ingest --once
+
+# Detect batches but don't write files or run ETL
+cellarbrain ingest --dry-run
+
+# Combined: single dry-run cycle
+cellarbrain ingest --once --dry-run
+
+# Interactive credential setup (stores in system keyring)
+cellarbrain ingest --setup
+```
+
+| Flag | Description |
+|------|-------------|
+| `--once` | Run a single poll cycle and exit |
+| `--dry-run` | Detect batches but don't write files or invoke ETL |
+| `--setup` | Interactive credential storage (prompts for IMAP user/password, stores in keyring) |
+
+### Prerequisites
+
+- Install ingest dependencies: `pip install cellarbrain[ingest]`
+- Configure `[ingest]` section in `cellarbrain.toml` (see [Settings Reference](settings-reference.md#ingestconfig))
+- Store IMAP credentials via `cellarbrain ingest --setup` or set `CELLARBRAIN_IMAP_USER` and `CELLARBRAIN_IMAP_PASSWORD` environment variables
+
+### How It Works
+
+1. Connects to the IMAP server and searches for unread messages matching the subject filter
+2. Groups messages into batches by timestamp (all 3 files within `batch_window` seconds)
+3. For complete batches: extracts attachments, writes a snapshot folder (`raw/YYMMDD-HHMM/`), flushes top-level `raw/*.csv`
+4. Invokes `cellarbrain etl` as a subprocess
+5. Marks processed emails as read (or moves them to a configured folder)
+6. In daemon mode, sleeps for `poll_interval` seconds and repeats. On transient errors, applies exponential backoff (up to 10 minutes)
+
+### macOS Deployment
+
+For always-on operation, deploy as a `launchd` user agent. See the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for the plist template.

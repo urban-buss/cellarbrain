@@ -13,16 +13,16 @@ from pathlib import Path
 from . import SmokeConfig
 from .discover import discover_raw_folders, get_environment, validate_folder
 from .report import generate_report, write_report
-from .runner import clean_output, run_etl, run_pytest, rebuild_server
+from .runner import clean_output, rebuild_server, run_etl, run_pytest
 from .verify import (
+    check_cross_run,
+    check_dossier_integrity,
     check_dossiers,
     check_entity_counts,
     check_etl_runs,
+    check_fk_integrity,
     check_parquet_files,
     check_wine_schema,
-    check_cross_run,
-    check_fk_integrity,
-    check_dossier_integrity,
     run_validation,
 )
 
@@ -34,27 +34,39 @@ def main(argv: list[str] | None = None) -> int:
         description="Run ETL smoke tests and generate a report.",
     )
     parser.add_argument(
-        "--raw-dir", type=Path, default=Path("raw"),
+        "--raw-dir",
+        type=Path,
+        default=Path("raw"),
         help="Directory containing YYMMDD raw CSV folders (default: raw)",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("output"),
+        "--output-dir",
+        type=Path,
+        default=Path("output"),
         help="ETL output directory (default: output)",
     )
     parser.add_argument(
-        "--report-dir", type=Path, default=Path("smoke-reports"),
+        "--report-dir",
+        type=Path,
+        default=Path("smoke-reports"),
         help="Directory for report output (default: smoke-reports)",
     )
     parser.add_argument(
-        "--folders", type=str, default=None,
+        "--folders",
+        type=str,
+        default=None,
         help="Comma-separated list of YYMMDD folders (default: auto-discover)",
     )
     parser.add_argument(
-        "--trigger", type=str, default="py -m tests.smoke_helpers",
+        "--trigger",
+        type=str,
+        default="py -m tests.smoke_helpers",
         help="Description of what triggered this run",
     )
     parser.add_argument(
-        "--settings-file", type=str, default=None,
+        "--settings-file",
+        type=str,
+        default=None,
         help="Path to cellarbrain TOML settings file",
     )
 
@@ -75,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = None
     if args.settings_file:
         from cellarbrain.settings import load_settings
+
         settings = load_settings(args.settings_file)
 
     # --- Discover folders ---
@@ -118,8 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         mode = "sync" if sync else "full load"
         print(f"--- Run {i + 1}: {folder} ({mode}) ---")
         result = run_etl(
-            args.raw_dir, folder, args.output_dir,
-            sync=sync, settings=settings,
+            args.raw_dir,
+            folder,
+            args.output_dir,
+            sync=sync,
+            settings=settings,
         )
         runs.append(result)
         ok_str = "OK" if result.exit_ok else "FAIL"
@@ -173,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     if rebuild_result.ok:
         print(f"  Server rebuilt: {rebuild_result.exe_path}")
         from .mcp_checks import run_mcp_checks
+
         mcp_checks = run_mcp_checks(rebuild_result.exe_path, args.output_dir)
         for check in mcp_checks:
             status = "PASS" if check.passed else "FAIL"
@@ -180,16 +197,22 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"  [FAIL] Server rebuild failed: {rebuild_result.output[:200]}")
         from . import CheckResult
-        mcp_checks = [CheckResult(
-            name="Server rebuild",
-            passed=False,
-            details=rebuild_result.output[:200],
-        )]
+
+        mcp_checks = [
+            CheckResult(
+                name="Server rebuild",
+                passed=False,
+                details=rebuild_result.output[:200],
+            )
+        ]
     print()
 
     # --- Report ---
     report_content = generate_report(
-        config, runs, output_checks, cross_checks,
+        config,
+        runs,
+        output_checks,
+        cross_checks,
         trigger=args.trigger,
         pytest_result=pytest_result,
         integrity_checks=integrity_checks,
