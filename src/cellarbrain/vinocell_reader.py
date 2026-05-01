@@ -135,7 +135,7 @@ def _read_csv(
         raise FileNotFoundError(
             f"CSV file not found: {path}. Check the file path and ensure the CSV export exists."
         ) from None
-    except UnicodeDecodeError as exc:
+    except UnicodeError as exc:
         raise ValueError(
             f"Cannot read {p.name}: encoding is not {encoding}. Is this a valid wine cellar CSV export? (Detail: {exc})"
         ) from exc

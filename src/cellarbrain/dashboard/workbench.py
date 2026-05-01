@@ -122,13 +122,14 @@ def _type_label(annotation: object) -> str:
             return base + "?"
         return s
     origin = getattr(annotation, "__origin__", None)
-    if origin is not None:
-        args = getattr(annotation, "__args__", ())
+    args = getattr(annotation, "__args__", ())
+    if origin is not None or args:
         if type(None) in args:
             non_none = [a for a in args if a is not type(None)]
             if len(non_none) == 1:
                 return _type_label(non_none[0]) + "?"
-        return str(annotation)
+        if origin is not None:
+            return str(annotation)
     if annotation is str:
         return "str"
     if annotation is int:
