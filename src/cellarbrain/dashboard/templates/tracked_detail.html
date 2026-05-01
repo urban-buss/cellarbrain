@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% set active_nav = "tracked" %}
+
+{% block page_title %}Tracked: {{ wine.wine_name }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" style="font-size:0.85rem; margin-bottom:1rem;">
+    <a href="/tracked">← Tracked Wines</a>
+</nav>
+
+<div style="display:grid; grid-template-columns:2fr 1fr; gap:1.5rem; margin-bottom:1.5rem;">
+    <div>
+        <h5 style="margin-bottom:0.5rem;">{{ wine.wine_name }}</h5>
+        <p style="font-size:0.85rem; color:var(--pico-muted-color); margin-bottom:0.25rem;">
+            {{ wine.winery_name or "" }}
+            {% if wine.region %} &mdash; {{ wine.region }}{% endif %}
+            {% if wine.country %}, {{ wine.country }}{% endif %}
+        </p>
+    </div>
+    <div>
+        <table style="font-size:0.85rem;">
+            <tbody>
+                <tr><td><strong>Category</strong></td><td>{{ wine.category or "—" }}</td></tr>
+                <tr><td><strong>Classification</strong></td><td>{{ wine.classification or "—" }}</td></tr>
+                <tr><td><strong>Subregion</strong></td><td>{{ wine.subregion or "—" }}</td></tr>
+                <tr><td><strong>Wines in cellar</strong></td><td>{{ wine.wine_count or 0 }}</td></tr>
+                <tr><td><strong>Bottles stored</strong></td><td>{{ wine.bottles_stored or 0 }}</td></tr>
+                <tr><td><strong>On order</strong></td><td>{{ wine.bottles_on_order or 0 }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if prices_chart %}
+<h6>Price History</h6>
+<div class="chart-container" style="height:250px; margin-bottom:1.5rem;">
+    <canvas id="price-chart"></canvas>
+</div>
+<script>
+(function() {
+    var rawData = {{ prices_chart|tojson }};
+    // Group by retailer
+    var retailers = {};
+    rawData.forEach(function(d) {
+        if (!retailers[d.retailer]) retailers[d.retailer] = [];
+        retailers[d.retailer].push({x: d.month, y: d.avg_price});
+    });
+    var datasets = [];
+    var colors = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6'];
+    var i = 0;
+    for (var r in retailers) {
+        datasets.push({
+            label: r,
+            data: retailers[r],
+            borderColor: colors[i % colors.length],
+            fill: false,
+            tension: 0.3,
+        });
+        i++;
+    }
+    renderLineChart('price-chart', datasets);
+})();
+</script>
+{% endif %}
+
+{% if prices_table %}
+<h6>Price Observations</h6>
+<div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Retailer</th>
+                <th>Vintage</th>
+                <th style="text-align:right;">Price</th>
+                <th style="text-align:right;">CHF</th>
+                <th>In Stock</th>
+                <th>Source</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in prices_table %}
+            <tr>
+                <td class="mono">{{ p.observed_at or "" }}</td>
+                <td>{{ p.retailer }}</td>
+                <td>{{ p.vintage or "" }}</td>
+                <td style="text-align:right;">{{ p.price or "" }} {{ p.currency or "" }}</td>
+                <td style="text-align:right;">{{ p.price_chf or "" }}</td>
+                <td>
+                    {% if p.in_stock %}
+                    <span class="badge badge-ok">Yes</span>
+                    {% else %}
+                    <span class="badge badge-error">No</span>
+                    {% endif %}
+                </td>
+                <td>{{ p.observation_source or "" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if companion %}
+<h6 style="margin-top:1.5rem;">Companion Dossier</h6>
+{% for section in companion.sections %}
+{% if section.populated %}
+<details open style="margin-bottom:0.75rem;">
+    <summary><strong>{{ section.heading }}</strong></summary>
+    <div>{{ section.html|safe }}</div>
+</details>
+{% else %}
+<details style="margin-bottom:0.75rem;">
+    <summary style="color:var(--pico-muted-color);">{{ section.heading }}</summary>
+    <p style="font-size:0.85rem; color:var(--pico-muted-color);">Not yet populated.</p>
+</details>
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endblock %}

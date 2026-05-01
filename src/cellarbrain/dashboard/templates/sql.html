@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active_nav = "sql" %}
+
+{% block page_title %}SQL Playground{% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    Connection: agent (views only) &mdash; read-only SELECT queries
+</p>
+
+<form hx-post="/sql" hx-target="#results" hx-swap="innerHTML">
+    <div style="display:flex; gap:0.5rem; align-items:flex-end; margin-bottom:0.5rem;">
+        <div style="flex:1;">
+            <textarea name="sql" id="sql-input" rows="6"
+                      style="font-family:monospace; font-size:0.85rem; resize:vertical;"
+                      placeholder="SELECT * FROM wines LIMIT 20">{{ sql }}</textarea>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+            <label style="font-size:0.75rem; margin:0;">Max rows</label>
+            <input type="number" name="max_rows" value="{{ max_rows }}"
+                   min="1" max="1000" style="width:5rem; font-size:0.85rem;">
+            <button type="submit" class="contrast" style="font-size:0.85rem;">Run ▶</button>
+            <button type="button" class="outline secondary" style="font-size:0.85rem;"
+                    onclick="document.getElementById('sql-input').value=''">Clear</button>
+        </div>
+    </div>
+</form>
+
+<div id="results">
+    {% include "partials/sql_results.html" %}
+</div>
+
+<details open style="margin-top:1.5rem;">
+    <summary><strong>Quick Queries</strong></summary>
+    <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.5rem;">
+        {% for qq in quick_queries %}
+        <button class="outline secondary" style="font-size:0.75rem; padding:0.2rem 0.6rem;"
+                onclick="document.getElementById('sql-input').value={{ qq.sql|tojson }};
+                         htmx.trigger(document.querySelector('form'), 'submit');">
+            {{ qq.label }}
+        </button>
+        {% endfor %}
+    </div>
+</details>
+
+<details style="margin-top:1rem;">
+    <summary><strong>Available Views</strong></summary>
+    <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.5rem;">
+        {% for v in views %}
+        <span class="badge" style="cursor:pointer; background:var(--pico-card-background-color); border:1px solid var(--pico-muted-border-color);"
+              onclick="document.getElementById('sql-input').value='SELECT * FROM {{ v }} LIMIT 20';
+                       htmx.trigger(document.querySelector('form'), 'submit');">
+            {{ v }}
+        </span>
+        {% endfor %}
+    </div>
+</details>
+{% endblock %}

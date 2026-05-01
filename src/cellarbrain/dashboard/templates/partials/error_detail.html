@@ -1,0 +1,17 @@
+{% if event %}
+<td colspan="6">
+    <details open>
+        <summary>Event {{ event.event_id }}</summary>
+        <table>
+            {% for key, val in event.items() %}
+            <tr>
+                <td><strong>{{ key }}</strong></td>
+                <td class="mono">{{ val }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </details>
+</td>
+{% else %}
+<td colspan="6"><em>Event not found.</em></td>
+{% endif %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set active_nav = "latency" %}
+
+{% block title %}Latency — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Latency Analysis{% endblock %}
+
+{% block content %}
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="value">{{ percentiles.p50 or "—" }}</div>
+        <div class="label">P50 (ms)</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ percentiles.p95 or "—" }}</div>
+        <div class="label">P95 (ms)</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ percentiles.p99 or "—" }}</div>
+        <div class="label">P99 (ms)</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ percentiles.max or "—" }}</div>
+        <div class="label">Max (ms)</div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+    <div>
+        <h5>Latency Distribution</h5>
+        <div class="chart-container">
+            <canvas id="histChart"></canvas>
+        </div>
+    </div>
+    <div>
+        <h5>P50 / P95 Over Time</h5>
+        <div class="chart-container">
+            <canvas id="tsChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<h5>Slow Calls (&gt; 2s)</h5>
+{% if slow_calls %}
+<table>
+    <thead><tr><th>Time</th><th>Tool</th><th>Duration (ms)</th></tr></thead>
+    <tbody>
+    {% for s in slow_calls %}
+    <tr>
+        <td class="mono">{{ s.started_at.strftime("%H:%M:%S") if s.started_at else "—" }}</td>
+        <td>{{ s.name }}</td>
+        <td>{{ s.duration_ms }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No slow calls in this period.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    var toolParam = '{{ tool_filter or "" }}';
+    var toolQs = toolParam ? '&tool=' + encodeURIComponent(toolParam) : '';
+    renderHistogram('histChart', '/api/latency-hist?period={{ period }}' + toolQs);
+    renderLatencyChart('tsChart', '/api/latency-ts?period={{ period }}' + toolQs);
+</script>
+{% endblock %}

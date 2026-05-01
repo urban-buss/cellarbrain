@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Error — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Error{% endblock %}
+
+{% block content %}
+<article style="text-align:center; padding:3rem 1rem;">
+    <h2>⚠ {{ status_code|default('Error') }}</h2>
+    <p>{{ message }}</p>
+    <a href="/" role="button" class="outline">← Back to Dashboard</a>
+</article>
+{% endblock %}

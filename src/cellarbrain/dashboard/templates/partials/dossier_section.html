@@ -1,0 +1,8 @@
+<div class="dossier-section" id="{{ section.slug }}">
+    <h3>{{ section.heading }}</h3>
+    {% if section.populated %}
+    {{ section.html | safe }}
+    {% else %}
+    <p style="color:var(--pico-muted-color); font-style:italic;">Not yet populated.</p>
+    {% endif %}
+</div>

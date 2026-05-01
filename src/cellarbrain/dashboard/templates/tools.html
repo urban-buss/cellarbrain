@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% set active_nav = "tools" %}
+
+{% block title %}Tool Usage — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Tool Usage{% endblock %}
+
+{% block content %}
+<div id="tool-table">
+    <table>
+        <thead>
+            <tr>
+                <th><a hx-get="/tools?period={{ period }}&sort=event_type&dir=asc" hx-target="#tool-table" hx-push-url="false">Type</a></th>
+                <th><a hx-get="/tools?period={{ period }}&sort=name&dir=asc" hx-target="#tool-table" hx-push-url="false">Name</a></th>
+                <th><a hx-get="/tools?period={{ period }}&sort=calls&dir=desc" hx-target="#tool-table" hx-push-url="false">Calls</a></th>
+                <th><a hx-get="/tools?period={{ period }}&sort=avg_ms&dir=desc" hx-target="#tool-table" hx-push-url="false">Avg (ms)</a></th>
+                <th><a hx-get="/tools?period={{ period }}&sort=p95_ms&dir=desc" hx-target="#tool-table" hx-push-url="false">P95 (ms)</a></th>
+                <th><a hx-get="/tools?period={{ period }}&sort=errors&dir=desc" hx-target="#tool-table" hx-push-url="false">Errors</a></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% include "partials/tool_rows.html" %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

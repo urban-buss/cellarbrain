@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% set active_nav = "live" %}
+
+{% block title %}Live Tail — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Live Tail{% endblock %}
+
+{% block content %}
+<div class="live-toolbar">
+    <span class="status-dot connected" id="sse-status"></span>
+    <span style="font-size:0.75rem;" id="sse-status-label">Connected</span>
+
+    <select id="filter-type" onchange="reconnectSSE()">
+        <option value="">All types</option>
+        <option value="tool_call">tool_call</option>
+        <option value="resource_read">resource_read</option>
+    </select>
+    <select id="filter-status" onchange="reconnectSSE()">
+        <option value="">All status</option>
+        <option value="ok">ok</option>
+        <option value="error">error</option>
+    </select>
+
+    <button class="outline" id="btn-pause" onclick="togglePause()">Pause</button>
+    <button class="outline" id="btn-clear" onclick="clearEvents()">Clear</button>
+    <span style="font-size:0.75rem; color:var(--pico-muted-color);" id="event-counter">0 events</span>
+</div>
+
+<div id="live-container"
+     style="max-height:70vh; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:4px;">
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+    var container = document.getElementById('live-container');
+    var counterEl = document.getElementById('event-counter');
+    var statusDot = document.getElementById('sse-status');
+    var statusLabel = document.getElementById('sse-status-label');
+    var btnPause = document.getElementById('btn-pause');
+    var paused = false;
+    var eventSource = null;
+    var count = 0;
+
+    function buildUrl() {
+        var url = '/api/live';
+        var params = [];
+        var ft = document.getElementById('filter-type').value;
+        var fs = document.getElementById('filter-status').value;
+        if (ft) params.push('filter_type=' + ft);
+        if (fs) params.push('filter_status=' + fs);
+        if (params.length) url += '?' + params.join('&');
+        return url;
+    }
+
+    function setConnected(connected) {
+        statusDot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
+        statusLabel.textContent = connected ? 'Connected' : 'Disconnected';
+    }
+
+    function connect() {
+        if (eventSource) { eventSource.close(); }
+        eventSource = new EventSource(buildUrl());
+        setConnected(true);
+
+        eventSource.onmessage = function(e) {
+            if (paused) return;
+            container.insertAdjacentHTML('beforeend', e.data);
+            count++;
+            counterEl.textContent = count + ' events';
+            container.scrollTop = container.scrollHeight;
+        };
+        eventSource.onerror = function() {
+            setConnected(false);
+        };
+        eventSource.onopen = function() {
+            setConnected(true);
+        };
+    }
+
+    window.reconnectSSE = function() {
+        count = 0;
+        counterEl.textContent = '0 events';
+        container.innerHTML = '';
+        connect();
+    };
+
+    window.togglePause = function() {
+        paused = !paused;
+        btnPause.textContent = paused ? 'Resume' : 'Pause';
+    };
+
+    window.clearEvents = function() {
+        container.innerHTML = '';
+        count = 0;
+        counterEl.textContent = '0 events';
+    };
+
+    connect();
+})();
+</script>
+{% endblock %}

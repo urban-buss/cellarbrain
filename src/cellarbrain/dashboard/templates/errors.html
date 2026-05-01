@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set active_nav = "errors" %}
+
+{% block title %}Errors — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Error Log{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+    {% if type_summary %}
+    <details style="flex:1; margin-right:1rem;">
+        <summary>Error Type Summary ({{ type_summary | length }} types)</summary>
+        <table>
+            <thead><tr><th>Error Type</th><th>Count</th></tr></thead>
+            <tbody>
+            {% for ts in type_summary %}
+            <tr>
+                <td>{{ ts.error_type or "Unknown" }}</td>
+                <td>{{ ts.count }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% else %}
+    <span></span>
+    {% endif %}
+    <button id="copy-errors-btn" class="outline secondary" style="font-size:0.75rem; padding:0.3rem 0.8rem; white-space:nowrap;"
+            onclick="copyErrorLog()">
+        📋 Copy for LLM
+    </button>
+</div>
+
+<div id="error-table">
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Tool</th>
+                <th>Error Type</th>
+                <th>Message</th>
+                <th>Duration</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% include "partials/error_rows.html" %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+async function copyErrorLog() {
+    const btn = document.getElementById('copy-errors-btn');
+    const params = new URLSearchParams(window.location.search);
+    try {
+        const resp = await fetch('/errors/export?' + params.toString());
+        const text = await resp.text();
+        await navigator.clipboard.writeText(text);
+        btn.textContent = '✓ Copied!';
+        setTimeout(() => { btn.textContent = '📋 Copy for LLM'; }, 2000);
+    } catch (err) {
+        btn.textContent = '✗ Failed';
+        setTimeout(() => { btn.textContent = '📋 Copy for LLM'; }, 2000);
+    }
+}
+</script>
+{% endblock %}

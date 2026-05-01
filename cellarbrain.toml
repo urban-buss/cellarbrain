@@ -1,0 +1,294 @@
+# cellarbrain.toml — configuration for the cellarbrain CLI and MCP server
+# All values shown are the built-in defaults.
+# Delete or comment out any section you don't need to customize.
+
+# --- Cellar Classification Rules -------------------------------------------
+# Ordered list of rules. First matching rule wins.
+# Patterns use fnmatch glob syntax (*, ?, [abc], [!abc]).
+# Exact cellar names work as patterns too (they match only themselves).
+# classification: "onsite" | "offsite" | "in_transit"
+#
+# If no rule matches a cellar name, the default is "onsite".
+# NOTE: cellar_rules and offsite_cellars/in_transit_cellars are mutually
+#       exclusive — use one or the other, not both.
+#
+# [[cellar_rules]]
+# pattern = "03*"
+# classification = "offsite"
+#
+# [[cellar_rules]]
+# pattern = "99*"
+# classification = "in_transit"
+
+# --- Paths & Directories ---------------------------------------------------
+[paths]
+data_dir = "output"         # base directory for all generated output
+raw_dir = "raw"             # directory containing Vinocell CSV exports
+wines_subdir = "wines"      # under data_dir
+cellar_subdir = "cellar"    # under wines_subdir — active wines
+archive_subdir = "archive"  # under wines_subdir — consumed / removed wines
+
+# --- CSV Import -------------------------------------------------------------
+[csv]
+encoding = "utf-16"
+delimiter = "\t"
+
+# --- Price Tiers ------------------------------------------------------------
+# Ordered list — first tier whose `max` >= price wins.
+# Last tier may omit `max` (catches everything above previous tier).
+# Wines without price data → "unknown".
+[[price_tiers]]
+label = "budget"
+max = 15
+
+[[price_tiers]]
+label = "everyday"
+max = 27
+
+[[price_tiers]]
+label = "premium"
+max = 40
+
+[[price_tiers]]
+label = "fine"
+# no max — everything above 40
+
+# --- Query & MCP Defaults --------------------------------------------------
+[query]
+row_limit = 200        # max rows returned by query_cellar
+search_limit = 10      # default find_wine results
+pending_limit = 20     # default pending_research results
+
+# --- Display & Formatting ---------------------------------------------------
+[display]
+null_char = "—"                          # shown in tables for empty values
+separator = "·"                          # inline separator in subtitle
+date_format = "%d.%m.%Y"                # EU date format
+tasting_date_format = "%d %B %Y"        # long-form tasting note date
+timestamp_format = "%Y-%m-%d %H:%M UTC" # agent log timestamps
+
+# --- Logging ----------------------------------------------------------------
+[logging]
+level = "WARNING"                        # DEBUG | INFO | WARNING | ERROR
+# log_file = "logs/cellarbrain.log"      # uncomment to enable file logging
+# max_bytes = 5242880                    # 5 MB per rotated file
+# backup_count = 3                       # keep 3 rotated backups
+# format = "json"                        # "json" for structured JSON log lines
+# turn_gap_seconds = 2.0                 # idle gap before new turn ID (MCP)
+# slow_threshold_ms = 2000.0             # warn when tool exceeds this latency
+# log_db = "output/logs/cellarbrain-logs.duckdb"  # explicit log store path
+# retention_days = 90                    # auto-prune events older than this
+
+# --- Backup & Restore -------------------------------------------------------
+[backup]
+backup_dir = "bkp"                       # directory for backup archives
+max_backups = 5                          # retention: keep N most recent
+include_sommelier = false                # include sommelier indexes in backup
+include_logs = false                     # include log databases in backup
+
+# --- Drinking Window Indicators ---------------------------------------------
+# Plain text labels — no emoji. Used in dossiers and query output.
+[drinking_window]
+too_young = "Too young"
+drinkable = "Drinkable, not yet optimal"
+optimal = "In optimal window"
+past_optimal = "Past optimal, still drinkable"
+past_window = "Past drinking window"
+unknown = "No drinking window data"
+
+# --- Dossier Generation -----------------------------------------------------
+[dossier]
+filename_format = "{wine_id:04d}-{slug}.md"
+slug_max_length = 60
+max_full_name_length = 80
+output_encoding = "utf-8"
+
+# --- Agent Sections ---------------------------------------------------------
+# Ordered list of sections preserved across ETL runs in dossier files.
+# Pure sections (mixed = false) are fully agent-owned.
+# Mixed sections (mixed = true) contain both ETL and agent content.
+[[agent_sections]]
+key = "producer_profile"
+heading = "Producer Profile"
+tag = "agent:research"
+
+[[agent_sections]]
+key = "vintage_report"
+heading = "Vintage Report"
+tag = "agent:research"
+
+[[agent_sections]]
+key = "wine_description"
+heading = "Wine Description"
+tag = "agent:research"
+
+[[agent_sections]]
+key = "market_availability"
+heading = "Market & Availability"
+tag = "agent:research"
+
+[[agent_sections]]
+key = "similar_wines"
+heading = "Similar Wines"
+tag = "agent:recommendation"
+
+[[agent_sections]]
+key = "agent_log"
+heading = "Agent Log"
+tag = "agent"
+
+[[agent_sections]]
+key = "ratings_reviews"
+heading = "From Research"
+tag = "agent:research"
+mixed = true
+
+[[agent_sections]]
+key = "tasting_notes"
+heading = "Community Tasting Notes"
+tag = "agent:research"
+mixed = true
+
+[[agent_sections]]
+key = "food_pairings"
+heading = "Recommended Pairings"
+tag = "agent:research"
+mixed = true
+
+# --- Classification Short Forms ---------------------------------------------
+# Maps raw classification strings → short form for full_name display.
+# Classifications NOT listed here are omitted from full_name.
+[classification_short]
+# France
+"1er Cru" = "1er Cru"
+"1er Cru Supérieur" = "1er Cru Supérieur"
+"1er Grand Cru Classé" = "1er Grand Cru Classé"
+"1er Grand Cru Classé A" = "1er Grand Cru Classé A"
+"2ème Grand Cru Classé" = "2ème Grand Cru Classé"
+"3ème Grand Cru Classé" = "3ème Grand Cru Classé"
+"4ème Grand Cru Classé" = "4ème Grand Cru Classé"
+"5ème Grand Cru Classé" = "5ème Grand Cru Classé"
+"Grand Cru Classé" = "Grand Cru Classé"
+"Grand Cru" = "Grand Cru"
+"Cru Bourgeois" = "Cru Bourgeois"
+"Cru Bourgeois Supérieur" = "Cru Bourgeois Supérieur"
+"Cru Bourgeois Exceptionnel" = "Cru Bourgeois Exceptionnel"
+"Cru Artisan" = "Cru Artisan"
+"Cru Classé" = "Cru Classé"
+# Italy
+"DOP / DOC Riserva" = "Riserva"
+"DOP / DOC Superiore" = "Superiore"
+"DOP / DOC Superiore Riserva" = "Superiore Riserva"
+"DOCG Riserva" = "Riserva"
+"DOCG Superiore" = "Superiore"
+"DOCG Superiore Riserva" = "Superiore Riserva"
+"DOCG Dolce Naturale" = "Dolce Naturale"
+"Gran Selezione" = "Gran Selezione"
+# Spain
+"DOCa Crianza" = "Crianza"
+"DOCa Reserva" = "Reserva"
+"DOCa Gran Reserva" = "Gran Reserva"
+"DOCa Joven" = "Joven"
+"DO Crianza" = "Crianza"
+"DO Reserva" = "Reserva"
+"DO Gran Reserva" = "Gran Reserva"
+"DO Joven" = "Joven"
+"DOP / DO de Pago" = "Pago"
+"DOP / DO de Pago Calificado" = "Pago Calificado"
+"Vino de Pago" = "Pago"
+"VOS" = "VOS"
+"VORS" = "VORS"
+# Germany — Prädikat levels
+"Kabinett" = "Kabinett"
+"Spätlese" = "Spätlese"
+"Auslese" = "Auslese"
+"Beerenauslese" = "Beerenauslese"
+"Eiswein" = "Eiswein"
+"Trockenbeerenauslese" = "Trockenbeerenauslese"
+"Erstes Gewächs" = "Erstes Gewächs"
+"Einzellage" = "Einzellage"
+# Germany — VDP
+"VDP.Große Lage" = "Große Lage"
+"VDP.Erste Lage" = "Erste Lage"
+"VDP.Großes Gewächs" = "Großes Gewächs"
+"VDP.Gutswein" = "Gutswein"
+"VDP.Ortswein" = "Ortswein"
+"VDP.Aus Ersten Lagen" = "Aus Ersten Lagen"
+"VDP.Sekt" = "Sekt"
+"VDP.Sekt Prestige" = "Sekt Prestige"
+# Austria — Wachau
+"Steinfeder" = "Steinfeder"
+"Federspiel" = "Federspiel"
+"Smaragd" = "Smaragd"
+# Austria — DAC & vineyard classifications
+"DAC - Reserve" = "DAC Reserve"
+"Große STK Lage" = "Große STK Lage"
+"Erste STK Lage" = "Erste STK Lage"
+"ÖTW Erste Lage" = "ÖTW Erste Lage"
+"Ortswein" = "Ortswein"
+"Riedenwein" = "Riedenwein"
+# Austria — sweet wine & sparkling
+"Ausbruch" = "Ausbruch"
+"Strohwein / Schilfwein" = "Strohwein"
+"Sekt - Klassik" = "Sekt Klassik"
+"Sekt - Reserve" = "Sekt Reserve"
+"Sekt - Große Reserve" = "Sekt Große Reserve"
+# Switzerland
+"Premier Cru" = "Premier Cru"
+"Premier Grand Cru" = "Premier Grand Cru"
+# New World (Argentina, Chile)
+"Reserva" = "Reserva"
+"Gran Reserva" = "Gran Reserva"
+"Reserva Especial" = "Reserva Especial"
+"Reserva Privada" = "Reserva Privada"
+
+# --- ETL Defaults -----------------------------------------------------------
+[etl]
+default_mode = "full"
+etl_fence_start = "<!-- source: etl — do not edit below this line -->"
+etl_fence_end = "<!-- source: etl — end -->"
+
+# --- Search Synonyms --------------------------------------------------------
+# Maps query tokens to stored-data equivalents for multi-language search.
+# Built-in defaults cover ~82 DE→EN/stored mappings (countries, grapes, etc.).
+# TOML entries merge with defaults — add overrides or new terms here.
+# Agents can also manage custom synonyms at runtime via the search_synonyms tool.
+[search.synonyms]
+# Examples (already in defaults):
+# schweiz = "Switzerland"         # DE country → stored value
+# rotwein = "red"                 # DE category → stored category
+# spätburgunder = "Pinot Noir"   # DE grape → international name
+# weingut = ""                    # stopword (empty string → token dropped)
+
+# --- Currency Normalisation -------------------------------------------------
+# All prices are normalised to the default currency for aggregation.
+# Exchange rates: 1 unit of foreign currency = X units of default currency.
+# Rates are fixed (not live). Update manually when needed.
+[currency]
+default = "CHF"
+
+[currency.rates]
+EUR = 0.93
+USD = 0.88
+GBP = 1.11
+AUD = 0.56
+CAD = 0.62
+RON = 0.19
+
+# --- Sommelier (AI Food-Wine Pairing) --------------------------------------
+# Requires optional dependencies: pip install cellarbrain[sommelier]
+# [sommelier]
+# enabled = false                          # enable sommelier features
+# model_dir = "models/sommelier/model"     # trained model weights directory
+# base_model = "models/sommelier/base-model"  # local path to base model
+# food_catalogue = "models/sommelier/food_catalogue.parquet"
+# pairing_dataset = "models/sommelier/pairing_dataset.parquet"
+# food_index = "models/sommelier/food.index"
+# food_ids = "models/sommelier/food_ids.json"
+# wine_index_dir = "sommelier"             # subdir under data_dir for wine index
+# default_limit = 10                       # default result count
+# min_score = 0.0                          # minimum similarity threshold
+# training_epochs = 10                     # fine-tuning epochs
+# training_batch_size = 32                 # training batch size
+# warmup_ratio = 0.1                       # warmup fraction of training steps
+# eval_split = 0.1                         # hold-out fraction for evaluation

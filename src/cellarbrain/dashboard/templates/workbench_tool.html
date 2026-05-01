@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% set active_nav = "workbench" %}
+
+{% block page_title %}{{ tool.name }}{% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    {{ tool.description }}
+    {% if tool.is_write %}<span class="badge badge-error">⚠ write tool</span>{% endif %}
+    &mdash; Category: {{ tool.category }}
+</p>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+    <!-- Left: form -->
+    <div>
+        <form hx-post="/workbench/{{ tool.name }}" hx-target="#response" hx-swap="innerHTML">
+            {% for p in tool.parameters %}
+            <label style="font-size:0.85rem;">
+                {{ p.name }}
+                {% if p.required %}<span style="color:var(--pico-del-color);">*</span>{% endif %}
+                <span style="font-size:0.75rem; color:var(--pico-muted-color);">({{ p.type }})</span>
+            </label>
+            {% if p.type == 'bool' or p.type == 'bool?' %}
+            <fieldset>
+                <label><input type="checkbox" name="{{ p.name }}" value="true"
+                    {% if p.default %}checked{% endif %}> Enable</label>
+            </fieldset>
+            {% elif p.type == 'int' or p.type == 'int?' %}
+            <input type="number" name="{{ p.name }}"
+                   {% if p.default is not none %}value="{{ p.default }}"{% endif %}
+                   placeholder="{{ p.default if p.default is not none else '' }}"
+                   style="font-family:monospace; font-size:0.85rem;">
+            {% elif p.type == 'float' or p.type == 'float?' %}
+            <input type="number" step="0.1" name="{{ p.name }}"
+                   {% if p.default is not none %}value="{{ p.default }}"{% endif %}
+                   placeholder="{{ p.default if p.default is not none else '' }}"
+                   style="font-family:monospace; font-size:0.85rem;">
+            {% else %}
+            <input type="text" name="{{ p.name }}"
+                   {% if p.default is not none %}value="{{ p.default }}"{% endif %}
+                   placeholder="{{ p.default if p.default is not none else '' }}"
+                   style="font-family:monospace; font-size:0.85rem;">
+            {% endif %}
+            {% endfor %}
+
+            <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+                <button type="submit" class="contrast" style="font-size:0.85rem;">Run ▶</button>
+                <button type="reset" class="outline secondary" style="font-size:0.85rem;">Reset</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Right: response -->
+    <div>
+        <div id="response">
+            {% if result %}
+                {% include "partials/workbench_response.html" %}
+            {% else %}
+                <p style="font-size:0.85rem; color:var(--pico-muted-color);">
+                    Fill in the parameters and click <strong>Run</strong> to execute this tool.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div style="margin-top:1.5rem;">
+    <a href="/workbench" style="font-size:0.85rem;">← Back to tool list</a>
+</div>
+
+<script src="/static/workbench.js"></script>
+{% endblock %}

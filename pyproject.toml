@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellarbrain"
+version = "0.2.0"
+description = "AI sommelier for your wine cellar — ETL pipeline, DuckDB query layer, Markdown dossiers, and MCP server for wine cellar CSV exports"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Urban Busslinger", email = "urbanb@me.com" },
+]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Database",
+    "Environment :: Console",
+]
+dependencies = [
+    "pyarrow>=15.0",
+    "duckdb>=0.10",
+    "pandas>=2.0",
+    "tabulate>=0.9",
+    "mcp[cli]>=1.2.0",
+]
+
+[project.optional-dependencies]
+research = [
+    "httpx>=0.27",
+]
+sommelier = [
+    "sentence-transformers>=3.0",
+    "faiss-cpu>=1.7",
+    "datasets>=2.0",
+    "accelerate>=1.1.0",
+]
+dashboard = [
+    "starlette>=0.36",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
+    "markdown>=3.5",
+    "pyyaml>=6.0",
+    "pytz>=2024.1",
+]
+ingest = [
+    "imapclient>=3.0",
+    "keyring>=25.0",
+]
+dev = [
+    "pytest",
+    "ruff>=0.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/urban-buss/cellarbrain"
+Issues = "https://github.com/urban-buss/cellarbrain/issues"
+Changelog = "https://github.com/urban-buss/cellarbrain/blob/main/CHANGELOG.md"
+
+[project.scripts]
+cellarbrain = "cellarbrain.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests"]
+extend-exclude = ["models", "scripts", "bkp"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes (undefined names, unused imports, etc.)
+    "I",      # isort (import sorting)
+    "UP",     # pyupgrade (modern Python syntax)
+    "B",      # flake8-bugbear (common bug patterns)
+    "SIM",    # flake8-simplify (simplifiable constructs)
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",   # line length — handled by formatter, not linter
+    "E741",   # ambiguous variable name — `l` for "line" is idiomatic in this codebase
+    "B008",   # function call in default argument (needed for MCP patterns)
+    "B905",   # zip() without strict= — too noisy for existing code
+    "SIM105", # contextlib.suppress — not always more readable than try/except/pass
+    "SIM108", # ternary operator — readability preference
+    "RUF001", # ambiguous unicode in string — wine names use accented/special chars
+    "RUF002", # ambiguous unicode in docstring — wine names use accented/special chars
+    "RUF003", # ambiguous unicode in comment — wine names use accented/special chars
+    "RUF005", # list concatenation vs unpacking — stylistic preference
+    "RUF015", # prefer next() over [0] — [0] is clear enough
+    "RUF043", # regex metacharacters in match= — intentional in pytest.raises
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cellarbrain"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "RUF012",  # mutable class defaults — common in test fixtures
+    "RUF059",  # unused unpacked variables — common in tests
+    "SIM117",  # nested with statements — readability in test context
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

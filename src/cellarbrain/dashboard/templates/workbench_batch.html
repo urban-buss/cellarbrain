@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_nav = "workbench_batch" %}
+
+{% block page_title %}Batch Runner{% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    Pre-built test sequences that invoke multiple tools in order.
+    <a href="/workbench">← Back to tool list</a>
+</p>
+
+<div style="display:grid; grid-template-columns:1fr 2fr; gap:1.5rem;">
+    <!-- Left: sequence list -->
+    <div>
+        <h5>Sequences</h5>
+        {% for seq in sequences %}
+        <article style="padding:0.75rem; margin-bottom:0.5rem;">
+            <strong>{{ seq.name }}</strong>
+            <br><span style="font-size:0.8rem; color:var(--pico-muted-color);">{{ seq.description }}</span>
+            <br><span style="font-size:0.75rem;">{{ seq.steps|length }} steps</span>
+            <form method="post" style="display:inline; margin:0;">
+                <input type="hidden" name="sequence" value="{{ seq.name }}">
+                <button type="submit" class="outline contrast" style="font-size:0.75rem; padding:0.15rem 0.5rem; margin-left:0.5rem;">
+                    Run ▶
+                </button>
+            </form>
+        </article>
+        {% endfor %}
+    </div>
+
+    <!-- Right: results -->
+    <div>
+        {% if results %}
+        <h5>Results: {{ selected.name }}</h5>
+        {% set ns = namespace(passed=0, total_ms=0) %}
+        {% for r in results %}
+            {% if r.status == 'ok' %}{% set ns.passed = ns.passed + 1 %}{% endif %}
+            {% set ns.total_ms = ns.total_ms + r.elapsed_ms %}
+        {% endfor %}
+
+        <div class="kpi-grid" style="margin-bottom:1rem;">
+            <div class="kpi-card">
+                <div class="value">{{ ns.passed }}/{{ results|length }}</div>
+                <div class="label">Passed</div>
+            </div>
+            <div class="kpi-card">
+                <div class="value">{{ ns.total_ms|round(1) }} ms</div>
+                <div class="label">Total Time</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Step</th>
+                    <th>Tool</th>
+                    <th>Status</th>
+                    <th>Time</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in results %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ r.step }}</td>
+                    <td class="mono" style="font-size:0.8rem;">{{ r.tool }}</td>
+                    <td>
+                        <span class="badge {% if r.status == 'ok' %}badge-ok{% else %}badge-error{% endif %}">
+                            {% if r.status == 'ok' %}✓{% else %}✗{% endif %}
+                        </span>
+                    </td>
+                    <td style="font-size:0.85rem;">{{ r.elapsed_ms }} ms</td>
+                    <td>
+                        <details>
+                            <summary style="font-size:0.75rem; cursor:pointer;">Show</summary>
+                            {% if r.error %}
+                            <article style="background:#fecaca; padding:0.5rem; border-radius:4px; font-size:0.8rem;">
+                                <strong>{{ r.error_type }}:</strong> {{ r.error }}
+                            </article>
+                            {% else %}
+                            <pre style="font-size:0.75rem; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto;">{{ r.result }}</pre>
+                            {% endif %}
+                        </details>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="font-size:0.85rem; color:var(--pico-muted-color);">
+            Select a sequence and click <strong>Run</strong> to execute it.
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
