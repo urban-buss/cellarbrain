@@ -1558,9 +1558,7 @@ async def pairing_candidates(
         limit: Maximum candidates to return (default 15).
     """
     return await anyio.to_thread.run_sync(
-        lambda: _pairing_candidates_sync(
-            dish_description, category, weight, protein, cuisine, grapes, limit
-        ),
+        lambda: _pairing_candidates_sync(dish_description, category, weight, protein, cuisine, grapes, limit),
     )
 
 
@@ -1649,10 +1647,7 @@ def _pair_wine_sync(dish: str, occasion: str | None, limit: int) -> str:
         return f"Error: {exc}"
 
     if not results:
-        return (
-            f'No wines found for "{dish}". '
-            "Your cellar may not have suitable wines in stock."
-        )
+        return f'No wines found for "{dish}". Your cellar may not have suitable wines in stock.'
 
     return pairing.format_explained(results, dish, classification, limit=limit)
 

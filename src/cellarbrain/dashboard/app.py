@@ -501,11 +501,7 @@ async def pairing_page(request: Request) -> HTMLResponse:
 
         from cellarbrain import pairing
 
-        grape_list = (
-            [g.strip() for g in params["grapes"].split(",")]
-            if params["grapes"]
-            else None
-        )
+        grape_list = [g.strip() for g in params["grapes"].split(",")] if params["grapes"] else None
         results = pairing.retrieve_candidates(
             con,
             dish_description=params["dish_description"],
@@ -517,9 +513,7 @@ async def pairing_page(request: Request) -> HTMLResponse:
             limit=15,
         )
 
-    template = (
-        "partials/pairing_results.html" if _wants_partial(request) else "pairing.html"
-    )
+    template = "partials/pairing_results.html" if _wants_partial(request) else "pairing.html"
     return _TEMPLATES.TemplateResponse(
         request,
         template,

@@ -1015,9 +1015,7 @@ class TestPairingCandidates:
 
     def test_returns_markdown_table(self, server):
         result = asyncio.run(
-            server.pairing_candidates(
-                dish_description="grilled steak", protein="red_meat", category="red"
-            )
+            server.pairing_candidates(dish_description="grilled steak", protein="red_meat", category="red")
         )
         # Should return either a table or no-results message
         assert "| Rank |" in result or "No pairing candidates" in result
@@ -1033,18 +1031,12 @@ class TestPairingCandidates:
         assert "No pairing candidates" in result
 
     def test_grape_param_comma_split(self, server):
-        result = asyncio.run(
-            server.pairing_candidates(
-                dish_description="pasta", grapes="Nebbiolo, Sangiovese"
-            )
-        )
+        result = asyncio.run(server.pairing_candidates(dish_description="pasta", grapes="Nebbiolo, Sangiovese"))
         # Should not error — grape splitting works
         assert "Error:" not in result
 
     def test_auto_classify_dish_only(self, server):
-        result = asyncio.run(
-            server.pairing_candidates(dish_description="grilled lamb chops")
-        )
+        result = asyncio.run(server.pairing_candidates(dish_description="grilled lamb chops"))
         # Should auto-classify and return results (not error or empty)
         assert "Error:" not in result
         # Should have found some wines (auto-classified as red_meat)
@@ -1071,15 +1063,11 @@ class TestPairWine:
         assert "Error:" not in result
 
     def test_with_occasion(self, server):
-        result = asyncio.run(
-            server.pair_wine(dish="raclette", occasion="casual dinner")
-        )
+        result = asyncio.run(server.pair_wine(dish="raclette", occasion="casual dinner"))
         assert "Error:" not in result
 
     def test_limit_parameter(self, server):
-        result = asyncio.run(
-            server.pair_wine(dish="grilled steak", limit=2)
-        )
+        result = asyncio.run(server.pair_wine(dish="grilled steak", limit=2))
         assert "Error:" not in result
         if "Top Pairing Recommendations" in result:
             # Count wine_id occurrences — should be at most 2

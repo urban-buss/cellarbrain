@@ -233,11 +233,19 @@ class TestPairingCandidate:
     def test_frozen(self):
         """Dataclass is frozen (immutable)."""
         c = PairingCandidate(
-            wine_id=1, wine_name="Test", vintage=2020,
-            category="Red wine", country="France", region="Bordeaux",
-            primary_grape="Merlot", bottles_stored=3, price=25.0,
-            drinking_status="optimal", best_pro_score=92.0,
-            match_signals=["category", "grape:Merlot"], signal_count=2,
+            wine_id=1,
+            wine_name="Test",
+            vintage=2020,
+            category="Red wine",
+            country="France",
+            region="Bordeaux",
+            primary_grape="Merlot",
+            bottles_stored=3,
+            price=25.0,
+            drinking_status="optimal",
+            best_pro_score=92.0,
+            match_signals=["category", "grape:Merlot"],
+            signal_count=2,
         )
         with pytest.raises(AttributeError):  # FrozenInstanceError
             c.wine_id = 99  # type: ignore[misc]
@@ -332,60 +340,66 @@ class TestCheeseRetrieval:
             limit=10,
         )
         # Chasselas should be found via grape strategy
-        grape_signals = [
-            c for c in results
-            if any("grape:Chasselas" in s for s in c.match_signals)
-        ]
+        grape_signals = [c for c in results if any("grape:Chasselas" in s for s in c.match_signals)]
         assert len(grape_signals) > 0
 
 
 class TestClassifyDish:
     """Tests for the rule-based dish classifier."""
 
-    @pytest.mark.parametrize("dish,expected_protein", [
-        ("grilled lamb chops", "red_meat"),
-        ("beef bourguignon", "red_meat"),
-        ("roast chicken", "poultry"),
-        ("duck confit", "poultry"),
-        ("grilled salmon", "fish"),
-        ("lobster thermidor", "seafood"),
-        ("sushi platter", "seafood"),
-        ("pork schnitzel", "pork"),
-        ("venison stew", "game"),
-        ("raclette with pickles", "cheese"),
-        ("cheese fondue", "cheese"),
-        ("truffle risotto", "vegetarian"),
-        ("margherita pizza", "vegetarian"),
-    ])
+    @pytest.mark.parametrize(
+        "dish,expected_protein",
+        [
+            ("grilled lamb chops", "red_meat"),
+            ("beef bourguignon", "red_meat"),
+            ("roast chicken", "poultry"),
+            ("duck confit", "poultry"),
+            ("grilled salmon", "fish"),
+            ("lobster thermidor", "seafood"),
+            ("sushi platter", "seafood"),
+            ("pork schnitzel", "pork"),
+            ("venison stew", "game"),
+            ("raclette with pickles", "cheese"),
+            ("cheese fondue", "cheese"),
+            ("truffle risotto", "vegetarian"),
+            ("margherita pizza", "vegetarian"),
+        ],
+    )
     def test_protein_classification(self, dish, expected_protein):
         result = pairing.classify_dish(dish)
         assert result.protein == expected_protein
 
-    @pytest.mark.parametrize("dish,expected_weight", [
-        ("braised beef", "heavy"),
-        ("beef stew", "heavy"),
-        ("confit duck", "heavy"),
-        ("green salad", "light"),
-        ("sashimi platter", "light"),
-        ("carpaccio", "light"),
-        ("roast chicken", "medium"),
-    ])
+    @pytest.mark.parametrize(
+        "dish,expected_weight",
+        [
+            ("braised beef", "heavy"),
+            ("beef stew", "heavy"),
+            ("confit duck", "heavy"),
+            ("green salad", "light"),
+            ("sashimi platter", "light"),
+            ("carpaccio", "light"),
+            ("roast chicken", "medium"),
+        ],
+    )
     def test_weight_classification(self, dish, expected_weight):
         result = pairing.classify_dish(dish)
         assert result.weight == expected_weight
 
-    @pytest.mark.parametrize("dish,expected_cuisine", [
-        ("raclette with pickles", "Swiss"),
-        ("fondue", "Swiss"),
-        ("bourguignon", "French"),
-        ("coq au vin", "French"),
-        ("pasta carbonara", "Italian"),
-        ("risotto", "Italian"),
-        ("sushi", "Japanese"),
-        ("chicken tikka masala", "Indian"),
-        ("pad thai", "Thai"),
-        ("asado", "Argentine"),
-    ])
+    @pytest.mark.parametrize(
+        "dish,expected_cuisine",
+        [
+            ("raclette with pickles", "Swiss"),
+            ("fondue", "Swiss"),
+            ("bourguignon", "French"),
+            ("coq au vin", "French"),
+            ("pasta carbonara", "Italian"),
+            ("risotto", "Italian"),
+            ("sushi", "Japanese"),
+            ("chicken tikka masala", "Indian"),
+            ("pad thai", "Thai"),
+            ("asado", "Argentine"),
+        ],
+    )
     def test_cuisine_classification(self, dish, expected_cuisine):
         result = pairing.classify_dish(dish)
         assert result.cuisine == expected_cuisine
@@ -468,11 +482,19 @@ class TestFormatTable:
     def test_header_present(self):
         candidates = [
             PairingCandidate(
-                wine_id=1, wine_name="Test Wine", vintage=2020,
-                category="Red wine", country="France", region="Bordeaux",
-                primary_grape="Merlot", bottles_stored=3, price=25.0,
-                drinking_status="optimal", best_pro_score=92.0,
-                match_signals=["category", "grape:Merlot"], signal_count=2,
+                wine_id=1,
+                wine_name="Test Wine",
+                vintage=2020,
+                category="Red wine",
+                country="France",
+                region="Bordeaux",
+                primary_grape="Merlot",
+                bottles_stored=3,
+                price=25.0,
+                drinking_status="optimal",
+                best_pro_score=92.0,
+                match_signals=["category", "grape:Merlot"],
+                signal_count=2,
             ),
         ]
         output = pairing.format_table(candidates)
@@ -492,16 +514,26 @@ class TestFormatCompact:
     def test_includes_dish_name(self):
         candidates = [
             PairingCandidate(
-                wine_id=1, wine_name="Barolo DOCG", vintage=2018,
-                category="Red wine", country="Italy", region="Barolo",
-                primary_grape="Nebbiolo", bottles_stored=2, price=55.0,
-                drinking_status="optimal", best_pro_score=94.0,
-                match_signals=["category", "grape:Nebbiolo"], signal_count=2,
+                wine_id=1,
+                wine_name="Barolo DOCG",
+                vintage=2018,
+                category="Red wine",
+                country="Italy",
+                region="Barolo",
+                primary_grape="Nebbiolo",
+                bottles_stored=2,
+                price=55.0,
+                drinking_status="optimal",
+                best_pro_score=94.0,
+                match_signals=["category", "grape:Nebbiolo"],
+                signal_count=2,
             ),
         ]
         cls = DishClassification(
-            protein="red_meat", weight="heavy",
-            category="Red wine", cuisine=None,
+            protein="red_meat",
+            weight="heavy",
+            category="Red wine",
+            cuisine=None,
         )
         output = pairing.format_compact(candidates, "grilled steak", cls)
         assert "grilled steak" in output
@@ -511,11 +543,19 @@ class TestFormatCompact:
     def test_without_classification(self):
         candidates = [
             PairingCandidate(
-                wine_id=1, wine_name="Test", vintage=2020,
-                category="Red wine", country="France", region="Bordeaux",
-                primary_grape="Merlot", bottles_stored=3, price=25.0,
-                drinking_status="optimal", best_pro_score=None,
-                match_signals=["category"], signal_count=1,
+                wine_id=1,
+                wine_name="Test",
+                vintage=2020,
+                category="Red wine",
+                country="France",
+                region="Bordeaux",
+                primary_grape="Merlot",
+                bottles_stored=3,
+                price=25.0,
+                drinking_status="optimal",
+                best_pro_score=None,
+                match_signals=["category"],
+                signal_count=1,
             ),
         ]
         output = pairing.format_compact(candidates, "mystery dish")
@@ -529,17 +569,26 @@ class TestFormatExplained:
     def test_includes_recommendations_header(self):
         candidates = [
             PairingCandidate(
-                wine_id=42, wine_name="Barolo DOCG", vintage=2018,
-                category="Red wine", country="Italy", region="Barolo",
-                primary_grape="Nebbiolo", bottles_stored=2, price=55.0,
-                drinking_status="optimal", best_pro_score=94.0,
+                wine_id=42,
+                wine_name="Barolo DOCG",
+                vintage=2018,
+                category="Red wine",
+                country="Italy",
+                region="Barolo",
+                primary_grape="Nebbiolo",
+                bottles_stored=2,
+                price=55.0,
+                drinking_status="optimal",
+                best_pro_score=94.0,
                 match_signals=["category", "grape:Nebbiolo", "food_group:red_meat"],
                 signal_count=3,
             ),
         ]
         cls = DishClassification(
-            protein="red_meat", weight="heavy",
-            category="Red wine", cuisine="Italian",
+            protein="red_meat",
+            weight="heavy",
+            category="Red wine",
+            cuisine="Italian",
         )
         output = pairing.format_explained(candidates, "braised beef", cls)
         assert "Top Pairing Recommendations" in output
@@ -549,11 +598,19 @@ class TestFormatExplained:
     def test_limit_respected(self):
         candidates = [
             PairingCandidate(
-                wine_id=i, wine_name=f"Wine {i}", vintage=2020,
-                category="Red wine", country="France", region="Bordeaux",
-                primary_grape="Merlot", bottles_stored=3, price=25.0,
-                drinking_status="optimal", best_pro_score=90.0,
-                match_signals=["category"], signal_count=1,
+                wine_id=i,
+                wine_name=f"Wine {i}",
+                vintage=2020,
+                category="Red wine",
+                country="France",
+                region="Bordeaux",
+                primary_grape="Merlot",
+                bottles_stored=3,
+                price=25.0,
+                drinking_status="optimal",
+                best_pro_score=90.0,
+                match_signals=["category"],
+                signal_count=1,
             )
             for i in range(10)
         ]
@@ -563,10 +620,17 @@ class TestFormatExplained:
 
     def test_reason_picks_food_tag_first(self):
         c = PairingCandidate(
-            wine_id=1, wine_name="Test", vintage=2020,
-            category="Red wine", country="France", region="Bordeaux",
-            primary_grape="Merlot", bottles_stored=3, price=25.0,
-            drinking_status="optimal", best_pro_score=92.0,
+            wine_id=1,
+            wine_name="Test",
+            vintage=2020,
+            category="Red wine",
+            country="France",
+            region="Bordeaux",
+            primary_grape="Merlot",
+            bottles_stored=3,
+            price=25.0,
+            drinking_status="optimal",
+            best_pro_score=92.0,
             match_signals=["category", "food_tag:duck-confit", "grape:Merlot"],
             signal_count=3,
         )
@@ -575,10 +639,17 @@ class TestFormatExplained:
 
     def test_reason_falls_back_to_grape(self):
         c = PairingCandidate(
-            wine_id=1, wine_name="Test", vintage=2020,
-            category="Red wine", country="France", region="Bordeaux",
-            primary_grape="Merlot", bottles_stored=3, price=25.0,
-            drinking_status="optimal", best_pro_score=92.0,
+            wine_id=1,
+            wine_name="Test",
+            vintage=2020,
+            category="Red wine",
+            country="France",
+            region="Bordeaux",
+            primary_grape="Merlot",
+            bottles_stored=3,
+            price=25.0,
+            drinking_status="optimal",
+            best_pro_score=92.0,
             match_signals=["category", "grape:Merlot"],
             signal_count=2,
         )
@@ -589,16 +660,26 @@ class TestFormatExplained:
     def test_classification_footer(self):
         candidates = [
             PairingCandidate(
-                wine_id=1, wine_name="Test", vintage=2020,
-                category="Red wine", country="France", region="Bordeaux",
-                primary_grape="Merlot", bottles_stored=3, price=25.0,
-                drinking_status="optimal", best_pro_score=92.0,
-                match_signals=["category"], signal_count=1,
+                wine_id=1,
+                wine_name="Test",
+                vintage=2020,
+                category="Red wine",
+                country="France",
+                region="Bordeaux",
+                primary_grape="Merlot",
+                bottles_stored=3,
+                price=25.0,
+                drinking_status="optimal",
+                best_pro_score=92.0,
+                match_signals=["category"],
+                signal_count=1,
             ),
         ]
         cls = DishClassification(
-            protein="red_meat", weight="heavy",
-            category="Red wine", cuisine="French",
+            protein="red_meat",
+            weight="heavy",
+            category="Red wine",
+            cuisine="French",
         )
         output = pairing.format_explained(candidates, "steak", cls)
         assert "red_meat" in output

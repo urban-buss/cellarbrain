@@ -132,11 +132,14 @@ class TestPairingPagePost:
     """POST /pairing tests — form submission."""
 
     def test_returns_results_table(self, pairing_client):
-        resp = pairing_client.post("/pairing", data={
-            "dish_description": "grilled steak",
-            "protein": "red_meat",
-            "category": "red",
-        })
+        resp = pairing_client.post(
+            "/pairing",
+            data={
+                "dish_description": "grilled steak",
+                "protein": "red_meat",
+                "category": "red",
+            },
+        )
         assert resp.status_code == 200
         assert "candidates found" in resp.text or "No candidates found" in resp.text
 
@@ -151,29 +154,38 @@ class TestPairingPagePost:
         assert "<!doctype" not in resp.text.lower()
 
     def test_results_have_wine_links(self, pairing_client):
-        resp = pairing_client.post("/pairing", data={
-            "dish_description": "steak",
-            "protein": "red_meat",
-            "category": "red",
-        })
+        resp = pairing_client.post(
+            "/pairing",
+            data={
+                "dish_description": "steak",
+                "protein": "red_meat",
+                "category": "red",
+            },
+        )
         assert resp.status_code == 200
         assert "/cellar/" in resp.text
 
     def test_empty_results_message(self, pairing_client):
-        resp = pairing_client.post("/pairing", data={
-            "dish_description": "xyznonexistent",
-            "category": "sparkling",
-            "grapes": "Nonexistent Grape",
-        })
+        resp = pairing_client.post(
+            "/pairing",
+            data={
+                "dish_description": "xyznonexistent",
+                "category": "sparkling",
+                "grapes": "Nonexistent Grape",
+            },
+        )
         assert "No candidates found" in resp.text
 
     def test_swiss_cuisine_finds_chasselas(self, pairing_client):
-        resp = pairing_client.post("/pairing", data={
-            "dish_description": "raclette",
-            "protein": "cheese",
-            "cuisine": "Swiss",
-            "category": "white",
-        })
+        resp = pairing_client.post(
+            "/pairing",
+            data={
+                "dish_description": "raclette",
+                "protein": "cheese",
+                "cuisine": "Swiss",
+                "category": "white",
+            },
+        )
         assert resp.status_code == 200
         assert "Chasselas" in resp.text
 

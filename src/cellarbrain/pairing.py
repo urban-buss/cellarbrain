@@ -68,57 +68,113 @@ CUISINE_REGIONS: dict[str, list[str]] = {
 
 CATEGORY_GRAPES: dict[str, list[str]] = {
     "red_meat_heavy": [
-        "Cabernet Sauvignon", "Merlot", "Syrah", "Malbec",
-        "Mourvèdre", "Petit Verdot", "Lagrein", "Cabernet Franc",
+        "Cabernet Sauvignon",
+        "Merlot",
+        "Syrah",
+        "Malbec",
+        "Mourvèdre",
+        "Petit Verdot",
+        "Lagrein",
+        "Cabernet Franc",
     ],
     "red_meat_medium": [
-        "Merlot", "Cabernet Franc", "Grenache", "Mourvèdre",
-        "Tempranillo", "Syrah", "Sangiovese",
+        "Merlot",
+        "Cabernet Franc",
+        "Grenache",
+        "Mourvèdre",
+        "Tempranillo",
+        "Syrah",
+        "Sangiovese",
     ],
     "game": [
-        "Nebbiolo", "Syrah", "Mourvèdre", "Pinot Noir",
-        "Cabernet Sauvignon", "Cornalin",
+        "Nebbiolo",
+        "Syrah",
+        "Mourvèdre",
+        "Pinot Noir",
+        "Cabernet Sauvignon",
+        "Cornalin",
     ],
     "poultry": [
-        "Pinot Noir", "Barbera", "Merlot", "Chardonnay",
-        "Chenin Blanc", "Sauvignon Blanc",
+        "Pinot Noir",
+        "Barbera",
+        "Merlot",
+        "Chardonnay",
+        "Chenin Blanc",
+        "Sauvignon Blanc",
     ],
     "fish": [
-        "Sauvignon Blanc", "Chasselas", "Arneis", "Nascetta",
-        "Pinot Gris", "Riesling", "Chardonnay",
+        "Sauvignon Blanc",
+        "Chasselas",
+        "Arneis",
+        "Nascetta",
+        "Pinot Gris",
+        "Riesling",
+        "Chardonnay",
     ],
     "seafood": [
-        "Sauvignon Blanc", "Chasselas", "Arneis", "Riesling",
-        "Pinot Gris", "Chardonnay",
+        "Sauvignon Blanc",
+        "Chasselas",
+        "Arneis",
+        "Riesling",
+        "Pinot Gris",
+        "Chardonnay",
     ],
     "pork": [
-        "Pinot Noir", "Grenache", "Barbera", "Merlot",
-        "Chardonnay", "Chenin Blanc",
+        "Pinot Noir",
+        "Grenache",
+        "Barbera",
+        "Merlot",
+        "Chardonnay",
+        "Chenin Blanc",
     ],
     "vegetarian_heavy": [
-        "Nebbiolo", "Sangiovese", "Pinot Noir", "Chardonnay",
-        "Grenache", "Barbera",
+        "Nebbiolo",
+        "Sangiovese",
+        "Pinot Noir",
+        "Chardonnay",
+        "Grenache",
+        "Barbera",
     ],
     "vegetarian_light": [
-        "Sauvignon Blanc", "Chasselas", "Pinot Gris", "Arneis",
+        "Sauvignon Blanc",
+        "Chasselas",
+        "Pinot Gris",
+        "Arneis",
     ],
     "cheese": [
-        "Chasselas", "Nebbiolo", "Cabernet Sauvignon",
-        "Tempranillo", "Sangiovese", "Pinot Noir",
+        "Chasselas",
+        "Nebbiolo",
+        "Cabernet Sauvignon",
+        "Tempranillo",
+        "Sangiovese",
+        "Pinot Noir",
     ],
     "cheese_light": [
-        "Chasselas", "Sauvignon Blanc", "Arneis", "Pinot Gris",
+        "Chasselas",
+        "Sauvignon Blanc",
+        "Arneis",
+        "Pinot Gris",
     ],
     "cheese_medium": [
-        "Chasselas", "Pinot Noir", "Chenin Blanc", "Chardonnay",
-        "Nebbiolo", "Sangiovese",
+        "Chasselas",
+        "Pinot Noir",
+        "Chenin Blanc",
+        "Chardonnay",
+        "Nebbiolo",
+        "Sangiovese",
     ],
     "cheese_heavy": [
-        "Nebbiolo", "Cabernet Sauvignon", "Tempranillo",
-        "Sangiovese", "Pinot Noir",
+        "Nebbiolo",
+        "Cabernet Sauvignon",
+        "Tempranillo",
+        "Sangiovese",
+        "Pinot Noir",
     ],
     "spicy": [
-        "Gewürztraminer", "Riesling", "Chenin Blanc", "Sauvignon Blanc",
+        "Gewürztraminer",
+        "Riesling",
+        "Chenin Blanc",
+        "Sauvignon Blanc",
     ],
 }
 
@@ -253,80 +309,206 @@ def _strategy_region(
 
 _PROTEIN_KEYWORDS: dict[str, list[str]] = {
     "red_meat": [
-        "beef", "steak", "lamb", "veal", "brisket", "ribeye",
-        "sirloin", "filet", "burger", "meatball", "ragù", "ragu",
-        "bolognese", "osso buco", "bresaola", "bündnerfleisch",
-        "entrecôte", "chateaubriand", "tartare",
+        "beef",
+        "steak",
+        "lamb",
+        "veal",
+        "brisket",
+        "ribeye",
+        "sirloin",
+        "filet",
+        "burger",
+        "meatball",
+        "ragù",
+        "ragu",
+        "bolognese",
+        "osso buco",
+        "bresaola",
+        "bündnerfleisch",
+        "entrecôte",
+        "chateaubriand",
+        "tartare",
     ],
     "poultry": [
-        "chicken", "turkey", "duck", "quail", "guinea", "poultry",
-        "geschnetzeltes", "coq au vin", "magret",
+        "chicken",
+        "turkey",
+        "duck",
+        "quail",
+        "guinea",
+        "poultry",
+        "geschnetzeltes",
+        "coq au vin",
+        "magret",
     ],
     "fish": [
-        "fish", "salmon", "tuna", "bass", "trout", "sole", "cod",
-        "halibut", "swordfish", "anchovy", "sardine",
+        "fish",
+        "salmon",
+        "tuna",
+        "bass",
+        "trout",
+        "sole",
+        "cod",
+        "halibut",
+        "swordfish",
+        "anchovy",
+        "sardine",
     ],
     "seafood": [
-        "shrimp", "prawn", "lobster", "crab", "oyster", "mussel",
-        "clam", "scallop", "calamari", "squid", "octopus", "sushi",
-        "sashimi", "ceviche",
+        "shrimp",
+        "prawn",
+        "lobster",
+        "crab",
+        "oyster",
+        "mussel",
+        "clam",
+        "scallop",
+        "calamari",
+        "squid",
+        "octopus",
+        "sushi",
+        "sashimi",
+        "ceviche",
     ],
     "pork": [
-        "pork", "ham", "bacon", "prosciutto", "pancetta", "sausage",
-        "bratwurst", "schnitzel", "charcuterie",
+        "pork",
+        "ham",
+        "bacon",
+        "prosciutto",
+        "pancetta",
+        "sausage",
+        "bratwurst",
+        "schnitzel",
+        "charcuterie",
     ],
     "game": [
-        "venison", "boar", "rabbit", "hare", "pheasant", "pigeon",
+        "venison",
+        "boar",
+        "rabbit",
+        "hare",
+        "pheasant",
+        "pigeon",
         "wild",
     ],
     "cheese": [
-        "cheese", "raclette", "fondue", "gruyère", "camembert",
-        "roquefort", "parmesan", "mozzarella", "brie", "goat cheese",
-        "aged cheese", "comté", "emmental",
+        "cheese",
+        "raclette",
+        "fondue",
+        "gruyère",
+        "camembert",
+        "roquefort",
+        "parmesan",
+        "mozzarella",
+        "brie",
+        "goat cheese",
+        "aged cheese",
+        "comté",
+        "emmental",
     ],
     "vegetarian": [
-        "salad", "vegetable", "mushroom", "truffle", "risotto",
-        "pasta", "pizza", "tofu", "lentil", "bean", "eggplant",
-        "aubergine", "ratatouille",
+        "salad",
+        "vegetable",
+        "mushroom",
+        "truffle",
+        "risotto",
+        "pasta",
+        "pizza",
+        "tofu",
+        "lentil",
+        "bean",
+        "eggplant",
+        "aubergine",
+        "ratatouille",
     ],
 }
 
 _WEIGHT_KEYWORDS: dict[str, list[str]] = {
     "heavy": [
-        "braised", "stew", "grilled steak", "bbq",
-        "aged cheese", "ragù", "bolognese", "confit", "bourguignon",
-        "osso buco", "venison", "boar", "brisket", "cassoulet",
-        "roast beef", "roast lamb", "roast pork",
+        "braised",
+        "stew",
+        "grilled steak",
+        "bbq",
+        "aged cheese",
+        "ragù",
+        "bolognese",
+        "confit",
+        "bourguignon",
+        "osso buco",
+        "venison",
+        "boar",
+        "brisket",
+        "cassoulet",
+        "roast beef",
+        "roast lamb",
+        "roast pork",
     ],
     "light": [
-        "salad", "sashimi", "carpaccio", "tartare", "steamed",
-        "poached", "raw", "ceviche", "consommé", "broth",
+        "salad",
+        "sashimi",
+        "carpaccio",
+        "tartare",
+        "steamed",
+        "poached",
+        "raw",
+        "ceviche",
+        "consommé",
+        "broth",
     ],
     # "medium" is the default
 }
 
 _CUISINE_KEYWORDS: dict[str, list[str]] = {
     "Swiss": [
-        "raclette", "fondue", "rösti", "geschnetzeltes",
-        "bündnerfleisch", "capuns", "älplermagronen",
+        "raclette",
+        "fondue",
+        "rösti",
+        "geschnetzeltes",
+        "bündnerfleisch",
+        "capuns",
+        "älplermagronen",
     ],
     "French": [
-        "confit", "bourguignon", "bouillabaisse", "coq au vin",
-        "ratatouille", "quiche", "cassoulet", "foie gras",
-        "béarnaise", "provençal",
+        "confit",
+        "bourguignon",
+        "bouillabaisse",
+        "coq au vin",
+        "ratatouille",
+        "quiche",
+        "cassoulet",
+        "foie gras",
+        "béarnaise",
+        "provençal",
     ],
     "Italian": [
-        "pasta", "risotto", "pizza", "osso buco", "ragù",
-        "bolognese", "carbonara", "tiramisu", "bruschetta",
-        "lasagna", "gnocchi",
+        "pasta",
+        "risotto",
+        "pizza",
+        "osso buco",
+        "ragù",
+        "bolognese",
+        "carbonara",
+        "tiramisu",
+        "bruschetta",
+        "lasagna",
+        "gnocchi",
     ],
     "Japanese": [
-        "sushi", "sashimi", "ramen", "tempura", "teriyaki",
-        "miso", "yakitori",
+        "sushi",
+        "sashimi",
+        "ramen",
+        "tempura",
+        "teriyaki",
+        "miso",
+        "yakitori",
     ],
     "Indian": [
-        "curry", "tikka", "tandoori", "masala", "biryani",
-        "naan", "samosa", "dal",
+        "curry",
+        "tikka",
+        "tandoori",
+        "masala",
+        "biryani",
+        "naan",
+        "samosa",
+        "dal",
     ],
     "Thai": ["thai", "pad thai", "green curry", "tom yum", "satay"],
     "Argentine": ["asado", "empanada", "chimichurri"],
@@ -387,7 +569,10 @@ def classify_dish(dish: str) -> DishClassification:
             category = _CATEGORY_NORM.get(cats[0].split()[0].lower())
 
     return DishClassification(
-        protein=protein, weight=weight, category=category, cuisine=cuisine,
+        protein=protein,
+        weight=weight,
+        category=category,
+        cuisine=cuisine,
     )
 
 
@@ -412,7 +597,7 @@ def _extract_keywords(dish_description: str) -> list[str]:
             slugs.append(w)
     for i in range(len(words) - 1):
         if len(words[i]) >= 3 and len(words[i + 1]) >= 3:
-            slugs.append(f"{words[i]}-{words[i+1]}")
+            slugs.append(f"{words[i]}-{words[i + 1]}")
     return list(dict.fromkeys(slugs))  # deduplicate preserving order
 
 
@@ -541,7 +726,7 @@ def _merge_and_rank(
 
     # Sort by signal count to get top candidates
     ranked_ids = sorted(signals.keys(), key=lambda wid: len(signals[wid]), reverse=True)
-    top_ids = ranked_ids[:limit * 2]  # fetch extra for tie-breaking
+    top_ids = ranked_ids[: limit * 2]  # fetch extra for tie-breaking
 
     # Fetch metadata for top candidates
     placeholders = ", ".join("?" for _ in top_ids)
@@ -564,21 +749,23 @@ FROM base WHERE wine_id IN ({placeholders})"""
             continue
         r = meta_map[wine_id]
         sigs = signals[wine_id]
-        candidates.append(PairingCandidate(
-            wine_id=r[0],
-            wine_name=r[1],
-            vintage=r[2],
-            category=r[3],
-            country=r[4],
-            region=r[5],
-            primary_grape=r[6],
-            bottles_stored=r[7],
-            price=r[8],
-            drinking_status=r[9],
-            best_pro_score=r[10],
-            match_signals=sigs,
-            signal_count=len(sigs),
-        ))
+        candidates.append(
+            PairingCandidate(
+                wine_id=r[0],
+                wine_name=r[1],
+                vintage=r[2],
+                category=r[3],
+                country=r[4],
+                region=r[5],
+                primary_grape=r[6],
+                bottles_stored=r[7],
+                price=r[8],
+                drinking_status=r[9],
+                best_pro_score=r[10],
+                match_signals=sigs,
+                signal_count=len(sigs),
+            )
+        )
         if len(candidates) >= limit:
             break
 
@@ -647,9 +834,7 @@ def format_compact(
     """Format candidates as a compressed one-line-per-wine list."""
     header_parts = [f'Found {len(results)} matches for "{dish}"']
     if classification and classification.protein:
-        header_parts.append(
-            f"({classification.protein}, {classification.weight})"
-        )
+        header_parts.append(f"({classification.protein}, {classification.weight})")
     header = " ".join(header_parts) + ":"
 
     lines = [header]
@@ -657,9 +842,7 @@ def format_compact(
         score = f"{c.best_pro_score:.0f}pts" if c.best_pro_score else "unrated"
         sigs = "+".join(s.split(":")[0] for s in c.match_signals[:3])
         lines.append(
-            f"{i}. {c.wine_name} {c.vintage or ''} "
-            f"({c.primary_grape or '?'}) — {score}, "
-            f"{c.bottles_stored}btl [{sigs}]"
+            f"{i}. {c.wine_name} {c.vintage or ''} ({c.primary_grape or '?'}) — {score}, {c.bottles_stored}btl [{sigs}]"
         )
     return "\n".join(lines)
 
@@ -685,13 +868,8 @@ def format_explained(
         signals_str = ", ".join(c.match_signals[:4])
         reason = _best_reason(c, protein)
 
-        lines.append(
-            f"{i}. **{c.wine_name} {c.vintage or ''}** (wine_id: {c.wine_id})"
-            f" — {c.primary_grape or 'blend'}"
-        )
-        lines.append(
-            f"   {location}{score_str} | {c.bottles_stored} bottle(s)"
-        )
+        lines.append(f"{i}. **{c.wine_name} {c.vintage or ''}** (wine_id: {c.wine_id}) — {c.primary_grape or 'blend'}")
+        lines.append(f"   {location}{score_str} | {c.bottles_stored} bottle(s)")
         lines.append(f"   Why: {reason}")
         lines.append(f"   Matched on: {signals_str}")
         lines.append("")
