@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import atexit
 import logging
+import signal
+import threading
 import time
 import uuid
 from collections import deque
@@ -50,7 +52,8 @@ class ToolEvent:
 # EventCollector — buffers events, writes to DuckDB
 # ---------------------------------------------------------------------------
 
-_FLUSH_THRESHOLD = 50
+_FLUSH_THRESHOLD = 5
+_FLUSH_INTERVAL_SECONDS = 5.0
 
 _CREATE_TABLE_SQL = """\
 CREATE TABLE IF NOT EXISTS tool_events (
@@ -89,6 +92,8 @@ class EventCollector:
         self._turn_id: str = uuid.uuid4().hex
         self._last_event_time: float = time.monotonic()
         self._db = None
+        self._flush_timer: threading.Timer | None = None
+        self._closed = False
 
         if config.log_db is not None:
             db_path = config.log_db
@@ -101,6 +106,7 @@ class EventCollector:
 
         self._db_path = db_path
         self._init_db()
+        self._schedule_flush()
 
     # -- Turn tracking ------------------------------------------------------
 
@@ -128,6 +134,23 @@ class EventCollector:
         except Exception:
             logger.warning("Failed to open log store at %s", self._db_path, exc_info=True)
             self._db = None
+
+    # -- Periodic flush -----------------------------------------------------
+
+    def _schedule_flush(self) -> None:
+        """Schedule the next periodic flush if the collector is still open."""
+        if self._closed or self._db is None:
+            return
+        self._flush_timer = threading.Timer(_FLUSH_INTERVAL_SECONDS, self._periodic_flush)
+        self._flush_timer.daemon = True
+        self._flush_timer.start()
+
+    def _periodic_flush(self) -> None:
+        """Flush buffered events and re-schedule."""
+        if self._closed:
+            return
+        self.flush()
+        self._schedule_flush()
 
     # -- Event lifecycle ----------------------------------------------------
 
@@ -210,6 +233,10 @@ class EventCollector:
             return 0
 
     def close(self) -> None:
+        self._closed = True
+        if self._flush_timer is not None:
+            self._flush_timer.cancel()
+            self._flush_timer = None
         self.flush()
         if self._db is not None:
             try:
@@ -233,6 +260,20 @@ def init_observability(config: LoggingConfig, data_dir: str) -> EventCollector:
         return _collector
     _collector = EventCollector(config, data_dir)
     atexit.register(_collector.close)
+
+    # Register signal handlers for graceful flush on SIGTERM/SIGINT
+    def _signal_handler(signum: int, frame: object) -> None:
+        if _collector is not None:
+            _collector.close()
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _signal_handler)
+        except (OSError, ValueError):
+            # Cannot set signal handlers outside main thread
+            pass
+
     logger.info("Observability initialised — session=%s", _collector.session_id)
     return _collector
 

@@ -652,6 +652,7 @@ def _subcommand_main(argv: list[str]) -> None:
     # --- doctor ---
     doc_parser = sub.add_parser("doctor", help="Run diagnostic health checks on the data directory")
     doc_parser.add_argument("--json", action="store_true", help="Output results as JSON (for scripting)")
+    doc_parser.add_argument("--strict", action="store_true", help="Treat warnings as errors (exit 1)")
     doc_parser.add_argument(
         "--check",
         type=str,
@@ -807,6 +808,7 @@ def _cmd_mcp(args: argparse.Namespace, settings: Settings) -> None:
     from .mcp_server import mcp, warm_sommelier
 
     warm_sommelier()
+    mcp.settings.port = args.port
     mcp.run(transport=args.transport)
 
 
@@ -1219,9 +1221,15 @@ def _cmd_dashboard(args: argparse.Namespace, settings: Settings) -> None:
         db_path = str(pathlib.Path(settings.paths.data_dir) / "logs" / "cellarbrain-logs.duckdb")
 
     if not pathlib.Path(db_path).exists():
-        print(f"Log store not found: {db_path}", file=sys.stderr)
-        print("Run the MCP server first to generate log data.", file=sys.stderr)
-        sys.exit(1)
+        # Create an empty log store so the dashboard can start without prior MCP usage
+        pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        import duckdb
+
+        _con = duckdb.connect(db_path)
+        from .observability import _CREATE_TABLE_SQL
+
+        _con.execute(_CREATE_TABLE_SQL)
+        _con.close()
 
     data_dir = settings.paths.data_dir
     app = create_app(
@@ -1258,7 +1266,14 @@ def _cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
         print(json.dumps(data, indent=2))
     else:
         print(report.summary())
-    sys.exit(0 if report.ok else 1)
+
+    from .doctor import Severity
+
+    if args.strict:
+        is_ok = report.worst_severity in (Severity.OK, Severity.INFO)
+    else:
+        is_ok = report.ok
+    sys.exit(0 if is_ok else 1)
 
 
 def _cmd_backup(args: argparse.Namespace, settings: Settings) -> None:

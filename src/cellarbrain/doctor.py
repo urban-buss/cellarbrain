@@ -48,7 +48,7 @@ class DoctorReport:
 
     @property
     def ok(self) -> bool:
-        return self.worst_severity in (Severity.OK, Severity.INFO)
+        return self.worst_severity in (Severity.OK, Severity.INFO, Severity.WARN)
 
     def summary(self) -> str:
         """Format human-readable report."""

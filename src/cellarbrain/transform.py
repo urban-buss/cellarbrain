@@ -375,7 +375,7 @@ def build_wines(
             raise ValueError(f"Wine row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}") from exc
         entities.append(wine)
         if nk in wine_lookup:
-            logger.warning(
+            logger.info(
                 "Duplicate wine natural key %r at row %d "
                 "(first seen as wine_id=%d). "
                 "The later entry will take precedence.",

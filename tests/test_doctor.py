@@ -87,10 +87,10 @@ class TestDoctorReport:
         assert report.ok
         assert report.worst_severity == Severity.INFO
 
-    def test_warn_is_not_ok(self):
+    def test_warn_is_ok(self):
         report = DoctorReport()
         report.add("test", Severity.WARN, "warning")
-        assert not report.ok
+        assert report.ok
         assert report.worst_severity == Severity.WARN
 
     def test_error_is_not_ok(self):

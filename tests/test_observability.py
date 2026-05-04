@@ -211,3 +211,37 @@ class TestInitObservability:
         obs._collector = None
         assert get_collector() is None
         obs._collector = None
+
+
+class TestPeriodicFlush:
+    def test_auto_flush_at_threshold(self, tmp_path):
+        """Events are flushed once the buffer reaches _FLUSH_THRESHOLD (5)."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        for i in range(5):
+            e = ToolEvent(
+                event_id=f"evt{i}",
+                session_id=collector.session_id,
+                turn_id=collector.turn_id,
+                event_type="tool",
+                name="test",
+                started_at=datetime.now(UTC),
+                ended_at=datetime.now(UTC),
+                duration_ms=1.0,
+                status="ok",
+            )
+            collector.emit(e)
+        # After 5 emits, buffer should have been flushed
+        assert len(collector._buffer) == 0
+        count = collector._db.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+        assert count == 5
+        collector.close()
+
+    def test_close_cancels_timer(self, tmp_path):
+        """Closing the collector should cancel the periodic timer."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        assert collector._flush_timer is not None
+        collector.close()
+        assert collector._flush_timer is None
+        assert collector._closed is True
