@@ -239,7 +239,7 @@ class TestPairingCandidate:
             drinking_status="optimal", best_pro_score=92.0,
             match_signals=["category", "grape:Merlot"], signal_count=2,
         )
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(AttributeError):  # FrozenInstanceError
             c.wine_id = 99  # type: ignore[misc]
 
 
