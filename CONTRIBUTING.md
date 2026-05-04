@@ -9,10 +9,13 @@ git clone https://github.com/urban-buss/cellarbrain
 cd cellarbrain
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[research]" pytest
+pip install -e ".[dev,research]"
 ```
 
 ## Running tests
+
+> **Note:** Tests require a source checkout — they are not included in the
+> PyPI wheel. The `[dev]` extra provides `pytest` and `ruff`.
 
 ```bash
 pytest

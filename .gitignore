@@ -48,6 +48,13 @@ smoke-reports/
 # Wine research insights
 wine-research-insights/
 
+# Agent memories - local only, NEVER commit.
+.memories/
+!.memories/.gitkeep
+
+# Issues tracking
+issues/
+
 # Logs and backups
 bkp/
 logs/

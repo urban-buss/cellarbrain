@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% set active_nav = "pairing" %}
+{% block title %}Food Pairing — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Food Pairing{% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    Describe a dish and optionally classify it to find pairing candidates from your cellar.
+    Results use multi-strategy SQL retrieval (no ML model required).
+</p>
+
+<form hx-post="/pairing" hx-target="#pairing-results" hx-swap="innerHTML">
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
+    <div style="grid-column:span 2;">
+      <label>Dish description
+        <input type="text" name="dish_description" placeholder="e.g. grilled lamb chops with rosemary"
+               value="{{ params.get('dish_description', '') }}" required>
+      </label>
+    </div>
+    <div>
+      <label>Category
+        <select name="category">
+          <option value="">Auto (from protein)</option>
+          <option value="red" {% if params.get('category') == 'red' %}selected{% endif %}>Red</option>
+          <option value="white" {% if params.get('category') == 'white' %}selected{% endif %}>White</option>
+          <option value="rose" {% if params.get('category') == 'rose' %}selected{% endif %}>Rosé</option>
+          <option value="sparkling" {% if params.get('category') == 'sparkling' %}selected{% endif %}>Sparkling</option>
+          <option value="sweet" {% if params.get('category') == 'sweet' %}selected{% endif %}>Sweet</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Weight
+        <select name="weight">
+          <option value="">Any</option>
+          <option value="light" {% if params.get('weight') == 'light' %}selected{% endif %}>Light</option>
+          <option value="medium" {% if params.get('weight') == 'medium' %}selected{% endif %}>Medium</option>
+          <option value="heavy" {% if params.get('weight') == 'heavy' %}selected{% endif %}>Heavy</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Protein
+        <select name="protein">
+          <option value="">Any</option>
+          <option value="red_meat" {% if params.get('protein') == 'red_meat' %}selected{% endif %}>Red meat</option>
+          <option value="poultry" {% if params.get('protein') == 'poultry' %}selected{% endif %}>Poultry</option>
+          <option value="fish" {% if params.get('protein') == 'fish' %}selected{% endif %}>Fish</option>
+          <option value="seafood" {% if params.get('protein') == 'seafood' %}selected{% endif %}>Seafood</option>
+          <option value="pork" {% if params.get('protein') == 'pork' %}selected{% endif %}>Pork</option>
+          <option value="game" {% if params.get('protein') == 'game' %}selected{% endif %}>Game</option>
+          <option value="vegetarian" {% if params.get('protein') == 'vegetarian' %}selected{% endif %}>Vegetarian</option>
+          <option value="cheese" {% if params.get('protein') == 'cheese' %}selected{% endif %}>Cheese</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Cuisine
+        <select name="cuisine">
+          <option value="">Any</option>
+          <option value="French" {% if params.get('cuisine') == 'French' %}selected{% endif %}>French</option>
+          <option value="Italian" {% if params.get('cuisine') == 'Italian' %}selected{% endif %}>Italian</option>
+          <option value="Swiss" {% if params.get('cuisine') == 'Swiss' %}selected{% endif %}>Swiss</option>
+          <option value="Spanish" {% if params.get('cuisine') == 'Spanish' %}selected{% endif %}>Spanish</option>
+          <option value="Argentine" {% if params.get('cuisine') == 'Argentine' %}selected{% endif %}>Argentine</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Target grapes (comma-separated)
+        <input type="text" name="grapes" placeholder="e.g. Syrah, Nebbiolo, Merlot"
+               value="{{ params.get('grapes', '') }}">
+      </label>
+    </div>
+  </div>
+  <button type="submit">Find Pairing Candidates</button>
+</form>
+
+<div id="pairing-results">
+  {% if results is not none %}
+    {% include "partials/pairing_results.html" %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -180,6 +180,54 @@ async def _run_all_checks(exe_path: Path, output_dir: Path) -> list[CheckResult]
                     )
                 )
 
+                # --- Pairing candidates (RAG retrieval — always available) ---
+                pairing_tools = [
+                    (
+                        "pairing_candidates",
+                        {
+                            "dish_description": "grilled lamb chops with rosemary",
+                            "protein": "red_meat",
+                            "category": "red",
+                            "limit": 5,
+                        },
+                        "returns ranked candidates for red meat",
+                        lambda t: "| Rank |" in t or "No pairing candidates" in t,
+                    ),
+                    (
+                        "pairing_candidates",
+                        {
+                            "dish_description": "seared scallops with lemon butter",
+                            "protein": "seafood",
+                            "cuisine": "French",
+                            "weight": "light",
+                            "limit": 5,
+                        },
+                        "returns candidates for seafood/French",
+                        lambda t: "| Rank |" in t or "No pairing candidates" in t,
+                    ),
+                    (
+                        "pairing_candidates",
+                        {
+                            "dish_description": "raclette with pickles",
+                            "protein": "cheese",
+                            "cuisine": "Swiss",
+                            "category": "white",
+                            "limit": 5,
+                        },
+                        "returns candidates for Swiss cheese dish",
+                        lambda t: "| Rank |" in t or "No pairing candidates" in t,
+                    ),
+                ]
+                for tool_name, kwargs, desc, pass_fn in pairing_tools:
+                    result = await _check_tool(session, tool_name, kwargs, desc, pass_fn)
+                    # Distinguish multiple calls to same tool
+                    result = CheckResult(
+                        name=f"MCP tool: {tool_name} ({desc})",
+                        passed=result.passed,
+                        details=result.details,
+                    )
+                    results.append(result)
+
                 # --- Sommelier tool checks (conditional on trained model) ---
                 sommelier_model_exists = (Path(output_dir).parent / "models" / "sommelier" / "model").is_dir()
                 sommelier_indexes_exist = (Path(output_dir) / "sommelier" / "wine.index").is_file()

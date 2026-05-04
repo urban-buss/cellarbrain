@@ -1514,6 +1514,145 @@ def _suggest_foods_sync(wine_id: int, limit: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# pairing_candidates — RAG multi-strategy retrieval
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_log_tool
+async def pairing_candidates(
+    dish_description: str,
+    category: str | None = None,
+    weight: str | None = None,
+    protein: str | None = None,
+    cuisine: str | None = None,
+    grapes: str | None = None,
+    limit: int = 15,
+    meta: dict | None = None,
+) -> str:
+    """Find pairing-candidate wines using multi-strategy structured retrieval.
+
+    Combines category, grape, food-tag, food-group, and region-affinity
+    strategies to find wines that pair with the described dish. Does NOT
+    require the sommelier model — works with base DuckDB data.
+
+    If only *dish_description* is provided (no category, protein, or
+    grapes), the tool auto-classifies the dish server-side using keyword
+    matching.  This makes the tool usable by small LLMs that cannot
+    reliably classify dishes themselves.
+
+    Args:
+        dish_description: Free-text dish description (e.g. "grilled lamb
+                          chops with rosemary"). Required.
+        category: Target wine category (red/white/rose/sparkling/sweet).
+                  Auto-inferred from protein if omitted.
+        weight: Dish weight class (light/medium/heavy). Used for grape
+                selection and food-group matching. Default: medium.
+        protein: Dominant protein (red_meat/poultry/fish/seafood/pork/
+                 game/vegetarian/cheese). Auto-inferred from
+                 dish_description if omitted.
+        cuisine: Cuisine origin (French/Italian/Swiss/Japanese/etc.).
+                 Auto-inferred from dish_description if omitted.
+        grapes: Comma-separated target grape varieties. Overrides
+                automatic grape inference when provided.
+        limit: Maximum candidates to return (default 15).
+    """
+    return await anyio.to_thread.run_sync(
+        lambda: _pairing_candidates_sync(dish_description, category, weight, protein, cuisine, grapes, limit),
+    )
+
+
+def _pairing_candidates_sync(
+    dish_description: str,
+    category: str | None,
+    weight: str | None,
+    protein: str | None,
+    cuisine: str | None,
+    grapes: str | None,
+    limit: int,
+) -> str:
+    """Blocking helper for pairing_candidates."""
+    from . import pairing
+
+    try:
+        con = _get_agent_connection()
+        grape_list = [g.strip() for g in grapes.split(",")] if grapes else None
+        results = pairing.retrieve_candidates(
+            con,
+            dish_description=dish_description,
+            category=category,
+            weight=weight,
+            protein=protein,
+            cuisine=cuisine,
+            grapes=grape_list,
+            limit=limit,
+        )
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    if not results:
+        return "No pairing candidates found for this dish profile."
+
+    return pairing.format_table(results)
+
+
+# ---------------------------------------------------------------------------
+# pair_wine — simplified single-shot pairing for small LLMs
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+@_log_tool
+async def pair_wine(
+    dish: str,
+    occasion: str | None = None,
+    limit: int = 5,
+    meta: dict | None = None,
+) -> str:
+    """Find wines from your cellar that pair well with a dish.
+
+    Just describe the food — the tool classifies the dish, searches the
+    cellar, and returns ready-to-present recommendations with reasons.
+    No need to specify protein, weight, or category yourself.
+
+    Args:
+        dish: What you're eating (e.g. "grilled lamb with rosemary",
+              "raclette", "sushi platter", "chocolate cake").
+        occasion: Optional context like "casual dinner", "date night",
+                  or "large group" (currently informational).
+        limit: Number of recommendations to return (default 5).
+    """
+    return await anyio.to_thread.run_sync(
+        lambda: _pair_wine_sync(dish, occasion, limit),
+    )
+
+
+def _pair_wine_sync(dish: str, occasion: str | None, limit: int) -> str:
+    """Blocking helper for pair_wine."""
+    from . import pairing
+
+    try:
+        con = _get_agent_connection()
+        classification = pairing.classify_dish(dish)
+        results = pairing.retrieve_candidates(
+            con,
+            dish_description=dish,
+            category=classification.category,
+            weight=classification.weight,
+            protein=classification.protein,
+            cuisine=classification.cuisine,
+            limit=max(limit, 5) * 3,  # fetch extra for quality ranking
+        )
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    if not results:
+        return f'No wines found for "{dish}". Your cellar may not have suitable wines in stock.'
+
+    return pairing.format_explained(results, dish, classification, limit=limit)
+
+
+# ---------------------------------------------------------------------------
 # add_pairing â€” append training pair
 # ---------------------------------------------------------------------------
 

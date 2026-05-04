@@ -34,6 +34,7 @@ Classify each changed file into one or more categories:
 | **Computed** | `computed.py` | Derived fields — test calculation logic |
 | **Query layer** | `query.py`, `views.py` | SQL views — test view availability, column names |
 | **MCP tools** | `mcp_server.py` | Tool surface — test tool calls, error handling |
+| **Pairing** | `pairing.py`, `dashboard/templates/pairing.html` | RAG retrieval — test strategies, dashboard page |
 | **Dossier** | `markdown.py`, `dossier_ops.py` | Dossier generation — test sections, frontmatter |
 | **CLI** | `cli.py` | Command interface — test CLI invocations |
 | **Settings** | `settings.py` | Configuration — test TOML loading, defaults |
@@ -79,6 +80,13 @@ For each change category detected, apply these test strategies:
 - **Feature test:** Call the changed tool with valid inputs, verify response format and content
 - **Regression:** Call all unchanged tools to confirm they still work (the standard smoke pipeline covers this)
 - **Edge cases:** Call with invalid inputs, verify error handling
+
+#### Pairing / RAG retrieval changes
+- **Feature test:** Call `pairing_candidates` with varied dish profiles (protein, cuisine, weight, grapes). Verify ranked table or "No pairing candidates" response. Test with explicit category vs inferred-from-protein.
+- **Regression:** Run `pytest tests/test_pairing.py tests/test_dashboard_pairing.py -v` to confirm existing strategies still work.
+- **Integration:** Verify `/pairing` dashboard page renders (GET returns 200, POST with form data returns results or empty message). Test HTMX partial response (HX-Request header).
+- **Edge cases:** Call with nonexistent grapes, sparkling + red_meat (unusual combo), empty dish_description, all-None optional params.
+- **SQL verification:** Use `query_cellar` to confirm `food_tags` and `food_groups` columns are populated: `SELECT count(*) FROM wines_full WHERE food_tags IS NOT NULL AND len(food_tags) > 0`
 
 #### Dossier changes
 - **Feature test:** Use `read_dossier` on a known wine, verify new/changed sections appear correctly
@@ -144,6 +152,7 @@ Execute each test case from your plan. For each test:
 | `read_dossier(wine_id)` | Verify dossier content | `read_dossier(wine_id=7, sections=["identity"])` |
 | `cellar_stats(group_by)` | Verify statistics | `cellar_stats(group_by="country")` |
 | `cellar_churn(period)` | Verify churn analysis | `cellar_churn(period="month")` |
+| `pairing_candidates(...)` | Test RAG food-wine retrieval | `pairing_candidates(dish_description="steak", protein="red_meat", category="red")` |
 | File reads | Check generated files | Read a specific dossier `.md` file directly |
 
 ### Regression test patterns

@@ -14,67 +14,89 @@ Structured food-pairing workflow that translates a dish into wine attributes, th
 - User asks "what goes with X" or "pair wine with Y"
 - User mentions specific cuisine (Thai, Italian, Swiss, etc.)
 
-## Sommelier-Assisted Workflow
+## Primary Workflow (RAG-First)
 
-When the cellarbrain MCP server has a trained sommelier model, use embedding-based retrieval as Step 0 before applying the pairing framework.
-
-### Modified Workflow (with Sommelier)
+The pairing system uses **structured SQL retrieval** as the primary mechanism.
+No ML model is required — `pairing_candidates` always works.
 
 | Step | Action | Tool |
 |------|--------|------|
-| 0 | **Retrieve candidates** — get semantically similar wines | `suggest_wines(food_query)` |
-| 1 | Classify the dish (weight, protein, flavours, cuisine) | Your knowledge |
-| 2 | Apply pairing rules to rerank the retrieved candidates | This skill |
-| 3 | Read dossiers for top 3–5 candidates | `read_dossier(wine_id, sections=[...])` |
-| 4 | Present recommendations with pairing rationale | Your reasoning |
+| 0 | **Classify the dish** — weight, protein, cuisine, flavours, sweetness | Your knowledge |
+| 1 | **Retrieve candidates** — structured multi-strategy retrieval | `pairing_candidates(dish_description, category, weight, protein, cuisine, grapes)` |
+| 1.5 | *(Optional)* **Embedding boost** — if sommelier available, also query | `suggest_wines(food_query)` |
+| 2 | **Apply pairing rules** — rerank using 6-principle framework | This skill |
+| 3 | **Read dossiers** — tasting notes, existing pairings, wine description | `read_dossier(wine_id, sections=[...])` |
+| 4 | **Present recommendations** — 3–5 wines with rationale | Your reasoning |
 
-### How to Interpret Retrieval Scores
+### How to Call pairing_candidates
 
-The `suggest_wines` tool returns a `Score` column (0.0–1.0) based on embedding cosine similarity. These scores are **relative, not absolute**:
+After classifying the dish, map your classification to tool parameters:
 
-- **0.65+** — strong semantic match. The model sees a meaningful food-wine connection.
-- **0.50–0.65** — moderate match. Worth considering if pairing rules support it.
-- **Below 0.50** — weak match. Likely irrelevant unless the model is undertrained.
+| Classification | Parameter | Example |
+|---------------|-----------|---------|
+| Weight: heavy | `weight="heavy"` | Braised beef → heavy |
+| Protein: red_meat | `protein="red_meat"` | Steak → red_meat |
+| Cuisine: French | `cuisine="French"` | Duck confit → French |
+| Category: red | `category="red"` | (from protein inference) |
+| Target grapes | `grapes="Syrah,Merlot,Nebbiolo"` | (from pairing rules) |
+| Dish text | `dish_description="grilled lamb chops with rosemary and roasted garlic"` | Full description |
 
-**Important:** Scores reflect the training data's pairing patterns, not universal truth. A score of 0.70 means "the model thinks this is a good pairing based on 5,000+ training examples." Always validate with the pairing framework below.
+The tool combines these into multi-strategy SQL retrieval and returns
+a ranked candidate table. You then apply the pairing framework to rerank.
 
-### Reranking Strategy
+**Protein values:** `red_meat`, `poultry`, `fish`, `seafood`, `pork`, `game`, `vegetarian`, `cheese`
+
+**Weight values:** `light`, `medium`, `heavy`
+
+**Category values:** `red`, `white`, `rose`, `sparkling`, `sweet`
+
+### Optional Embedding Boost (Step 1.5)
+
+If `suggest_wines` is available (sommelier model trained), call it additionally
+for semantic matches the SQL retrieval might miss. Merge results with
+candidates from Step 1, then apply the pairing framework to the combined set.
+
+### Reranking Strategy (Step 2)
 
 After retrieval, rerank candidates by applying the pairing rules in order:
 
-1. **Weight mismatch → demote.** A full-bodied Barolo for a light salad scores poorly on weight matching even if the embedding score is high.
-2. **Tannin conflict → eliminate.** High-tannin red with delicate fish = metallic bitterness. Remove regardless of score.
-3. **Acid confirmation → promote.** High-acid wine for a rich dish = excellent pairing. Promote even if score is moderate.
+1. **Weight mismatch → demote.** A full-bodied Barolo for a light salad scores poorly on weight matching even if it has many match signals.
+2. **Tannin conflict → eliminate.** High-tannin red with delicate fish = metallic bitterness. Remove regardless of signals.
+3. **Acid confirmation → promote.** High-acid wine for a rich dish = excellent pairing. Promote even if signal count is moderate.
 4. **Regional bonus → promote.** Chasselas with raclette, Sangiovese with ragu — centuries of co-evolution should be respected.
 5. **Drinking window → gate.** Never recommend a wine that's past its window or too young unless the user explicitly asks.
 
 ### Chaining Example: "What wine with duck confit?"
 
 ```
-1. suggest_wines("duck confit, slow cooked, crispy skin, rich fatty duck", limit=10)
-   → Returns 10 wines with scores
-
-2. Classify: weight=heavy, protein=poultry (fatty), flavours=rich/fatty,
+0. Classify: weight=heavy, protein=poultry (fatty), flavours=rich/fatty,
    cuisine=French, sweetness=savoury
+   → category=red, grapes=Pinot Noir,Barbera,Sangiovese,Syrah,Grenache
 
-3. Apply pairing rules:
+1. pairing_candidates(
+     dish_description="duck confit, slow cooked, crispy skin, rich fatty duck",
+     protein="poultry", weight="heavy", cuisine="French",
+     category="red", grapes="Pinot Noir,Barbera,Sangiovese,Syrah,Grenache"
+   )
+   → Returns 10–15 wines with match signals
+
+1.5. (Optional) suggest_wines("duck confit, slow cooked, crispy skin, rich fatty duck", limit=10)
+   → Merge with Step 1 results
+
+2. Apply pairing rules:
    - Weight: need medium-full body (demote light wines)
    - Tannin: moderate OK (duck fat can handle some tannin, but not extreme)
    - Acid: HIGH needed to cut through duck fat → promote Barbera, Sangiovese, Pinot Noir
    - Regional: French dish → promote Burgundy, Rhône
    - Flavour bridges: earthy/cherry notes complement duck
 
-4. Read dossiers for top 3–5 after reranking:
+3. Read dossiers for top 3–5 after reranking:
    read_dossier(wine_id, sections=["tasting_notes", "food_pairings", "wine_description"])
 
-5. Present with rationale:
+4. Present with rationale:
    "The 2019 Musar's Pinot Noir pairs beautifully — its bright acidity cuts through
    the duck fat while cherry fruit complements the richness."
 ```
-
-### Fallback (No Sommelier Model)
-
-If `suggest_wines` returns an error, fall back to the SQL-based approach in Step 3 below (query by grape, category, region using the pre-built SQL patterns). The pairing framework works identically — you just start at Step 1 instead of Step 0.
 
 ## Pairing Decision Framework
 
@@ -170,15 +192,24 @@ Using the framework above, determine:
 - **Regions to prefer:** if regional affinity applies
 - **What to avoid:** high tannin with fish, dry with dessert, etc.
 
-### Step 3 — Query the Cellar
+### Step 3 — Retrieve Candidates
 
-Consult [query strategies](./references/query-strategies.md) for pre-built SQL patterns by dish type.
+Call `pairing_candidates` with your classification from Steps 1–2:
 
-Key rules:
-- Always filter to `wines_drinking_now` or add `drinking_status IN ('optimal', 'drinkable')`
-- Sort: `optimal` before `drinkable`, then by `best_pro_score DESC NULLS LAST`
-- Limit to 10–15 candidates
-- If the dish is ambiguous (could go red or white), run two queries
+```
+pairing_candidates(
+    dish_description="<full dish description>",
+    category="red",        # from Step 2
+    weight="heavy",        # from Step 1
+    protein="red_meat",    # from Step 1
+    cuisine="French",      # from Step 1
+    grapes="Syrah,Merlot"  # from Step 2 (optional — overrides inference)
+)
+```
+
+The tool returns a ranked Markdown table with match signals showing why each wine was selected. Wines matching more strategies rank higher.
+
+Also consult [query strategies](./references/query-strategies.md) for additional dish-specific SQL patterns if needed.
 
 ### Step 4 — Deep-Dive Top Candidates
 

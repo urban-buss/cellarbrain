@@ -151,16 +151,24 @@ Expects CSV exports in `raw/` directory alongside the data directory. Agent-owne
 
 | Tool | Args | Returns |
 |------|------|--------|
+| `pair_wine` | `dish: str`, `occasion?: str`, `limit?: int` | Pre-formatted wine recommendations with reasons. Single-shot — classifies the dish server-side, retrieves candidates, and returns explained results. Designed for small/local LLMs. |
+| `pairing_candidates` | `dish_description: str`, `category?: str`, `weight?: str`, `protein?: str`, `cuisine?: str`, `grapes?: list[str]`, `limit?: int` | Markdown table of cellar wines matching the dish profile. Uses multi-strategy SQL retrieval (category, grapes, food_tags, food_groups, region). Auto-classifies the dish if no structured params given. No ML model required. |
 | `suggest_wines` | `food_query: str`, `limit?: int` | Markdown table of wines ranked by embedding similarity to the food query. Includes vintage, category, region, grape, bottles, size, price, and price/750 mL. |
 | `suggest_foods` | `wine_id: int`, `limit?: int` | Markdown table of dishes ranked by embedding similarity to the wine. Includes cuisine, weight class, protein, and flavour profile from the food catalogue. |
 
-Both tools use a fine-tuned `all-MiniLM-L6-v2` sentence-transformer model with FAISS indexes. They require:
+`suggest_wines` and `suggest_foods` use a fine-tuned `all-MiniLM-L6-v2` sentence-transformer model with FAISS indexes. They require:
 1. `cellarbrain train-model` — fine-tune the pairing model (~3-5 min CPU).
 2. `cellarbrain rebuild-indexes` — build the food and wine FAISS indexes.
 
 The wine index is also auto-rebuilt after each ETL run when `sommelier.enabled = true` and the model exists. The `limit` parameter defaults to 10.
 
-**Agent workflow:** For food → wine pairing, the agent chains `suggest_wines` → `read_dossier` (top 3–5) → food-pairing skill (rerank) → LLM explanation. For wine → food, the agent calls `suggest_foods` → reads the wine dossier → presents dishes with context. When the model is unavailable, the agent falls back to SQL-based queries using the food-pairing skill's query strategies.
+`pair_wine` is the simplest entry point — pass a free-text dish description and get back pre-formatted recommendations. It uses rule-based keyword classification server-side, making it reliable with small/local LLMs that cannot classify dishes themselves.
+
+`pairing_candidates` is the advanced tool for capable LLMs that can classify dishes. It also auto-classifies when only `dish_description` is provided (no protein/category/grapes), making it usable without the full skill document loaded.
+
+Both tools are always available (no model required) and use SQL strategies against food_tags, food_groups, category, grapes, and region columns.
+
+**Agent workflow:** For food → wine pairing with a small LLM, call `pair_wine(dish="...")` and present the output. For capable LLMs, classify the dish first (protein, cuisine, weight, category) then call `pairing_candidates` → read dossiers → apply pairing rules → present recommendations. If the sommelier model is available, `suggest_wines` can supplement retrieval with embedding similarity. For wine → food, the agent calls `suggest_foods` → reads the wine dossier → presents dishes with context.
 
 ### Price Tracking
 
