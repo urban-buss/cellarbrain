@@ -281,9 +281,17 @@ src/cellarbrain/
 
 ## Development
 
+> **Note:** Unit tests and smoke tests require a source checkout of the
+> repository. They are not included in the PyPI package.
+
 ```bash
-# Install with test + research dependencies
-pip install -e ".[research]"
+# Clone and set up for development
+git clone https://github.com/urban-buss/cellarbrain.git
+cd cellarbrain
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate      # macOS / Linux
+pip install -e ".[dev,research]"
 
 # Run tests
 pytest tests/ -v

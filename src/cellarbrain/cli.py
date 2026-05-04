@@ -9,6 +9,7 @@ import re
 import sys
 import warnings
 from datetime import UTC, datetime
+from importlib.metadata import version as _pkg_version
 
 from . import companion_markdown, incremental, markdown, transform, vinocell_reader, writer
 from . import validate as val
@@ -471,6 +472,12 @@ def _subcommand_main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(
         prog="cellarbrain",
         description="Cellarbrain wine cellar toolkit — ETL, query, and agent interface.",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {_pkg_version('cellarbrain')}",
     )
     parser.add_argument(
         "-c",

@@ -689,3 +689,28 @@ def _create_mini_catalogue(base_path: pathlib.Path) -> None:
     """)
     con.execute(f"COPY food_catalogue TO '{catalogue_path}' (FORMAT PARQUET)")
     con.close()
+
+
+# ---------------------------------------------------------------------------
+# TestVersionFlag
+# ---------------------------------------------------------------------------
+
+
+class TestVersionFlag:
+    def test_version_long_flag(self, capsys):
+        with pytest.raises(SystemExit, match="0"):
+            main(["--version"])
+        captured = capsys.readouterr()
+        assert "cellarbrain" in captured.out
+
+    def test_version_short_flag(self, capsys):
+        with pytest.raises(SystemExit, match="0"):
+            main(["-V"])
+        captured = capsys.readouterr()
+        assert "cellarbrain" in captured.out
+
+    def test_init_version_attribute(self):
+        import cellarbrain
+
+        assert isinstance(cellarbrain.__version__, str)
+        assert len(cellarbrain.__version__) > 0

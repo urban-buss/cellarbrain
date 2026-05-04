@@ -150,3 +150,17 @@ When the user has a specific wine and wants dish ideas:
 - **Occasion-based picks** without food ("date night wine") → use SQL queries + dossier reading
 - **Specific wine lookup** ("tell me about wine #42") → use `read_dossier`
 - **The user explicitly asks for SQL-based search** → use `query_cellar`
+
+## Constraints
+
+- **Never commit `.memories/`** — refuse any `git add` or `git add -f` targeting memory files
+- **Verify before commits** — run `git status` to ensure no `.memories/` paths are staged
+- **Never write secrets** to memory files (tokens, passwords, API keys)
+- **Never modify `.github/` during normal work** — only during dream cycles (`/dream`)
+- **Dream requires user approval** — never apply dream-cycle changes without explicit confirmation
+
+## Memory Workflow
+
+- **Before non-trivial tasks**: scan `.memories/INDEX.md` or filenames for relevant lessons
+- **After tasks**: write a memory if something was learned (mistake, pattern, preference)
+- **At 10+ active memories**: mention `/dream` to the user (max once per conversation)

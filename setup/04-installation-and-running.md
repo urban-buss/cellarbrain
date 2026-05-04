@@ -16,6 +16,9 @@ python3 --version
 pip install cellarbrain
 ```
 
+> **Note:** The PyPI package does not include the test suite. To run tests,
+> install from source (Option C) with `pip install -e ".[dev]"`.
+
 ### Option B: Install from Homebrew (when available)
 
 ```bash

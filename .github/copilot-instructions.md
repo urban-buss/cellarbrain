@@ -126,3 +126,44 @@ cellarbrain ingest --once      # single poll cycle, then exit
 cellarbrain train-model        # fine-tune the sommelier pairing model (~3-5 min CPU)
 cellarbrain rebuild-indexes    # build FAISS food + wine indexes
 ```
+
+## Memory System
+
+The workspace includes a self-learning memory system that captures lessons across conversations.
+
+### When to Write Memories
+
+Write a memory file in `.memories/` when:
+- You make a mistake and the user corrects you
+- You discover an efficiency trick or shortcut
+- The user provides explicit guidance or preferences
+- You observe unexpected tool/API behavior
+- You identify a recurring pattern worth codifying
+
+### Format
+
+Filename: `YYYY-MM-DD_<category>_<short-slug>.md` (see `.github/instructions/memory-management.instructions.md` for details).
+
+Frontmatter must include `severity: low|medium|high`.
+
+### Reading Rule
+
+Before non-trivial tasks, scan `.memories/INDEX.md` (if it exists) or `.memories/` filenames for relevant lessons. Only read full content when a filename is clearly relevant.
+
+### Git Safety
+
+- **Never** commit `.memories/` — refuse any `git add` or `git add -f` targeting memory files
+- Before commits, verify with `git status` that no `.memories/` paths are staged
+- If `.memories/` is missing from `.gitignore`, add it before proceeding
+
+### Secrets
+
+Never write secrets, tokens, passwords, or API keys to memory files. Redact or skip entirely.
+
+### Bootstrap
+
+On first use in a fresh clone: create `.memories/` + `.gitkeep` if missing, and verify `.gitignore` coverage.
+
+### Dreaming
+
+When 10+ memories accumulate, mention the `/dream` prompt to the user. The dream cycle consolidates lessons into permanent `.github/` rules — see `.github/prompts/dream.prompt.md`.
