@@ -1,0 +1,42 @@
+{% if results %}
+<h5>{{ results|length }} candidates found</h5>
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Wine</th>
+      <th>Vintage</th>
+      <th>Category</th>
+      <th>Region</th>
+      <th>Grape</th>
+      <th>Bottles</th>
+      <th>Rating</th>
+      <th>Signals</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in results %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><a href="/cellar/{{ c.wine_id }}">{{ c.wine_name }}</a></td>
+      <td>{{ c.vintage or '' }}</td>
+      <td><span class="badge badge-ok">{{ c.category }}</span></td>
+      <td>{{ c.region or '' }}</td>
+      <td>{{ c.primary_grape or '' }}</td>
+      <td>{{ c.bottles_stored }}</td>
+      <td>{{ c.best_pro_score or '—' }}</td>
+      <td style="font-size:0.75rem;">
+        {% for s in c.match_signals[:4] %}
+          <span class="badge badge-warn">{{ s }}</span>
+        {% endfor %}
+        {% if c.match_signals|length > 4 %}
+          <span class="badge">+{{ c.match_signals|length - 4 }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No candidates found. Try broadening your criteria.</p>
+{% endif %}

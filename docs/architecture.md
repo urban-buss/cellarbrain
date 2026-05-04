@@ -87,6 +87,14 @@ The MCP server uses **stdio transport** (FastMCP). Configuration:
 
 All 15 tools are thin data accessors — no LLM reasoning in server code. Agents provide the reasoning layer.
 
+## Food Pairing — RAG Retrieval
+
+The `pairing` module (`src/cellarbrain/pairing.py`) provides SQL-based retrieval-augmented generation for food→wine pairing. It requires **no ML model** — strategies use existing columns (`category`, `primary_grape`, `food_tags`, `food_groups`, `country`, `region`) to score and rank cellar candidates.
+
+Five strategies run in parallel: category matching, grape affinity, food_tag keyword search, food_group membership, and regional affinity. Results are merged by `wine_id` and ranked by signal count (number of strategies that matched). See `docs/food-pairing.md` for full details.
+
+The `pairing_candidates` MCP tool wraps `retrieve_candidates()` and is the **primary retrieval tool** for the food-pairing skill. The dashboard exposes the same functionality at `/pairing`.
+
 ## Sommelier Module
 
 The sommelier module (`src/cellarbrain/sommelier/`) provides AI-powered food-wine pairing via embedding-based semantic similarity.

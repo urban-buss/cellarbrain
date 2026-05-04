@@ -22,7 +22,7 @@ Runs all 6 phases, writes a timestamped report to `smoke-reports/`.
 | 2 | Output verification | 13 Parquet files, ETL run history, entity counts, wine schema, dossiers, validation |
 | 3 | Data integrity | 13 FK constraints + 6 dossier linkage checks (bidirectional wine↔dossier, tracked↔companion) |
 | 4 | Cross-run consistency | Wine count trend, change log growth, ETL run count |
-| 5 | MCP integration | Rebuild server, test 16 tools + 5 resources over stdio |
+| 5 | MCP integration | Rebuild server, test tools (including pairing_candidates) + resources over stdio |
 
 ## Module Reference
 

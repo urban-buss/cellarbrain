@@ -471,6 +471,62 @@ async def drinking(request: Request) -> HTMLResponse:
     )
 
 
+# ---- Food pairing ---------------------------------------------------------
+
+
+async def pairing_page(request: Request) -> HTMLResponse:
+    """Food pairing interactive page — classify dish, retrieve candidates."""
+    con = request.app.state.cellar_con
+    if con is None:
+        return _TEMPLATES.TemplateResponse(
+            request,
+            "error.html",
+            context={"message": "Cellar data not available."},
+            status_code=503,
+        )
+
+    results = None
+    params: dict[str, str | None] = {}
+
+    if request.method == "POST":
+        form = await request.form()
+        params = {
+            "dish_description": form.get("dish_description", ""),
+            "category": form.get("category") or None,
+            "weight": form.get("weight") or None,
+            "protein": form.get("protein") or None,
+            "cuisine": form.get("cuisine") or None,
+            "grapes": form.get("grapes") or None,
+        }
+
+        from cellarbrain import pairing
+
+        grape_list = (
+            [g.strip() for g in params["grapes"].split(",")]
+            if params["grapes"]
+            else None
+        )
+        results = pairing.retrieve_candidates(
+            con,
+            dish_description=params["dish_description"],
+            category=params["category"],
+            weight=params["weight"],
+            protein=params["protein"],
+            cuisine=params["cuisine"],
+            grapes=grape_list,
+            limit=15,
+        )
+
+    template = (
+        "partials/pairing_results.html" if _wants_partial(request) else "pairing.html"
+    )
+    return _TEMPLATES.TemplateResponse(
+        request,
+        template,
+        context={"results": results, "params": params},
+    )
+
+
 # ---- SQL playground -------------------------------------------------------
 
 _QUICK_QUERIES = [
@@ -979,6 +1035,7 @@ def build_app(
             Route("/cellar/{wine_id:int}", wine_detail),
             Route("/bottles", cellar_bottles),
             Route("/drinking", drinking),
+            Route("/pairing", pairing_page, methods=["GET", "POST"]),
             Route("/sql", sql_playground, methods=["GET", "POST"]),
             Route("/stats", stats),
             Route("/tracked", tracked),

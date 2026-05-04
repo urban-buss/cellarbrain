@@ -51,6 +51,7 @@ _TOOL_CATEGORIES: dict[str, str] = {
     "suggest_wines": "Sommelier",
     "suggest_foods": "Sommelier",
     "add_pairing": "Sommelier",
+    "pairing_candidates": "Sommelier",
     "train_sommelier": "Sommelier",
     "reload_data": "Data Refresh",
 }

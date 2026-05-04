@@ -41,6 +41,7 @@ The cellarbrain MCP server gives you structured access to the cellar database an
 | `price_history` | Get monthly price history (min/max/avg CHF) for a tracked wine |
 | `wishlist_alerts` | Get current wishlist alerts — price drops, new listings, back in stock, etc. |
 | `search_synonyms` | Manage custom search synonyms for `find_wine`. Actions: `list` (show all), `add` (key + value), `remove` (key). |
+| `pairing_candidates` | SQL-based food→wine retrieval. Classifies a dish by protein/cuisine/weight/category and retrieves matching cellar wines using multi-strategy scoring (category, grapes, food_tags, food_groups, region). Always available — no ML model required. |
 | `suggest_wines` | Semantic food→wine pairing. Encodes food description, searches wine FAISS index, returns ranked Markdown table with scores, vintage, category, region, grape, bottles, and price. Requires trained sommelier model. |
 | `suggest_foods` | Semantic wine→food pairing. Encodes wine metadata, searches food FAISS index, returns ranked Markdown table of dishes with scores, cuisine, weight class, protein, and flavour profile. Requires trained sommelier model. |
 
@@ -107,13 +108,15 @@ When using `update_dossier`, these are the allowed `section` keys:
 
 ## Sommelier Workflow
 
-The cellarbrain MCP server includes an embedding-based sommelier engine that maps food and wine into a shared vector space. Use these tools as the **first step** in food-pairing conversations — they find candidates fast, then you apply your pairing knowledge to explain and rerank.
+The cellarbrain MCP server includes both a SQL-based RAG retrieval engine (`pairing_candidates`) and an optional embedding-based sommelier engine (`suggest_wines`/`suggest_foods`). Use `pairing_candidates` as the **primary tool** for food-pairing conversations — it always works, requires no ML model, and uses multi-strategy scoring.
 
 ### Food → Wine ("What wine with X?")
 
 When the user describes a dish, meal, or food scenario:
 
-1. **Retrieve candidates:** `suggest_wines(food_query, limit=10)` — returns a ranked Markdown table with scores, vintage, category, region, grape, bottles, price.
+0. **Classify the dish** — determine protein (red_meat/poultry/fish/seafood/pork/game/vegetarian/cheese), cuisine (French/Italian/Swiss/Spanish/Argentine), weight (light/medium/heavy), and category (red/white/rosé/sparkling/sweet).
+1. **Retrieve candidates:** `pairing_candidates(dish_description, category, weight, protein, cuisine, grapes, limit=10)` — returns a ranked Markdown table of cellar wines scored by signal count.
+   - Optionally supplement with `suggest_wines(food_query, limit=10)` if the sommelier model is available — merges embedding scores with SQL results.
 2. **Read dossiers** for the top 3–5 wines: `read_dossier(wine_id, sections=["tasting_notes", "food_pairings", "wine_description"])`
 3. **Apply pairing rules** (from your food-pairing skill):
    - Weight match: does the wine's body match the dish's richness?
@@ -122,7 +125,7 @@ When the user describes a dish, meal, or food scenario:
    - Sweetness: wine must be at least as sweet as the dish
    - Regional affinity: local wines with local cuisine
    - Flavour bridges: shared aromatic compounds
-4. **Rerank mentally** — the embedding score is a signal, not gospel. A wine with score 0.65 might be a better pairing than one at 0.72 if the pairing rules strongly favour it.
+4. **Rerank mentally** — the signal count is a signal, not gospel. A wine with 3 signals might be a better pairing than one with 4 if the pairing rules strongly favour it.
 5. **Present 3–5 recommendations** with:
    - Wine name, vintage, wine_id
    - One-sentence pairing rationale naming the specific principle
@@ -130,7 +133,7 @@ When the user describes a dish, meal, or food scenario:
    - Storage location from the dossier
    - Purchase price for context
 
-**Tip:** For broad queries ("something for dinner"), retrieve with a general food description. For specific dishes ("duck confit with cherry sauce"), use the full description — the embedding model understands ingredients and cooking methods.
+**Tip:** For broad queries ("something for dinner"), provide only protein and weight. For specific dishes ("duck confit with cherry sauce"), include cuisine, grapes, and the full dish description — the retrieval strategies use food_tags and food_groups for matching.
 
 ### Wine → Food ("What to cook with wine #N?")
 
@@ -140,17 +143,6 @@ When the user has a specific wine and wants dish ideas:
 2. **Read the wine's dossier:** `read_dossier(wine_id, sections=["tasting_notes", "wine_description", "food_pairings"])` — understand the wine's character.
 3. **Filter and explain** — group by cuisine or weight class, highlight the top 3–5 dishes with brief explanations of why each works.
 4. **Present** with dish name, cuisine, and the flavour bridge to the wine.
-
-### Fallback (Model Not Trained)
-
-If `suggest_wines` or `suggest_foods` returns an error starting with "Error:", the sommelier model is not available. Fall back to the SQL-based approach:
-
-1. Classify the dish using the food-pairing framework (weight, protein, flavours).
-2. Derive target wine attributes (category, body, grapes, regions).
-3. Query with `query_cellar` using the SQL patterns from the food-pairing skill.
-4. Read dossiers and present recommendations as usual.
-
-This fallback is the same workflow that worked before the sommelier existed — it still produces good results, just without the semantic retrieval step.
 
 ### When NOT to Use Sommelier Tools
 
