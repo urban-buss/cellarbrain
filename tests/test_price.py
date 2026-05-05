@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -414,7 +414,7 @@ class TestWishlistAlerts:
             "price": Decimal("50.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 4, 7, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=5),
             "observation_source": "agent",
         }
         log_price(price_dir, obs)
@@ -432,7 +432,7 @@ class TestWishlistAlerts:
             "price": Decimal("100.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 3, 1, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=20),
             "observation_source": "agent",
         }
         log_price(price_dir, old_obs)
@@ -444,7 +444,7 @@ class TestWishlistAlerts:
             "price": Decimal("80.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 4, 5, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=5),
             "observation_source": "agent",
         }
         log_price(price_dir, new_obs)
@@ -461,7 +461,7 @@ class TestWishlistAlerts:
             "price": Decimal("100.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 3, 1, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=20),
             "observation_source": "agent",
         }
         log_price(price_dir, old_obs)
@@ -473,7 +473,7 @@ class TestWishlistAlerts:
             "price": Decimal("95.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 4, 5, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=5),
             "observation_source": "agent",
         }
         log_price(price_dir, new_obs)
@@ -489,7 +489,7 @@ class TestWishlistAlerts:
             "price": Decimal("60.00"),
             "currency": "CHF",
             "in_stock": False,
-            "observed_at": datetime(2026, 3, 1, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=20),
             "observation_source": "agent",
         }
         log_price(price_dir, out_obs)
@@ -501,7 +501,7 @@ class TestWishlistAlerts:
             "price": Decimal("60.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 4, 5, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=5),
             "observation_source": "agent",
         }
         log_price(price_dir, in_obs)
@@ -518,7 +518,7 @@ class TestWishlistAlerts:
             "price": Decimal("35.00"),
             "currency": "CHF",
             "in_stock": True,
-            "observed_at": datetime(2026, 4, 7, 12, 0),
+            "observed_at": datetime.now() - timedelta(days=5),
             "observation_source": "agent",
             "notes": "En primeur release",
         }
