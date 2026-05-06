@@ -324,3 +324,4 @@ RON = 0.19
 # etl_timeout = 300              # seconds before ETL subprocess is killed
 # max_backoff_interval = 600     # max seconds between retries on transient errors
 # max_attachment_bytes = 10485760  # reject attachments larger than 10 MB
+# imap_timeout = 60               # socket timeout (seconds) for IMAP operations

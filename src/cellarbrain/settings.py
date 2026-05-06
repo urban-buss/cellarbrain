@@ -255,6 +255,11 @@ class IngestConfig:
     etl_timeout: int = 300
     max_backoff_interval: int = 600
     max_attachment_bytes: int = 10_485_760
+    imap_timeout: int = 60
+    reaper_enabled: bool = True
+    stale_threshold: int = 0
+    dedup_strategy: str = "latest"
+    dead_letter_folder: str = ""
 
 
 # ---------------------------------------------------------------------------

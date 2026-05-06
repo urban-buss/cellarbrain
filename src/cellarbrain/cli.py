@@ -636,6 +636,10 @@ def _subcommand_main(argv: list[str]) -> None:
     ingest.add_argument("--once", action="store_true", help="Single poll cycle, then exit")
     ingest.add_argument("--dry-run", action="store_true", help="Detect batches but don't write files or run ETL")
     ingest.add_argument("--setup", action="store_true", help="Interactive credential storage")
+    ingest.add_argument(
+        "--foreground", "-f", action="store_true", help="Force INFO logging to stderr (interactive use)"
+    )
+    ingest.add_argument("--reap-orphans", action="store_true", help="One-shot cleanup of orphan/duplicate messages")
 
     # --- backup ---
     bkp_parser = sub.add_parser("backup", help="Create a backup of the data directory")
@@ -1335,7 +1339,7 @@ def _cmd_restore(args: argparse.Namespace, settings: Settings) -> None:
 def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
     """Start the email ingestion daemon or run a single poll cycle."""
     try:
-        from .email_poll import IngestDaemon, poll_once
+        from .email_poll import IngestDaemon, poll_once, reap_orphans
     except ImportError:
         print("Ingest dependencies not installed.", file=sys.stderr)
         print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
@@ -1347,6 +1351,11 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
         _ingest_setup()
         return
 
+    if getattr(args, "reap_orphans", False):
+        count = reap_orphans(config, settings, dry_run=args.dry_run)
+        print(f"Reaped {count} orphan message(s).")
+        sys.exit(0)
+
     if args.once:
         count = poll_once(config, settings, dry_run=args.dry_run)
         if count < 0:
@@ -1355,8 +1364,19 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
         print(f"Processed {count} batch(es).")
         sys.exit(0)
 
-    daemon = IngestDaemon(config, settings)
-    daemon.run(dry_run=args.dry_run)
+    # --foreground: raise log level to INFO for interactive use
+    if getattr(args, "foreground", False):
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        for handler in root.handlers:
+            if handler.level > logging.INFO:
+                handler.setLevel(logging.INFO)
+
+    try:
+        daemon = IngestDaemon(config, settings)
+        daemon.run(dry_run=args.dry_run)
+    except KeyboardInterrupt:
+        pass
 
 
 def _ingest_setup() -> None:

@@ -332,6 +332,9 @@ Start the IMAP email ingestion daemon that monitors a mailbox for Vinocell CSV e
 # Start polling daemon (foreground, runs until stopped)
 cellarbrain ingest
 
+# Start with INFO logging visible on stderr (interactive use)
+cellarbrain ingest --foreground
+
 # Single poll cycle, then exit (for cron/testing)
 cellarbrain ingest --once
 
@@ -343,13 +346,21 @@ cellarbrain ingest --once --dry-run
 
 # Interactive credential setup (stores in system keyring)
 cellarbrain ingest --setup
+
+# One-shot cleanup of orphan/duplicate messages
+cellarbrain ingest --reap-orphans
+
+# Dry-run orphan cleanup (shows what would be reaped, no IMAP changes)
+cellarbrain ingest --reap-orphans --dry-run
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--once` | Run a single poll cycle and exit |
 | `--dry-run` | Detect batches but don't write files or invoke ETL |
+| `--foreground`, `-f` | Force INFO-level logging to stderr (for interactive monitoring) |
 | `--setup` | Interactive credential storage (prompts for IMAP user/password, stores in keyring) |
+| `--reap-orphans` | One-shot cleanup of orphan/duplicate messages that cannot form a batch |
 
 ### Prerequisites
 
@@ -360,12 +371,23 @@ cellarbrain ingest --setup
 ### How It Works
 
 1. Connects to the IMAP server and searches for unread messages matching the subject filter
-2. Groups messages into batches by timestamp (all 3 files within `batch_window` seconds)
-3. For complete batches: extracts attachments, writes a snapshot folder (`raw/YYMMDD-HHMM/`), flushes top-level `raw/*.csv`
-4. Invokes `cellarbrain etl` as a subprocess
-5. Marks processed emails as read (or moves them to a configured folder)
-6. In daemon mode, sleeps for `poll_interval` seconds and repeats. On transient errors, applies exponential backoff (up to 10 minutes)
+2. **Dedup step** (if `dedup_strategy = "latest"`): removes duplicate messages per filename, keeping only the newest. Older duplicates are marked as read immediately
+3. Groups messages into batches by timestamp (all 3 files within `batch_window` seconds)
+4. **Reaper step** (if `reaper_enabled`): messages that couldn't form a batch and are older than `stale_threshold` (default: 2× `batch_window`) are marked as read or moved to `dead_letter_folder`
+5. For complete batches: extracts attachments, writes a snapshot folder (`raw/YYMMDD-HHMM/`), flushes top-level `raw/*.csv`
+6. Invokes `cellarbrain etl` as a subprocess
+7. Marks processed emails as read (or moves them to a configured folder)
+8. In daemon mode, sleeps for `poll_interval` seconds and repeats. On transient errors, applies exponential backoff (up to 10 minutes)
 
 ### macOS Deployment
 
-For always-on operation, deploy as a `launchd` user agent. See the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for the plist template.
+For always-on operation, deploy as a `launchd` user agent. A template plist is provided at `setup/com.cellarbrain.ingest.plist.template`. To install:
+
+```bash
+# Copy and edit the template
+cp setup/com.cellarbrain.ingest.plist.template ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
+# Edit paths in the plist, then load:
+launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
+```
+
+See also the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for background.

@@ -1,7 +1,7 @@
 ---
 description: "Plan and implement all changes from an analysis document. Use when: 'implement analysis', 'implement plan', 'execute recommendations', 'fix issues from analysis'."
 argument-hint: "Link the analysis doc to implement"
-agent: plan
+agent: Plan
 ---
 Read the linked analysis document completely. Then:
 
