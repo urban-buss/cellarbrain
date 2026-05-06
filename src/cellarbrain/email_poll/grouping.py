@@ -65,34 +65,115 @@ def group_messages(
         >>> len(batches)
         1
     """
+    batches, _ = group_messages_with_leftovers(messages, expected_files, window_seconds)
+    return batches
+
+
+def group_messages_with_leftovers(
+    messages: list[EmailMessage],
+    expected_files: tuple[str, ...] | list[str],
+    window_seconds: int,
+) -> tuple[list[Batch], list[EmailMessage]]:
+    """Group *messages* into complete batches, returning leftover messages.
+
+    Same algorithm as :func:`group_messages` but also returns messages
+    that could not form a complete batch (the "leftovers").
+
+    Returns:
+        Tuple of (complete_batches, leftover_messages).
+
+    Examples:
+        >>> from datetime import datetime
+        >>> msgs = [
+        ...     EmailMessage(1, datetime(2026, 4, 28, 14, 0, 0), "export-wines.csv", 100),
+        ...     EmailMessage(2, datetime(2026, 4, 28, 14, 0, 5), "export-bottles-stored.csv", 200),
+        ... ]
+        >>> batches, leftovers = group_messages_with_leftovers(
+        ...     msgs, ["export-wines.csv", "export-bottles-stored.csv", "export-bottles-gone.csv"], 300
+        ... )
+        >>> len(batches)
+        0
+        >>> len(leftovers)
+        2
+    """
     if not messages:
-        return []
+        return [], []
 
     expected = frozenset(expected_files)
     sorted_msgs = sorted(messages, key=lambda m: m.date)
 
     batches: list[Batch] = []
+    leftovers: list[EmailMessage] = []
     current: list[EmailMessage] = []
 
     for msg in sorted_msgs:
         if current and (msg.date - current[0].date).total_seconds() > window_seconds:
-            _evaluate_group(current, expected, batches)
+            _evaluate_group(current, expected, batches, leftovers)
             current = []
         current.append(msg)
 
     # Final group
     if current:
-        _evaluate_group(current, expected, batches)
+        _evaluate_group(current, expected, batches, leftovers)
 
-    return batches
+    return batches, leftovers
+
+
+def dedup_messages(
+    messages: list[EmailMessage],
+    strategy: str = "latest",
+) -> tuple[list[EmailMessage], list[EmailMessage]]:
+    """Remove duplicate messages per filename, keeping the preferred one.
+
+    When multiple messages share the same filename, the *strategy*
+    determines which is kept:
+
+    - ``"latest"``: keep the message with the most recent ``date``.
+    - ``"none"``: no deduplication; return all messages as kept.
+
+    Returns:
+        Tuple of (kept_messages, dropped_messages).
+
+    Examples:
+        >>> from datetime import datetime
+        >>> msgs = [
+        ...     EmailMessage(1, datetime(2026, 4, 28, 14, 0, 0), "export-wines.csv", 100),
+        ...     EmailMessage(2, datetime(2026, 4, 28, 14, 0, 5), "export-wines.csv", 100),
+        ... ]
+        >>> kept, dropped = dedup_messages(msgs, "latest")
+        >>> [m.uid for m in kept]
+        [2]
+        >>> [m.uid for m in dropped]
+        [1]
+    """
+    if strategy == "none" or not messages:
+        return list(messages), []
+
+    # Group by filename, keep the latest (max date) per filename
+    by_filename: dict[str, list[EmailMessage]] = {}
+    for msg in messages:
+        by_filename.setdefault(msg.filename, []).append(msg)
+
+    kept: list[EmailMessage] = []
+    dropped: list[EmailMessage] = []
+    for filename_msgs in by_filename.values():
+        if len(filename_msgs) == 1:
+            kept.append(filename_msgs[0])
+        else:
+            sorted_by_date = sorted(filename_msgs, key=lambda m: m.date)
+            kept.append(sorted_by_date[-1])  # latest
+            dropped.extend(sorted_by_date[:-1])
+
+    return kept, dropped
 
 
 def _evaluate_group(
     group: list[EmailMessage],
     expected: frozenset[str],
     out: list[Batch],
+    leftovers: list[EmailMessage],
 ) -> None:
-    """Check if *group* is a complete batch; append to *out* or log warning."""
+    """Check if *group* is a complete batch; append to *out* or *leftovers*."""
     filenames = frozenset(m.filename for m in group)
     if filenames == expected and len(group) == len(expected):
         out.append(Batch(messages=tuple(group)))
@@ -108,3 +189,4 @@ def _evaluate_group(
             sorted(missing),
             sorted(extra),
         )
+        leftovers.extend(group)

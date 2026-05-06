@@ -30,10 +30,11 @@ class ImapClient:
             ...
     """
 
-    def __init__(self, host: str, port: int, use_ssl: bool) -> None:
+    def __init__(self, host: str, port: int, use_ssl: bool, *, timeout: int = 60) -> None:
         self._host = host
         self._port = port
         self._use_ssl = use_ssl
+        self._timeout = timeout
         self._client: object = None  # imapclient.IMAPClient instance
 
     def __enter__(self) -> ImapClient:
@@ -43,6 +44,7 @@ class ImapClient:
             self._host,
             port=self._port,
             ssl=self._use_ssl,
+            timeout=self._timeout,
         )
         logger.debug("Connected to %s:%d (ssl=%s)", self._host, self._port, self._use_ssl)
         return self

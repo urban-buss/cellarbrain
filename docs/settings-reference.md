@@ -216,6 +216,11 @@ Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Creden
 | `etl_timeout` | `int` | `300` | Seconds before the ETL subprocess is killed |
 | `max_backoff_interval` | `int` | `600` | Maximum seconds between retries on transient errors |
 | `max_attachment_bytes` | `int` | `10485760` | Reject attachments larger than this (bytes). 0 = unlimited |
+| `imap_timeout` | `int` | `60` | Socket timeout (seconds) for IMAP operations. Prevents indefinite hangs on stale connections |
+| `reaper_enabled` | `bool` | `True` | Enable automatic cleanup of orphan/stale messages |
+| `stale_threshold` | `int` | `0` | Seconds after which incomplete-batch messages are reaped. `0` = auto (`2 × batch_window`) |
+| `dedup_strategy` | `str` | `"latest"` | How to handle duplicate filenames: `"latest"` (keep newest) or `"none"` (disabled) |
+| `dead_letter_folder` | `str` | `""` | IMAP folder to move reaped messages into. Empty = mark as read instead |
 
 #### Sender filtering (layered model)
 
@@ -241,6 +246,10 @@ sender_whitelist = ["noreply@vinocell.com"]
 etl_timeout = 600
 max_backoff_interval = 300
 max_attachment_bytes = 10485760
+reaper_enabled = true
+stale_threshold = 0          # auto = 2 × batch_window (1200s)
+dedup_strategy = "latest"
+dead_letter_folder = ""      # empty = mark as read; set a folder to preserve orphans
 ```
 
 Credential storage:
