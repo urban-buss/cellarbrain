@@ -1349,6 +1349,9 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
 
     if args.once:
         count = poll_once(config, settings, dry_run=args.dry_run)
+        if count < 0:
+            print(f"Failed {-count} batch(es) (ETL error — messages left unprocessed).")
+            sys.exit(1)
         print(f"Processed {count} batch(es).")
         sys.exit(0)
 

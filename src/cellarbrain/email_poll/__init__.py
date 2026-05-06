@@ -58,7 +58,8 @@ def poll_once(
 ) -> int:
     """Execute a single poll cycle.
 
-    Returns the number of batches successfully processed (0 or more).
+    Returns the number of batches successfully processed (0 or more),
+    or a negative number indicating how many batches failed ETL.
     """
     from .credentials import resolve_credentials
     from .etl_runner import run_etl
@@ -111,6 +112,7 @@ def poll_once(
             return 0
 
         processed = 0
+        failed = 0
         for batch in batches:
             logger.info(
                 "Batch detected — %s",
@@ -143,9 +145,15 @@ def poll_once(
                 expected_files=config.expected_files,
             )
             if exit_code != 0:
-                logger.error("ETL failed (exit %d)", exit_code)
+                logger.error(
+                    "ETL failed (exit %d) — leaving messages unprocessed (UIDs: %s)",
+                    exit_code,
+                    list(batch.uids),
+                )
+                failed += 1
+                continue
 
-            # Mark as processed (regardless of ETL outcome)
+            # Mark as processed only on successful ETL
             batch_uids = list(batch.uids)
             if config.processed_action == "move":
                 client.move_messages(batch_uids, config.processed_folder)
@@ -161,6 +169,8 @@ def poll_once(
 
             processed += 1
 
+    if failed:
+        return -failed
     return processed
 
 
@@ -195,9 +205,17 @@ class IngestDaemon:
         while True:
             try:
                 count = poll_once(self.config, self.settings, dry_run=dry_run)
-                if count > 0:
+                if count < 0:
+                    logger.error("ETL failed for %d batch(es) — will retry next cycle", -count)
+                    self._current_interval = min(
+                        self._current_interval * 2,
+                        self._max_interval,
+                    )
+                elif count > 0:
                     logger.info("Processed %d batch(es)", count)
-                self._current_interval = self._base_interval
+                    self._current_interval = self._base_interval
+                else:
+                    self._current_interval = self._base_interval
             except ValueError:
                 # Credential / config errors — fatal, stop daemon
                 raise

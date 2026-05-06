@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -58,11 +59,13 @@ def run_etl(
 
     logger.info("Running ETL: %s", " ".join(cmd))
     try:
+        env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=_ETL_TIMEOUT,
+            env=env,
         )
         output = result.stdout + result.stderr
         if result.returncode == 0:
