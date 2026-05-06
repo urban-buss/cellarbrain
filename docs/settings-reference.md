@@ -206,12 +206,27 @@ Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Creden
 | `use_ssl` | `bool` | `True` | Use SSL/TLS for IMAP connection |
 | `mailbox` | `str` | `"INBOX"` | IMAP folder to monitor |
 | `subject_filter` | `str` | `"[VinoCell] CSV file"` | Only process emails matching this subject |
-| `sender_filter` | `str` | `""` | Only process emails from this sender (empty = no filter) |
+| `sender_filter` | `str` | `""` | IMAP-level FROM pre-filter (performance — reduces fetched messages) |
+| `sender_whitelist` | `tuple[str, ...]` | `()` | Application-level post-fetch sender validation (security — see below) |
 | `poll_interval` | `int` | `60` | Seconds between poll cycles |
 | `batch_window` | `int` | `300` | Seconds within which all 3 files must arrive to form a batch |
 | `expected_files` | `tuple[str, ...]` | `("export-wines.csv", "export-bottles-stored.csv", "export-bottles-gone.csv")` | Attachment filenames that form a complete batch |
 | `processed_action` | `str` | `"flag"` | What to do with processed emails: `"flag"` (mark as read) or `"move"` |
 | `processed_folder` | `str` | `"VinoCell/Processed"` | Target IMAP folder when `processed_action = "move"` |
+| `etl_timeout` | `int` | `300` | Seconds before the ETL subprocess is killed |
+| `max_backoff_interval` | `int` | `600` | Maximum seconds between retries on transient errors |
+| `max_attachment_bytes` | `int` | `10485760` | Reject attachments larger than this (bytes). 0 = unlimited |
+
+#### Sender filtering (layered model)
+
+`sender_filter` and `sender_whitelist` serve complementary roles:
+
+| Mechanism | Layer | Purpose |
+|-----------|-------|---------|
+| `sender_filter` | IMAP server | Reduces UIDs returned by SEARCH (performance) |
+| `sender_whitelist` | Application | Defence-in-depth — validates parsed `From:` header after fetch (security) |
+
+When `sender_whitelist` is non-empty, only emails whose `From:` address (case-insensitive exact match) appears in the list are processed. Unmatched messages are logged and discarded before grouping. An empty list (default) accepts all messages that pass the IMAP-level filters.
 
 TOML example:
 
@@ -222,6 +237,10 @@ poll_interval = 30
 batch_window = 600
 processed_action = "move"
 processed_folder = "Archive/VinoCell"
+sender_whitelist = ["noreply@vinocell.com"]
+etl_timeout = 600
+max_backoff_interval = 300
+max_attachment_bytes = 10485760
 ```
 
 Credential storage:

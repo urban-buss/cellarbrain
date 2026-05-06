@@ -242,6 +242,7 @@ class IngestConfig:
     mailbox: str = "INBOX"
     subject_filter: str = "[VinoCell] CSV file"
     sender_filter: str = ""
+    sender_whitelist: tuple[str, ...] = ()
     poll_interval: int = 60
     batch_window: int = 300
     expected_files: tuple[str, ...] = (
@@ -251,6 +252,9 @@ class IngestConfig:
     )
     processed_action: str = "flag"
     processed_folder: str = "VinoCell/Processed"
+    etl_timeout: int = 300
+    max_backoff_interval: int = 600
+    max_attachment_bytes: int = 10_485_760
 
 
 # ---------------------------------------------------------------------------
@@ -919,12 +923,14 @@ def load_settings(
         _validate_keys("dashboard", dashboard_raw, DashboardConfig)
     dashboard = DashboardConfig(**dashboard_raw) if dashboard_raw else DashboardConfig()
 
-    # Ingest — scalar config with tuple conversion for expected_files
+    # Ingest — scalar config with tuple conversion for expected_files/sender_whitelist
     ingest_raw = raw.get("ingest", {})
     if ingest_raw:
         ingest_kw: dict = dict(ingest_raw)
         if "expected_files" in ingest_kw:
             ingest_kw["expected_files"] = tuple(ingest_kw["expected_files"])
+        if "sender_whitelist" in ingest_kw:
+            ingest_kw["sender_whitelist"] = tuple(ingest_kw["sender_whitelist"])
         _validate_keys("ingest", ingest_kw, IngestConfig)
         ingest = IngestConfig(**ingest_kw)
     else:

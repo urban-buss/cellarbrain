@@ -10,8 +10,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_ETL_TIMEOUT = 300  # seconds
-
 
 def run_etl(
     raw_dir: Path,
@@ -23,6 +21,7 @@ def run_etl(
         "export-bottles-stored.csv",
         "export-bottles-gone.csv",
     ),
+    timeout: int = 300,
 ) -> tuple[int, str]:
     """Run ``cellarbrain etl`` as a subprocess.
 
@@ -37,6 +36,8 @@ def run_etl(
     expected_files:
         Filenames to pass to the ETL command (in positional order:
         wines, bottles-stored, bottles-gone).
+    timeout:
+        Seconds before the ETL subprocess is killed.
 
     Returns
     -------
@@ -64,7 +65,7 @@ def run_etl(
             cmd,
             capture_output=True,
             text=True,
-            timeout=_ETL_TIMEOUT,
+            timeout=timeout,
             env=env,
         )
         output = result.stdout + result.stderr
@@ -74,5 +75,5 @@ def run_etl(
             logger.error("ETL failed (exit %d): %s", result.returncode, output)
         return result.returncode, output
     except subprocess.TimeoutExpired:
-        logger.error("ETL timed out after %d seconds", _ETL_TIMEOUT)
-        return -1, f"ETL timed out after {_ETL_TIMEOUT} seconds"
+        logger.error("ETL timed out after %d seconds", timeout)
+        return -1, f"ETL timed out after {timeout} seconds"
