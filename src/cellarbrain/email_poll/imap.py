@@ -103,14 +103,16 @@ class ImapClient:
             return []
 
         results: list[tuple[EmailMessage, bytes]] = []
-        raw_responses = self._client.fetch(uids, ["RFC822", "INTERNALDATE"])
+        raw_responses = self._client.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
 
         for uid, data in raw_responses.items():
             internal_date = data.get(b"INTERNALDATE")
             if internal_date is None:
                 internal_date = datetime.now(UTC)
 
-            rfc822 = data.get(b"RFC822", b"")
+            rfc822 = data.get(b"BODY[]") or data.get(b"RFC822", b"")
+            if not rfc822:
+                continue
             msg = email.message_from_bytes(rfc822, policy=email.policy.default)
 
             attachments = _extract_attachments(msg)

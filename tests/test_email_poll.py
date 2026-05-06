@@ -315,6 +315,26 @@ class TestRunEtl:
         assert "--config" in cmd
         assert str(config) in cmd
 
+    def test_utf8_env_forced(self, tmp_path):
+        """ETL subprocess gets PYTHONUTF8=1 and PYTHONIOENCODING=utf-8 (#002)."""
+        from cellarbrain.email_poll.etl_runner import run_etl
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch("cellarbrain.email_poll.etl_runner.subprocess.run", return_value=mock_result) as mock_run:
+            run_etl(raw_dir, output_dir)
+        env = mock_run.call_args[1]["env"]
+        assert env["PYTHONUTF8"] == "1"
+        assert env["PYTHONIOENCODING"] == "utf-8"
+
 
 # ---------------------------------------------------------------------------
 # TestStateFile
@@ -341,3 +361,203 @@ class TestStateFile:
         loaded = _load_state(tmp_path)
         assert loaded["processed_uids"] == [1, 2, 3]
         assert loaded["last_batch"] == "260428-1435"
+
+
+# ---------------------------------------------------------------------------
+# TestImapFetchMessages
+# ---------------------------------------------------------------------------
+
+
+def _make_mime_message(filename: str, payload: bytes) -> bytes:
+    """Build a minimal MIME message with one attachment."""
+    import email.mime.application
+    import email.mime.multipart
+
+    msg = email.mime.multipart.MIMEMultipart()
+    msg["Subject"] = "[VinoCell] CSV file"
+    att = email.mime.application.MIMEApplication(payload, Name=filename)
+    att.add_header("Content-Disposition", "attachment", filename=filename)
+    msg.attach(att)
+    return msg.as_bytes()
+
+
+class TestImapFetchMessages:
+    """Regression tests for iCloud IMAP BODY[] key issue (#001)."""
+
+    def test_body_bracket_key(self):
+        """iCloud returns body under b'BODY[]' — should still work."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        mime_bytes = _make_mime_message("export-wines.csv", b"wine,data")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            48: {
+                b"BODY[]": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([48], ["export-wines.csv"])
+        assert len(results) == 1
+        em, data = results[0]
+        assert em.uid == 48
+        assert em.filename == "export-wines.csv"
+        assert data == b"wine,data"
+        mock_client.fetch.assert_called_once_with([48], ["BODY.PEEK[]", "INTERNALDATE"])
+
+    def test_rfc822_key_fallback(self):
+        """Servers returning b'RFC822' should still work (fallback)."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        mime_bytes = _make_mime_message("export-wines.csv", b"wine,data")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            99: {
+                b"RFC822": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([99], ["export-wines.csv"])
+        assert len(results) == 1
+        em, data = results[0]
+        assert em.uid == 99
+        assert em.filename == "export-wines.csv"
+
+    def test_empty_body_skipped(self):
+        """Messages with no body data should be skipped."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            50: {
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([50], ["export-wines.csv"])
+        assert len(results) == 0
+
+
+# ---------------------------------------------------------------------------
+# TestPollOnceEtlFailure
+# ---------------------------------------------------------------------------
+
+
+class TestPollOnceEtlFailure:
+    """Verify poll_once does NOT mark messages processed on ETL failure (#003)."""
+
+    def _make_settings(self, tmp_path):
+        """Build minimal Settings and IngestConfig for testing."""
+        from cellarbrain.settings import IngestConfig
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        config = IngestConfig()
+
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+
+        return config, settings, raw_dir
+
+    def test_etl_failure_leaves_messages_unprocessed(self, tmp_path):
+        """On ETL failure, messages should NOT be marked as read."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.grouping import Batch
+
+        config, settings, raw_dir = self._make_settings(tmp_path)
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [48, 49, 50]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100), b"wines"),
+            (EmailMessage(uid=49, date=t0, filename="export-bottles-stored.csv", size=100), b"bottles"),
+            (EmailMessage(uid=50, date=t0, filename="export-bottles-gone.csv", size=100), b"gone"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        batch = Batch(
+            messages=[
+                EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100),
+                EmailMessage(uid=49, date=t0, filename="export-bottles-stored.csv", size=100),
+                EmailMessage(uid=50, date=t0, filename="export-bottles-gone.csv", size=100),
+            ]
+        )
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.poll_once.__module__", "cellarbrain.email_poll"),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.grouping.group_messages", return_value=[batch]),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=raw_dir / "260501-1000"),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(1, "Error: bad data")),
+        ):
+            result = poll_once(config, settings)
+
+        # ETL failed → should NOT mark messages
+        mock_imap.mark_seen.assert_not_called()
+        mock_imap.move_messages.assert_not_called()
+        # Return value should be negative (indicating failure)
+        assert result == -1
+
+    def test_etl_success_marks_messages(self, tmp_path):
+        """On ETL success, messages should be marked as read."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.grouping import Batch
+
+        config, settings, raw_dir = self._make_settings(tmp_path)
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [48, 49, 50]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100), b"wines"),
+            (EmailMessage(uid=49, date=t0, filename="export-bottles-stored.csv", size=100), b"bottles"),
+            (EmailMessage(uid=50, date=t0, filename="export-bottles-gone.csv", size=100), b"gone"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        batch = Batch(
+            messages=[
+                EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100),
+                EmailMessage(uid=49, date=t0, filename="export-bottles-stored.csv", size=100),
+                EmailMessage(uid=50, date=t0, filename="export-bottles-gone.csv", size=100),
+            ]
+        )
+
+        snapshot_dir = raw_dir / "260501-1000"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.grouping.group_messages", return_value=[batch]),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        # ETL succeeded → messages should be marked
+        mock_imap.mark_seen.assert_called_once_with([48, 49, 50])
+        assert result == 1
