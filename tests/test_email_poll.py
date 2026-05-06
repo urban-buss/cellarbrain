@@ -368,13 +368,15 @@ class TestStateFile:
 # ---------------------------------------------------------------------------
 
 
-def _make_mime_message(filename: str, payload: bytes) -> bytes:
+def _make_mime_message(filename: str, payload: bytes, *, from_addr: str = "") -> bytes:
     """Build a minimal MIME message with one attachment."""
     import email.mime.application
     import email.mime.multipart
 
     msg = email.mime.multipart.MIMEMultipart()
     msg["Subject"] = "[VinoCell] CSV file"
+    if from_addr:
+        msg["From"] = from_addr
     att = email.mime.application.MIMEApplication(payload, Name=filename)
     att.add_header("Content-Disposition", "attachment", filename=filename)
     msg.attach(att)
@@ -561,3 +563,360 @@ class TestPollOnceEtlFailure:
         # ETL succeeded → messages should be marked
         mock_imap.mark_seen.assert_called_once_with([48, 49, 50])
         assert result == 1
+
+
+# ---------------------------------------------------------------------------
+# TestSenderExtraction
+# ---------------------------------------------------------------------------
+
+
+class TestSenderExtraction:
+    """Tests for sender field extraction in fetch_messages."""
+
+    def test_sender_extracted_lowercase(self):
+        """From: header address is extracted and lowercased."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        mime_bytes = _make_mime_message("export-wines.csv", b"wine,data", from_addr="User@Example.COM")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            1: {
+                b"BODY[]": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([1], ["export-wines.csv"])
+        assert len(results) == 1
+        em, _ = results[0]
+        assert em.sender == "user@example.com"
+
+    def test_missing_from_header(self):
+        """Missing From: header results in empty sender string."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        # Build a message without From: header
+        mime_bytes = _make_mime_message("export-wines.csv", b"wine,data")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            2: {
+                b"BODY[]": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([2], ["export-wines.csv"])
+        assert len(results) == 1
+        em, _ = results[0]
+        assert em.sender == ""
+
+    def test_max_attachment_bytes_rejects_oversized(self):
+        """Attachments exceeding max_attachment_bytes are skipped."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        big_payload = b"x" * 1000
+        mime_bytes = _make_mime_message("export-wines.csv", big_payload, from_addr="a@b.com")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            3: {
+                b"BODY[]": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([3], ["export-wines.csv"], max_attachment_bytes=500)
+        assert len(results) == 0
+
+    def test_max_attachment_bytes_zero_unlimited(self):
+        """max_attachment_bytes=0 means no limit (default)."""
+        from cellarbrain.email_poll.imap import ImapClient
+
+        big_payload = b"x" * 10000
+        mime_bytes = _make_mime_message("export-wines.csv", big_payload, from_addr="a@b.com")
+
+        mock_client = MagicMock()
+        mock_client.fetch.return_value = {
+            4: {
+                b"BODY[]": mime_bytes,
+                b"INTERNALDATE": datetime(2026, 5, 1, 10, 0),
+            }
+        }
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        results = imap.fetch_messages([4], ["export-wines.csv"], max_attachment_bytes=0)
+        assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestSenderWhitelist
+# ---------------------------------------------------------------------------
+
+
+class TestSenderWhitelist:
+    """Tests for application-level sender whitelist in poll_once."""
+
+    def _make_settings(self, tmp_path):
+        """Build minimal Settings and IngestConfig for testing."""
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+
+        return settings, raw_dir
+
+    def test_empty_whitelist_accepts_all(self, tmp_path):
+        """Empty sender_whitelist preserves current behaviour — all pass."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.grouping import Batch
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(sender_whitelist=())
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [1, 2, 3]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="anyone@x.com"), b"w"),
+            (EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="anyone@x.com"), b"b"),
+            (EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="anyone@x.com"), b"g"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        batch = Batch(
+            messages=(
+                EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="anyone@x.com"),
+                EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="anyone@x.com"),
+                EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="anyone@x.com"),
+            )
+        )
+
+        snapshot_dir = raw_dir / "260501-1000"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.grouping.group_messages", return_value=[batch]),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 1
+        mock_imap.mark_seen.assert_called_once()
+
+    def test_whitelist_filters_non_matching(self, tmp_path):
+        """Non-whitelisted senders are rejected; incomplete batch → no ETL."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(sender_whitelist=("trusted@good.com",))
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [1, 2, 3]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="evil@bad.com"), b"w"),
+            (EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="evil@bad.com"), b"b"),
+            (EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="evil@bad.com"), b"g"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        mock_imap.mark_seen.assert_not_called()
+
+    def test_whitelist_case_insensitive(self, tmp_path):
+        """Whitelist matching is case-insensitive."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.grouping import Batch
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        # Whitelist has mixed case
+        config = IngestConfig(sender_whitelist=("Trusted@GOOD.com",))
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [1, 2, 3]
+        # sender field is already lowercased by imap.py
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="trusted@good.com"), b"w"),
+            (
+                EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="trusted@good.com"),
+                b"b",
+            ),
+            (
+                EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="trusted@good.com"),
+                b"g",
+            ),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        batch = Batch(
+            messages=(
+                EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="trusted@good.com"),
+                EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="trusted@good.com"),
+                EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="trusted@good.com"),
+            )
+        )
+
+        snapshot_dir = raw_dir / "260501-1000"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.grouping.group_messages", return_value=[batch]),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 1
+
+    def test_whitelist_multiple_senders(self, tmp_path):
+        """Multiple addresses in whitelist are all accepted."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.grouping import Batch
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(sender_whitelist=("alice@x.com", "bob@y.com"))
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+        mock_imap = MagicMock()
+        mock_imap.search_unseen.return_value = [1, 2, 3]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="alice@x.com"), b"w"),
+            (EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="bob@y.com"), b"b"),
+            (EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="alice@x.com"), b"g"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        batch = Batch(
+            messages=(
+                EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="alice@x.com"),
+                EmailMessage(uid=2, date=t0, filename="export-bottles-stored.csv", size=100, sender="bob@y.com"),
+                EmailMessage(uid=3, date=t0, filename="export-bottles-gone.csv", size=100, sender="alice@x.com"),
+            )
+        )
+
+        snapshot_dir = raw_dir / "260501-1000"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.grouping.group_messages", return_value=[batch]),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 1
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonBackoff
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonBackoff:
+    """Tests for configurable max_backoff_interval in IngestDaemon."""
+
+    def test_max_interval_from_config(self):
+        """IngestDaemon uses config.max_backoff_interval."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(max_backoff_interval=120, poll_interval=30)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+        assert daemon._max_interval == 120
+        assert daemon._base_interval == 30
+
+    def test_default_max_interval(self):
+        """Default max_backoff_interval is 600."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig()
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+        assert daemon._max_interval == 600
+
+
+# ---------------------------------------------------------------------------
+# TestEtlTimeout
+# ---------------------------------------------------------------------------
+
+
+class TestEtlTimeout:
+    """Tests for configurable etl_timeout."""
+
+    def test_custom_timeout_passed(self, tmp_path):
+        """Custom timeout value is forwarded to subprocess.run."""
+        from cellarbrain.email_poll.etl_runner import run_etl
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch("cellarbrain.email_poll.etl_runner.subprocess.run", return_value=mock_result) as mock_run:
+            run_etl(raw_dir, output_dir, timeout=600)
+        assert mock_run.call_args[1]["timeout"] == 600
+
+    def test_default_timeout_300(self, tmp_path):
+        """Default timeout is 300 seconds."""
+        from cellarbrain.email_poll.etl_runner import run_etl
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch("cellarbrain.email_poll.etl_runner.subprocess.run", return_value=mock_result) as mock_run:
+            run_etl(raw_dir, output_dir)
+        assert mock_run.call_args[1]["timeout"] == 300

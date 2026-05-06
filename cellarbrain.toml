@@ -292,3 +292,35 @@ RON = 0.19
 # training_batch_size = 32                 # training batch size
 # warmup_ratio = 0.1                       # warmup fraction of training steps
 # eval_split = 0.1                         # hold-out fraction for evaluation
+
+# --- Email Ingestion (IMAP Polling Daemon) ----------------------------------
+# Requires optional dependencies: pip install cellarbrain[ingest]
+# [ingest]
+# imap_host = "imap.mail.me.com"
+# imap_port = 993
+# use_ssl = true
+# mailbox = "INBOX"
+# subject_filter = "[VinoCell] CSV file"
+# sender_filter = ""                          # IMAP-level pre-filter (performance)
+# poll_interval = 60
+# batch_window = 300
+# expected_files = [
+#     "export-wines.csv",
+#     "export-bottles-stored.csv",
+#     "export-bottles-gone.csv",
+# ]
+# processed_action = "flag"
+# processed_folder = "VinoCell/Processed"
+#
+# # --- Security: Sender Whitelist ---
+# # Application-level post-fetch validation (defence-in-depth).
+# # Only emails whose From: address matches one of these are processed.
+# # Empty list = accept all (backward-compatible default).
+# sender_whitelist = [
+#     "noreply@vinocell.com",
+# ]
+#
+# # --- Operational Tunables ---
+# etl_timeout = 300              # seconds before ETL subprocess is killed
+# max_backoff_interval = 600     # max seconds between retries on transient errors
+# max_attachment_bytes = 10485760  # reject attachments larger than 10 MB

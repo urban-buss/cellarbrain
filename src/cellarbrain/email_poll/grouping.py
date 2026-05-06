@@ -21,6 +21,7 @@ class EmailMessage:
     date: datetime
     filename: str
     size: int
+    sender: str = ""
 
 
 @dataclass(frozen=True)

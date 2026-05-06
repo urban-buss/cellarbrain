@@ -1150,3 +1150,38 @@ class TestIngestConfig:
         )
         with pytest.raises(ValueError, match="Unknown key"):
             load_settings(str(toml))
+
+    def test_new_fields_defaults(self):
+        cfg = IngestConfig()
+        assert cfg.sender_whitelist == ()
+        assert cfg.etl_timeout == 300
+        assert cfg.max_backoff_interval == 600
+        assert cfg.max_attachment_bytes == 10_485_760
+
+    def test_sender_whitelist_from_toml(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            textwrap.dedent("""\
+            [ingest]
+            sender_whitelist = ["alice@x.com", "Bob@Y.com"]
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(str(toml))
+        assert s.ingest.sender_whitelist == ("alice@x.com", "Bob@Y.com")
+
+    def test_operational_tunables_from_toml(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            textwrap.dedent("""\
+            [ingest]
+            etl_timeout = 600
+            max_backoff_interval = 120
+            max_attachment_bytes = 5242880
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(str(toml))
+        assert s.ingest.etl_timeout == 600
+        assert s.ingest.max_backoff_interval == 120
+        assert s.ingest.max_attachment_bytes == 5_242_880

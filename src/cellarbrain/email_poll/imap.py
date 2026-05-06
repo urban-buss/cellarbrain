@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import email
 import email.policy
+import email.utils
 import logging
 from datetime import UTC, datetime
 from types import TracebackType
@@ -91,11 +92,18 @@ class ImapClient:
         self,
         uids: list[int],
         expected_files: tuple[str, ...] | list[str],
+        *,
+        max_attachment_bytes: int = 0,
     ) -> list[tuple[EmailMessage, bytes]]:
         """Fetch messages and extract single-attachment metadata + data.
 
         Only messages with exactly one attachment whose filename is in
         *expected_files* are returned.  Others are silently skipped.
+
+        Parameters
+        ----------
+        max_attachment_bytes:
+            If > 0, skip attachments exceeding this size (bytes).
 
         Returns list of ``(EmailMessage, attachment_bytes)`` tuples.
         """
@@ -123,11 +131,25 @@ class ImapClient:
             if filename not in expected_files:
                 continue
 
+            if max_attachment_bytes and len(payload) > max_attachment_bytes:
+                logger.warning(
+                    "Attachment %s (%d bytes) exceeds limit — skipping UID %d",
+                    filename,
+                    len(payload),
+                    uid,
+                )
+                continue
+
+            # Extract sender from From: header
+            from_header = msg.get("From", "")
+            _, sender_addr = email.utils.parseaddr(from_header)
+
             em = EmailMessage(
                 uid=int(uid),
                 date=internal_date,
                 filename=filename,
                 size=len(payload),
+                sender=sender_addr.lower(),
             )
             results.append((em, payload))
 

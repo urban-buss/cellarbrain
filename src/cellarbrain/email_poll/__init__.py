@@ -96,10 +96,25 @@ def poll_once(
         logger.info("Found %d new messages", len(uids))
 
         # Fetch and parse
-        fetched = client.fetch_messages(uids, config.expected_files)
+        fetched = client.fetch_messages(uids, config.expected_files, max_attachment_bytes=config.max_attachment_bytes)
         if not fetched:
             logger.info("No messages with valid attachments")
             return 0
+
+        # Application-level sender whitelist (defence-in-depth)
+        if config.sender_whitelist:
+            whitelist = {s.lower() for s in config.sender_whitelist}
+            original_count = len(fetched)
+            fetched = [(em, data) for em, data in fetched if em.sender in whitelist]
+            rejected = original_count - len(fetched)
+            if rejected:
+                logger.warning(
+                    "Rejected %d message(s) from non-whitelisted senders",
+                    rejected,
+                )
+            if not fetched:
+                logger.info("No messages from whitelisted senders")
+                return 0
 
         # Build EmailMessage list and attachment map
         messages = [em for em, _ in fetched]
@@ -143,6 +158,7 @@ def poll_once(
                 output_dir,
                 config_path,
                 expected_files=config.expected_files,
+                timeout=config.etl_timeout,
             )
             if exit_code != 0:
                 logger.error(
@@ -186,7 +202,7 @@ class IngestDaemon:
         self.config = config
         self.settings = settings
         self._base_interval = config.poll_interval
-        self._max_interval = 600  # 10 minutes
+        self._max_interval = config.max_backoff_interval
         self._current_interval = config.poll_interval
 
     def run(self, *, dry_run: bool = False) -> None:
