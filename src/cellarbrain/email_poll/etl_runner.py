@@ -61,12 +61,17 @@ def run_etl(
     logger.info("Running ETL: %s", " ".join(cmd))
     try:
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+        # On Windows, isolate the subprocess in its own process group to
+        # prevent console control events (CTRL_C_EVENT) from propagating
+        # back to the daemon and corrupting its sleep/wait primitives.
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if sys.platform == "win32" else 0
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
             env=env,
+            creationflags=creationflags,
         )
         output = result.stdout + result.stderr
         if result.returncode == 0:
