@@ -353,21 +353,23 @@ class TestStateFile:
         from cellarbrain.email_poll import _load_state
 
         state = _load_state(tmp_path)
-        assert state["processed_uids"] == []
+        assert state.high_water_uid == 0
+        assert state.pending_uids == set()
+        assert state.failed_batches == []
 
     def test_save_and_load_roundtrip(self, tmp_path):
-        from cellarbrain.email_poll import _load_state, _save_state
+        from cellarbrain.email_poll import IngestState, _load_state, _save_state
 
-        state = {
-            "processed_uids": [1, 2, 3],
-            "last_poll": "2026-04-28T14:35:00+00:00",
-            "last_batch": "260428-1435",
-        }
+        state = IngestState(
+            high_water_uid=3,
+            last_poll="2026-04-28T14:35:00+00:00",
+            last_batch="260428-1435",
+        )
         _save_state(tmp_path, state)
 
         loaded = _load_state(tmp_path)
-        assert loaded["processed_uids"] == [1, 2, 3]
-        assert loaded["last_batch"] == "260428-1435"
+        assert loaded.high_water_uid == 3
+        assert loaded.last_batch == "260428-1435"
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +497,7 @@ class TestPollOnceEtlFailure:
         t0 = datetime(2026, 5, 1, 10, 0)
 
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [48, 49, 50]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100), b"wines"),
@@ -538,6 +541,7 @@ class TestPollOnceEtlFailure:
         t0 = datetime(2026, 5, 1, 10, 0)
 
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [48, 49, 50]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100), b"wines"),
@@ -701,6 +705,7 @@ class TestSenderWhitelist:
 
         t0 = datetime(2026, 5, 1, 10, 0)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2, 3]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="anyone@x.com"), b"w"),
@@ -743,6 +748,7 @@ class TestSenderWhitelist:
 
         t0 = datetime(2026, 5, 1, 10, 0)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2, 3]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="evil@bad.com"), b"w"),
@@ -773,6 +779,7 @@ class TestSenderWhitelist:
 
         t0 = datetime(2026, 5, 1, 10, 0)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2, 3]
         # sender field is already lowercased by imap.py
         mock_imap.fetch_messages.return_value = [
@@ -822,6 +829,7 @@ class TestSenderWhitelist:
 
         t0 = datetime(2026, 5, 1, 10, 0)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2, 3]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100, sender="alice@x.com"), b"w"),
@@ -1267,13 +1275,13 @@ class TestDedupMessages:
 class TestReaper:
     def test_reap_stale_marks_seen(self):
         """Messages older than threshold are marked as SEEN."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         old_msg = _msg(1, now - timedelta(seconds=700), "export-wines.csv")  # age=700 > 600
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1287,19 +1295,19 @@ class TestReaper:
         )
         assert count == 1
         mock_client.mark_seen.assert_called_once_with([1])
-        assert len(state["reaped_uids"]) == 1
-        assert state["reaped_uids"][0]["reason"] == "stale"
-        assert state["reaped_uids"][0]["uid"] == 1
+        assert len(state.reaped_uids) == 1
+        assert state.reaped_uids[0]["reason"] == "stale"
+        assert state.reaped_uids[0]["uid"] == 1
 
     def test_reap_skips_recent_messages(self):
         """Messages younger than threshold are left untouched."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         recent_msg = _msg(1, now - timedelta(seconds=100), "export-wines.csv")  # age=100 < 600
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1314,17 +1322,17 @@ class TestReaper:
         assert count == 0
         mock_client.mark_seen.assert_not_called()
         mock_client.move_messages.assert_not_called()
-        assert state["reaped_uids"] == []
+        assert state.reaped_uids == []
 
     def test_reap_moves_to_dead_letter(self):
         """If dead_letter_folder is set, moves instead of marking seen."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0, dead_letter_folder="Trash/Orphans")
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         old_msg = _msg(1, now - timedelta(seconds=700), "export-wines.csv")
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1342,13 +1350,13 @@ class TestReaper:
 
     def test_reap_dry_run_no_imap_calls(self):
         """Dry run logs but does not touch IMAP."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         old_msg = _msg(1, now - timedelta(seconds=700), "export-wines.csv")
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1364,17 +1372,17 @@ class TestReaper:
         mock_client.mark_seen.assert_not_called()
         mock_client.move_messages.assert_not_called()
         # State not modified in dry-run
-        assert state["reaped_uids"] == []
+        assert state.reaped_uids == []
 
     def test_reap_ignore_age_reaps_all(self):
         """With ignore_age=True, even recent messages are reaped."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         recent_msg = _msg(1, now - timedelta(seconds=10), "export-wines.csv")  # very recent
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1389,18 +1397,18 @@ class TestReaper:
         )
         assert count == 1
         mock_client.mark_seen.assert_called_once_with([1])
-        assert state["reaped_uids"][0]["reason"] == "manual"
+        assert state.reaped_uids[0]["reason"] == "manual"
 
     def test_reap_custom_stale_threshold(self):
         """Explicit stale_threshold overrides 2*batch_window default."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         # stale_threshold=120, so messages older than 120s are reaped
         config = IngestConfig(batch_window=300, stale_threshold=120)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         msg = _msg(1, now - timedelta(seconds=150), "export-wines.csv")  # age=150 > 120
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1416,14 +1424,14 @@ class TestReaper:
 
     def test_state_cap_at_500(self):
         """reaped_uids is capped at 500 entries."""
-        from cellarbrain.email_poll import _MAX_REAPED_ENTRIES, _reap_messages
+        from cellarbrain.email_poll import _MAX_REAPED_ENTRIES, IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig(batch_window=300, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-        state = {
-            "reaped_uids": [{"uid": i, "filename": "x.csv", "reason": "old", "reaped_at": "t"} for i in range(499)]
-        }
+        state = IngestState(
+            reaped_uids=[{"uid": i, "filename": "x.csv", "reason": "old", "reaped_at": "t"} for i in range(499)]
+        )
 
         old_msg = _msg(999, now - timedelta(seconds=700), "export-wines.csv")
         old_msg2 = _msg(1000, now - timedelta(seconds=700), "export-bottles-stored.csv")
@@ -1439,16 +1447,16 @@ class TestReaper:
             dry_run=False,
         )
         # 499 + 2 = 501 → capped to 500
-        assert len(state["reaped_uids"]) == _MAX_REAPED_ENTRIES
+        assert len(state.reaped_uids) == _MAX_REAPED_ENTRIES
 
     def test_empty_messages_noop(self):
         """No messages → 0 reaped, no IMAP calls."""
-        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
         config = IngestConfig()
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
-        state = {"reaped_uids": []}
+        state = IngestState()
 
         mock_client = MagicMock()
         count = _reap_messages(
@@ -1573,6 +1581,7 @@ class TestPollOnceDedup:
 
         t0 = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2, 3, 4, 5, 6]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100), b"w1"),
@@ -1624,6 +1633,7 @@ class TestPollOnceDedup:
 
         t0 = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100), b"w"),
@@ -1675,6 +1685,7 @@ class TestReapOrphans:
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         # 2 messages for 1 filename — one duplicate, one leftover (only 1 of 3 files)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1, 2]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=now - timedelta(seconds=10), filename="export-wines.csv", size=100), b"w1"),
@@ -1708,6 +1719,7 @@ class TestReapOrphans:
 
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = [1]
         mock_imap.fetch_messages.return_value = [
             (EmailMessage(uid=1, date=now - timedelta(seconds=10), filename="export-wines.csv", size=100), b"w1"),
@@ -1734,6 +1746,7 @@ class TestReapOrphans:
         config = IngestConfig()
 
         mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
         mock_imap.search_unseen.return_value = []
         mock_imap.__enter__ = MagicMock(return_value=mock_imap)
         mock_imap.__exit__ = MagicMock(return_value=False)
@@ -1760,10 +1773,10 @@ class TestStateFileReapedUids:
         from cellarbrain.email_poll import _load_state
 
         state = _load_state(tmp_path)
-        assert state["reaped_uids"] == []
+        assert state.reaped_uids == []
 
     def test_load_state_adds_reaped_uids_to_legacy(self, tmp_path):
-        """_load_state adds reaped_uids key to old state files missing it."""
+        """_load_state migrates old state files and preserves reaped_uids."""
         import json
 
         from cellarbrain.email_poll import _load_state
@@ -1774,18 +1787,19 @@ class TestStateFileReapedUids:
             encoding="utf-8",
         )
         state = _load_state(tmp_path)
-        assert state["reaped_uids"] == []
-        assert state["processed_uids"] == [1, 2]
+        assert state.reaped_uids == []
+        # v1 migration: UIDs 1,2 are contiguous from 1 → high_water=2
+        assert state.high_water_uid == 2
 
     def test_save_and_load_with_reaped_uids(self, tmp_path):
         """reaped_uids survive save/load roundtrip."""
-        from cellarbrain.email_poll import _load_state, _save_state
+        from cellarbrain.email_poll import IngestState, _load_state, _save_state
 
-        state = {
-            "processed_uids": [1],
-            "last_poll": "2026-05-01T10:00:00+00:00",
-            "last_batch": "260501-1000",
-            "reaped_uids": [
+        state = IngestState(
+            high_water_uid=1,
+            last_poll="2026-05-01T10:00:00+00:00",
+            last_batch="260501-1000",
+            reaped_uids=[
                 {
                     "uid": 99,
                     "filename": "export-wines.csv",
@@ -1793,12 +1807,12 @@ class TestStateFileReapedUids:
                     "reaped_at": "2026-05-01T10:00:00+00:00",
                 },
             ],
-        }
+        )
         _save_state(tmp_path, state)
         loaded = _load_state(tmp_path)
-        assert len(loaded["reaped_uids"]) == 1
-        assert loaded["reaped_uids"][0]["uid"] == 99
-        assert loaded["reaped_uids"][0]["reason"] == "duplicate"
+        assert len(loaded.reaped_uids) == 1
+        assert loaded.reaped_uids[0]["uid"] == 99
+        assert loaded.reaped_uids[0]["reason"] == "duplicate"
 
 
 # ---------------------------------------------------------------------------
@@ -2026,3 +2040,542 @@ class TestEtlRunnerProcessGroup:
             run_etl(raw_dir, output_dir)
 
         assert mock_run.call_args[1]["creationflags"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestFailedBatchRetryLimit
+# ---------------------------------------------------------------------------
+
+
+class TestFailedBatchRetryLimit:
+    """Tests for ETL retry limit and failed_batches tracking (#001)."""
+
+    def test_record_etl_failure_increments_retry_count(self):
+        """First failure creates a pending_retries entry with attempts=1."""
+        from cellarbrain.email_poll import _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        result = _record_etl_failure(state, [88, 89, 90], "delimiter error", max_retries=3)
+
+        assert result is False
+        assert len(state["pending_retries"]) == 1
+        assert state["pending_retries"][0]["uids"] == [88, 89, 90]
+        assert state["pending_retries"][0]["attempts"] == 1
+        assert "delimiter" in state["pending_retries"][0]["last_error"]
+
+    def test_record_etl_failure_second_attempt(self):
+        """Second failure increments the existing entry."""
+        from cellarbrain.email_poll import _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        _record_etl_failure(state, [88, 89, 90], "error1", max_retries=3)
+        result = _record_etl_failure(state, [88, 89, 90], "error2", max_retries=3)
+
+        assert result is False
+        assert len(state["pending_retries"]) == 1
+        assert state["pending_retries"][0]["attempts"] == 2
+        assert "error2" in state["pending_retries"][0]["last_error"]
+
+    def test_batch_marked_failed_after_max_retries(self):
+        """After max_retries, batch moves to failed_batches."""
+        from cellarbrain.email_poll import _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        _record_etl_failure(state, [88, 89, 90], "error", max_retries=3)
+        _record_etl_failure(state, [88, 89, 90], "error", max_retries=3)
+        result = _record_etl_failure(state, [88, 89, 90], "final error", max_retries=3)
+
+        assert result is True
+        assert len(state["pending_retries"]) == 0
+        assert len(state["failed_batches"]) == 1
+        entry = state["failed_batches"][0]
+        assert entry["uids"] == [88, 89, 90]
+        assert entry["attempts"] == 3
+        assert "final error" in entry["reason"]
+        assert "failed_at" in entry
+
+    def test_uid_order_irrelevant_for_matching(self):
+        """Batch [90,88,89] matches pending entry [88,89,90]."""
+        from cellarbrain.email_poll import _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        _record_etl_failure(state, [90, 88, 89], "error", max_retries=3)
+        _record_etl_failure(state, [88, 90, 89], "error", max_retries=3)
+
+        assert len(state["pending_retries"]) == 1
+        assert state["pending_retries"][0]["attempts"] == 2
+
+    def test_clear_pending_retry_on_success(self):
+        """Successful ETL clears pending_retries for that batch."""
+        from cellarbrain.email_poll import _clear_pending_retry, _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        _record_etl_failure(state, [88, 89, 90], "error", max_retries=3)
+        assert len(state["pending_retries"]) == 1
+
+        _clear_pending_retry(state, [88, 89, 90])
+        assert len(state["pending_retries"]) == 0
+
+    def test_clear_pending_retry_noop_when_not_present(self):
+        """Clearing a non-existent batch does nothing."""
+        from cellarbrain.email_poll import _clear_pending_retry
+
+        state = {"pending_retries": [{"uids": [1, 2, 3], "attempts": 1, "last_error": "x"}]}
+        _clear_pending_retry(state, [88, 89, 90])
+        assert len(state["pending_retries"]) == 1
+
+    def test_failed_batches_capped(self):
+        """failed_batches is capped at _MAX_FAILED_ENTRIES (FIFO eviction)."""
+        from cellarbrain.email_poll import _MAX_FAILED_ENTRIES, _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        # Fill with _MAX_FAILED_ENTRIES failed batches
+        for i in range(_MAX_FAILED_ENTRIES):
+            state["failed_batches"].append(
+                {
+                    "uids": [i * 3, i * 3 + 1, i * 3 + 2],
+                    "reason": "old",
+                    "failed_at": "2026-01-01T00:00:00+00:00",
+                    "attempts": 3,
+                }
+            )
+
+        # Add one more via _record_etl_failure at max_retries=1
+        result = _record_etl_failure(state, [999, 1000, 1001], "new", max_retries=1)
+        assert result is True
+        assert len(state["failed_batches"]) == _MAX_FAILED_ENTRIES
+        # Oldest entry evicted, newest at end
+        assert state["failed_batches"][-1]["uids"] == [999, 1000, 1001]
+
+    def test_state_migration_adds_new_keys(self, tmp_path):
+        """Legacy state file without failed_batches/pending_retries gets migrated."""
+        import json
+
+        from cellarbrain.email_poll import _load_state
+
+        (tmp_path / ".ingest-state.json").write_text(
+            json.dumps({"processed_uids": [1, 2], "last_poll": None, "last_batch": None}),
+            encoding="utf-8",
+        )
+        state = _load_state(tmp_path)
+        assert state.failed_batches == []
+        assert state.pending_retries == []
+        assert state.reaped_uids == []
+        # v1 migration: UIDs 1,2 contiguous → high_water=2
+        assert state.high_water_uid == 2
+
+    def test_retry_state_persists_to_disk(self, tmp_path):
+        """pending_retries and failed_batches survive save/load roundtrip."""
+        from cellarbrain.email_poll import _load_state, _save_state
+
+        state = _load_state(tmp_path)
+        state.record_etl_failure([88, 89, 90], "error", max_retries=3)
+        state.record_etl_failure([91, 92, 93], "error", max_retries=1)  # → failed immediately
+        _save_state(tmp_path, state)
+
+        loaded = _load_state(tmp_path)
+        assert len(loaded.pending_retries) == 1
+        assert loaded.pending_retries[0]["uids"] == [88, 89, 90]
+        assert len(loaded.failed_batches) == 1
+        assert loaded.failed_batches[0]["uids"] == [91, 92, 93]
+
+    def test_failed_uids_skipped_in_poll_once(self, tmp_path):
+        """UIDs in failed_batches are not re-downloaded in poll_once."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # Pre-populate state with failed batch
+        state = {
+            "processed_uids": [],
+            "last_poll": None,
+            "last_batch": None,
+            "reaped_uids": [],
+            "failed_batches": [
+                {"uids": [88, 89, 90], "reason": "bad data", "failed_at": "2026-05-07T15:00:00+00:00", "attempts": 3}
+            ],
+            "pending_retries": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state), encoding="utf-8")
+
+        config = IngestConfig()
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        # IMAP returns only the failed UIDs
+        mock_imap.search_unseen.return_value = [88, 89, 90]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        # Should return 0 (no messages to process) because all UIDs are failed
+        assert result == 0
+        # fetch_messages should NOT have been called (UIDs filtered before fetch)
+        mock_imap.fetch_messages.assert_not_called()
+
+    def test_poll_once_records_failure_and_eventually_gives_up(self, tmp_path):
+        """poll_once records ETL failures; after max_retries the batch is permanently failed."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        config = IngestConfig(max_etl_retries=2)
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.search_unseen.return_value = [88, 89, 90]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=88, date=t0, filename="export-wines.csv", size=100), b"wines"),
+            (EmailMessage(uid=89, date=t0, filename="export-bottles-stored.csv", size=100), b"bottles"),
+            (EmailMessage(uid=90, date=t0, filename="export-bottles-gone.csv", size=100), b"gone"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=raw_dir / "260501-1000"),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(1, "Error: bad delimiter")),
+        ):
+            # First poll cycle — first failure
+            result = poll_once(config, settings)
+
+        assert result == -1
+        state = json.loads((raw_dir / ".ingest-state.json").read_text(encoding="utf-8"))
+        assert len(state["pending_retries"]) == 1
+        assert state["pending_retries"][0]["attempts"] == 1
+        assert len(state["failed_batches"]) == 0
+
+        # Second poll cycle — second failure → permanently failed (max_retries=2)
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=raw_dir / "260501-1001"),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(1, "Error: bad delimiter")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == -1
+        state = json.loads((raw_dir / ".ingest-state.json").read_text(encoding="utf-8"))
+        assert len(state["pending_retries"]) == 0
+        assert len(state["failed_batches"]) == 1
+        assert state["failed_batches"][0]["uids"] == [88, 89, 90]
+
+        # Third poll cycle — UIDs should be skipped entirely
+        mock_imap.fetch_messages.reset_mock()
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        mock_imap.fetch_messages.assert_not_called()  # Didn't even try to fetch
+
+    def test_max_etl_retries_config_field(self):
+        """max_etl_retries config field has correct default."""
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig()
+        assert config.max_etl_retries == 3
+
+    def test_error_output_truncated_in_reason(self):
+        """Very long error output is truncated to 500 chars in the reason field."""
+        from cellarbrain.email_poll import _record_etl_failure
+
+        state = {"pending_retries": [], "failed_batches": []}
+        long_error = "x" * 1000
+        _record_etl_failure(state, [1, 2, 3], long_error, max_retries=1)
+
+        assert len(state["failed_batches"][0]["reason"]) == 500
+
+
+# ---------------------------------------------------------------------------
+# TestIngestState — high-water-mark UID tracking (#002)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestState:
+    """Tests for IngestState high-water-mark UID tracking."""
+
+    def test_high_water_skips_lower_uids(self):
+        """UIDs at or below high_water_uid are considered processed."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(high_water_uid=86)
+        assert state.is_processed(50)
+        assert state.is_processed(86)
+        assert not state.is_processed(87)
+
+    def test_pending_uids_not_treated_as_processed(self):
+        """A UID in pending_uids is NOT considered processed (incomplete batch)."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(high_water_uid=86, pending_uids={85})
+        assert not state.is_processed(85)
+        assert state.is_processed(84)
+
+    def test_failed_uids_always_skipped(self):
+        """UIDs in failed_batches are skipped even if above high_water_uid."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            high_water_uid=86,
+            failed_batches=[{"uids": [88, 89, 90], "reason": "err", "attempts": 3, "failed_at": "t"}],
+        )
+        assert state.is_processed(88)
+        assert state.is_processed(89)
+        assert state.is_processed(90)
+        assert not state.is_processed(91)
+
+    def test_high_water_advances_after_successful_batch(self):
+        """record_successful_batch advances high_water_uid past contiguous UIDs."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(high_water_uid=86)
+        state.record_successful_batch({87, 88, 89})
+        assert state.high_water_uid == 89
+
+    def test_high_water_does_not_skip_over_pending(self):
+        """High-water-mark cannot advance past a pending UID (gap)."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(high_water_uid=86, pending_uids={87})
+        state.record_successful_batch({88, 89, 90})
+        # Cannot advance past 86 because 87 is still pending
+        assert state.high_water_uid == 86
+        # But 88, 89, 90 are known processed via failed_uid_set() path? No —
+        # they won't be in failed_batches. They'll be re-fetched next cycle
+        # unless the caller marks them separately.
+
+    def test_high_water_advances_when_pending_resolved(self):
+        """Resolving a pending UID allows high-water to advance."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(high_water_uid=86, pending_uids={87})
+        # Resolve UID 87 plus add 88
+        state.record_successful_batch({87, 88})
+        assert state.high_water_uid == 88
+        assert 87 not in state.pending_uids
+
+    def test_uidvalidity_change_resets_state(self):
+        """UIDVALIDITY mismatch resets all UID-tracking state."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            uidvalidity=1000,
+            high_water_uid=86,
+            failed_batches=[{"uids": [88], "reason": "err", "attempts": 3, "failed_at": "t"}],
+            failed_below_uid=50,
+        )
+        state.handle_uidvalidity(2000)
+        assert state.high_water_uid == 0
+        assert state.failed_batches == []
+        assert state.failed_below_uid == 0
+        assert state.uidvalidity == 2000
+
+    def test_uidvalidity_same_no_reset(self):
+        """Same UIDVALIDITY does not reset state."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(uidvalidity=1000, high_water_uid=86)
+        state.handle_uidvalidity(1000)
+        assert state.high_water_uid == 86
+        assert state.uidvalidity == 1000
+
+    def test_uidvalidity_none_initializes(self):
+        """First UIDVALIDITY encountered is stored without reset."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(uidvalidity=None, high_water_uid=50)
+        state.handle_uidvalidity(9999)
+        assert state.uidvalidity == 9999
+        assert state.high_water_uid == 50
+
+    def test_migration_from_v1_state(self):
+        """v1 state with processed_uids migrates to correct high_water_uid."""
+        from cellarbrain.email_poll import _migrate_v1_to_v2
+
+        v1 = {
+            "processed_uids": [48, 49, 50, 51, 52, 53, 54, 55, 56, 72, 73],
+            "last_poll": "2026-05-01T10:00:00+00:00",
+            "last_batch": "260501-1000",
+        }
+        state = _migrate_v1_to_v2(v1)
+        assert state.high_water_uid == 56
+        assert state.uidvalidity is None
+        assert state.last_poll == "2026-05-01T10:00:00+00:00"
+        assert state.last_batch == "260501-1000"
+
+    def test_migration_empty_state(self):
+        """v1 state with empty processed_uids migrates to high_water=0."""
+        from cellarbrain.email_poll import _migrate_v1_to_v2
+
+        v1 = {"processed_uids": []}
+        state = _migrate_v1_to_v2(v1)
+        assert state.high_water_uid == 0
+
+    def test_migration_contiguous_uids(self):
+        """Fully contiguous v1 UIDs yield max as high_water_uid."""
+        from cellarbrain.email_poll import _migrate_v1_to_v2
+
+        v1 = {"processed_uids": [1, 2, 3, 4, 5]}
+        state = _migrate_v1_to_v2(v1)
+        assert state.high_water_uid == 5
+
+    def test_state_file_size_bounded(self):
+        """After processing 10000 UIDs, state file remains small."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState()
+        for uid in range(1, 10001):
+            state.record_successful_batch({uid})
+        serialized = state.to_json()
+        assert len(serialized) < 2000
+
+    def test_failed_uids_bounded_by_max_entries(self):
+        """failed_batches is capped; oldest entries are promoted to failed_below_uid."""
+        from cellarbrain.email_poll import _MAX_FAILED_ENTRIES, IngestState
+
+        state = IngestState()
+        for batch_start in range(100, 100 + 25 * 3, 3):
+            state.record_etl_failure(
+                [batch_start, batch_start + 1, batch_start + 2],
+                "test",
+                max_retries=1,
+            )
+        assert len(state.failed_batches) == _MAX_FAILED_ENTRIES
+        # Oldest batches collapsed into failed_below_uid
+        assert state.failed_below_uid > 0
+
+    def test_failed_below_uid_skip_logic(self):
+        """UIDs below failed_below_uid are skipped without explicit entry."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(failed_below_uid=200)
+        assert state.is_processed(150)
+        assert state.is_processed(200)
+        assert not state.is_processed(201)
+
+    def test_failed_uids_state_size_stable_under_many_failures(self):
+        """State file stays bounded even with thousands of failed batches over time."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState()
+        for batch_start in range(100, 100 + 1000 * 3, 3):
+            state.record_etl_failure(
+                [batch_start, batch_start + 1, batch_start + 2],
+                "test",
+                max_retries=1,
+            )
+        serialized = state.to_json()
+        assert len(serialized) < 5000
+
+    def test_to_dict_from_dict_roundtrip(self):
+        """IngestState serializes and deserializes correctly."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            uidvalidity=12345,
+            high_water_uid=86,
+            pending_uids={87, 88},
+            failed_below_uid=10,
+            failed_batches=[{"uids": [91, 92], "reason": "err", "attempts": 3, "failed_at": "t"}],
+            pending_retries=[{"uids": [93, 94], "attempts": 1, "last_error": "x"}],
+            last_poll="2026-05-07T15:00:00+00:00",
+            last_batch="260507-1500",
+            reaped_uids=[{"uid": 5, "filename": "x.csv", "reason": "stale", "reaped_at": "t"}],
+        )
+        data = state.to_dict()
+        restored = IngestState.from_dict(data)
+        assert restored.uidvalidity == 12345
+        assert restored.high_water_uid == 86
+        assert restored.pending_uids == {87, 88}
+        assert restored.failed_below_uid == 10
+        assert restored.failed_batches == state.failed_batches
+        assert restored.pending_retries == state.pending_retries
+        assert restored.last_poll == "2026-05-07T15:00:00+00:00"
+        assert restored.last_batch == "260507-1500"
+        assert restored.reaped_uids == state.reaped_uids
+
+    def test_v1_state_auto_migrates_on_load(self, tmp_path):
+        """Loading a v1 state file auto-migrates to IngestState."""
+        import json
+
+        from cellarbrain.email_poll import IngestState, _load_state
+
+        v1 = {
+            "processed_uids": [10, 11, 12, 13, 14],
+            "last_poll": "2026-04-28T14:00:00+00:00",
+            "last_batch": "260428-1400",
+            "reaped_uids": [{"uid": 5, "filename": "x.csv", "reason": "stale", "reaped_at": "t"}],
+            "failed_batches": [{"uids": [20, 21], "reason": "err", "attempts": 3, "failed_at": "t"}],
+            "pending_retries": [],
+        }
+        (tmp_path / ".ingest-state.json").write_text(json.dumps(v1), encoding="utf-8")
+
+        state = _load_state(tmp_path)
+        assert isinstance(state, IngestState)
+        assert state.high_water_uid == 14
+        assert state.uidvalidity is None
+        assert state.failed_batches == v1["failed_batches"]
+        assert state.reaped_uids == v1["reaped_uids"]
+        assert state.last_poll == "2026-04-28T14:00:00+00:00"
+
+    def test_record_etl_failure_method(self):
+        """record_etl_failure tracks attempts and moves to failed_batches."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState()
+        assert state.record_etl_failure([1, 2, 3], "err1", max_retries=3) is False
+        assert len(state.pending_retries) == 1
+        assert state.pending_retries[0]["attempts"] == 1
+
+        assert state.record_etl_failure([1, 2, 3], "err2", max_retries=3) is False
+        assert state.pending_retries[0]["attempts"] == 2
+
+        assert state.record_etl_failure([1, 2, 3], "err3", max_retries=3) is True
+        assert len(state.pending_retries) == 0
+        assert len(state.failed_batches) == 1
+        assert state.failed_batches[0]["uids"] == [1, 2, 3]
+        assert state.failed_batches[0]["attempts"] == 3
+
+    def test_failed_uid_set(self):
+        """failed_uid_set returns all UIDs from failed_batches."""
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            failed_batches=[
+                {"uids": [1, 2, 3], "reason": "x", "attempts": 3, "failed_at": "t"},
+                {"uids": [7, 8], "reason": "y", "attempts": 3, "failed_at": "t"},
+            ]
+        )
+        assert state.failed_uid_set() == {1, 2, 3, 7, 8}

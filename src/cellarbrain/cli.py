@@ -640,6 +640,7 @@ def _subcommand_main(argv: list[str]) -> None:
         "--foreground", "-f", action="store_true", help="Force INFO logging to stderr (interactive use)"
     )
     ingest.add_argument("--reap-orphans", action="store_true", help="One-shot cleanup of orphan/duplicate messages")
+    ingest.add_argument("--status", action="store_true", help="Show ingest daemon status from log database")
 
     # --- backup ---
     bkp_parser = sub.add_parser("backup", help="Create a backup of the data directory")
@@ -1110,8 +1111,12 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
         collector._db = con
         collector._config = settings.logging
         collector._buffer = __import__("collections").deque()
+        collector._ingest_buffer = __import__("collections").deque()
         deleted = collector.prune()
-        print(f"Pruned {deleted} events older than {settings.logging.retention_days} days.")
+        ingest_deleted = collector.prune_ingest()
+        print(f"Pruned {deleted} tool events older than {settings.logging.retention_days} days.")
+        if ingest_deleted:
+            print(f"Pruned {ingest_deleted} ingest events.")
         con.close()
         return
 
@@ -1359,6 +1364,10 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
         _ingest_setup()
         return
 
+    if getattr(args, "status", False):
+        _ingest_status(settings)
+        return
+
     if getattr(args, "reap_orphans", False):
         count = reap_orphans(config, settings, dry_run=args.dry_run)
         print(f"Reaped {count} orphan message(s).")
@@ -1410,6 +1419,47 @@ def _ingest_setup() -> None:
         print("Error: 'keyring' package not installed.", file=sys.stderr)
         print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
         sys.exit(1)
+
+
+def _ingest_status(settings: Settings) -> None:
+    """Print ingest daemon status from the DuckDB log database."""
+    import duckdb
+
+    from .dashboard.ingest_queries import get_ingest_status, has_ingest_table
+
+    log_db = settings.logging.log_db
+    if log_db is None:
+        log_db = str(pathlib.Path(settings.paths.data_dir) / "logs" / "cellarbrain-logs.duckdb")
+
+    if not pathlib.Path(log_db).exists():
+        print("No log database found. Has the ingest daemon ever run?")
+        sys.exit(0)
+
+    con = duckdb.connect(log_db, read_only=True)
+    try:
+        if not has_ingest_table(con):
+            print("No ingest events recorded yet.")
+            sys.exit(0)
+
+        status = get_ingest_status(con)
+        print("Ingest Daemon Status")
+        print(f"  Last poll:        {status['last_poll'] or 'never'}")
+        print(f"  Last ETL success: {status['last_etl_success'] or 'never'}", end="")
+        if status["last_etl_batch_id"]:
+            print(f" (batch {status['last_etl_batch_id']})")
+        else:
+            print()
+        if status["failed_batches"]:
+            print(f"  Failed batches:   {len(status['failed_batches'])}")
+            for fb in status["failed_batches"][:5]:
+                uids_str = str(fb["uids"]) if fb["uids"] else "?"
+                reason = (fb["error_message"] or "unknown")[:60]
+                print(f"    - UIDs {uids_str}: {reason}")
+        else:
+            print("  Failed batches:   0")
+        print(f"  Pending batches:  {status['pending_batches']}")
+    finally:
+        con.close()
 
 
 # ---------------------------------------------------------------------------

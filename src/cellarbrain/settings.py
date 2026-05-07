@@ -131,6 +131,8 @@ class LoggingConfig:
     slow_threshold_ms: float = 2000.0
     log_db: str | None = None
     retention_days: int = 90
+    ingest_retention_days: int = 90
+    ingest_poll_retention_days: int = 7
 
 
 @dataclass(frozen=True)
@@ -253,6 +255,7 @@ class IngestConfig:
     processed_action: str = "flag"
     processed_folder: str = "VinoCell/Processed"
     etl_timeout: int = 300
+    max_etl_retries: int = 3
     max_backoff_interval: int = 600
     max_attachment_bytes: int = 10_485_760
     imap_timeout: int = 60

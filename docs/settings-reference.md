@@ -214,6 +214,7 @@ Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Creden
 | `processed_action` | `str` | `"flag"` | What to do with processed emails: `"flag"` (mark as read) or `"move"` |
 | `processed_folder` | `str` | `"VinoCell/Processed"` | Target IMAP folder when `processed_action = "move"` |
 | `etl_timeout` | `int` | `300` | Seconds before the ETL subprocess is killed |
+| `max_etl_retries` | `int` | `3` | Maximum ETL attempts per batch before permanently failing. Prevents infinite retry loops for batches with validation errors |
 | `max_backoff_interval` | `int` | `600` | Maximum seconds between retries on transient errors |
 | `max_attachment_bytes` | `int` | `10485760` | Reject attachments larger than this (bytes). 0 = unlimited |
 | `imap_timeout` | `int` | `60` | Socket timeout (seconds) for IMAP operations. Prevents indefinite hangs on stale connections |

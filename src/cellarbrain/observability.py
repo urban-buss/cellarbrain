@@ -1,7 +1,8 @@
-"""Structured observability for the MCP server.
+"""Structured observability for the MCP server and ingest daemon.
 
 Captures tool, resource, and prompt invocations as ToolEvent records with
-session/turn correlation IDs.  Events are buffered in a deque and optionally
+session/turn correlation IDs.  Also captures ingest daemon lifecycle events
+as IngestEvent records.  Events are buffered in a deque and optionally
 flushed to a DuckDB log store for later analysis.
 """
 
@@ -49,6 +50,28 @@ class ToolEvent:
 
 
 # ---------------------------------------------------------------------------
+# IngestEvent — one ingest daemon lifecycle event
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class IngestEvent:
+    event_id: str
+    event_type: str  # daemon_start, daemon_stop, poll, batch_incomplete, batch_complete, etl_success, etl_failure, etl_failure_permanent, reap, imap_error, uidvalidity_reset
+    severity: str  # info, warning, error, critical
+    timestamp: datetime
+    batch_id: str | None = None
+    uids: list[int] | None = None
+    filenames: list[str] | None = None
+    missing_files: list[str] | None = None
+    error_message: str | None = None
+    exit_code: int | None = None
+    duration_ms: float | None = None
+    attempt_number: int | None = None
+    metadata: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # EventCollector — buffers events, writes to DuckDB
 # ---------------------------------------------------------------------------
 
@@ -81,6 +104,28 @@ _INSERT_SQL = """\
 INSERT INTO tool_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
+_CREATE_INGEST_TABLE_SQL = """\
+CREATE TABLE IF NOT EXISTS ingest_events (
+    event_id        VARCHAR PRIMARY KEY,
+    event_type      VARCHAR NOT NULL,
+    severity        VARCHAR NOT NULL,
+    timestamp       TIMESTAMPTZ NOT NULL,
+    batch_id        VARCHAR,
+    uids            INTEGER[],
+    filenames       VARCHAR[],
+    missing_files   VARCHAR[],
+    error_message   VARCHAR,
+    exit_code       INTEGER,
+    duration_ms     DOUBLE,
+    attempt_number  INTEGER,
+    metadata        VARCHAR,
+)
+"""
+
+_INSERT_INGEST_SQL = """\
+INSERT INTO ingest_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
 
 class EventCollector:
     """Collect MCP invocation events with session/turn tracking."""
@@ -89,6 +134,7 @@ class EventCollector:
         self.session_id: str = uuid.uuid4().hex
         self._config = config
         self._buffer: deque[ToolEvent] = deque()
+        self._ingest_buffer: deque[IngestEvent] = deque()
         self._turn_id: str = uuid.uuid4().hex
         self._last_event_time: float = time.monotonic()
         self._db = None
@@ -130,6 +176,7 @@ class EventCollector:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._db = duckdb.connect(str(path))
             self._db.execute(_CREATE_TABLE_SQL)
+            self._db.execute(_CREATE_INGEST_TABLE_SQL)
             logger.debug("Observability log store opened: %s", self._db_path)
         except Exception:
             logger.warning("Failed to open log store at %s", self._db_path, exc_info=True)
@@ -150,6 +197,7 @@ class EventCollector:
         if self._closed:
             return
         self.flush()
+        self.flush_ingest()
         self._schedule_flush()
 
     # -- Event lifecycle ----------------------------------------------------
@@ -217,6 +265,84 @@ class EventCollector:
         except Exception:
             logger.warning("Failed to flush events to log store", exc_info=True)
 
+    # -- Ingest event lifecycle ---------------------------------------------
+
+    def emit_ingest(self, event: IngestEvent) -> None:
+        """Buffer an ingest event for DuckDB persistence."""
+        self._ingest_buffer.append(event)
+        if self._db is not None and len(self._ingest_buffer) >= _FLUSH_THRESHOLD:
+            self.flush_ingest()
+
+    def flush_ingest(self) -> None:
+        """Write buffered ingest events to DuckDB."""
+        if self._db is None or not self._ingest_buffer:
+            return
+        rows = []
+        while self._ingest_buffer:
+            e = self._ingest_buffer.popleft()
+            rows.append(
+                (
+                    e.event_id,
+                    e.event_type,
+                    e.severity,
+                    e.timestamp,
+                    e.batch_id,
+                    e.uids,
+                    e.filenames,
+                    e.missing_files,
+                    e.error_message,
+                    e.exit_code,
+                    e.duration_ms,
+                    e.attempt_number,
+                    e.metadata,
+                )
+            )
+        try:
+            self._db.executemany(_INSERT_INGEST_SQL, rows)
+            logger.debug("Flushed %d ingest events to log store", len(rows))
+        except Exception:
+            logger.warning("Failed to flush ingest events to log store", exc_info=True)
+
+    def prune_ingest(
+        self,
+        retention_days: int | None = None,
+        poll_retention_days: int | None = None,
+    ) -> int:
+        """Prune ingest events with tiered retention.
+
+        Info-level events (polls, successes) are pruned after
+        *poll_retention_days* (default 7). Warning/error/critical events
+        are pruned after *retention_days* (default 90).
+        """
+        if self._db is None:
+            return 0
+        days = retention_days if retention_days is not None else self._config.ingest_retention_days
+        poll_days = poll_retention_days if poll_retention_days is not None else self._config.ingest_poll_retention_days
+        deleted = 0
+        try:
+            # Prune info-level events (polls, successes) with shorter retention
+            result = self._db.execute(
+                f"DELETE FROM ingest_events WHERE severity = 'info' "
+                f"AND timestamp < now() - INTERVAL '{poll_days} days' RETURNING event_id",
+            )
+            deleted += len(result.fetchall())
+            # Prune warning/error/critical with standard retention
+            result = self._db.execute(
+                f"DELETE FROM ingest_events WHERE severity != 'info' "
+                f"AND timestamp < now() - INTERVAL '{days} days' RETURNING event_id",
+            )
+            deleted += len(result.fetchall())
+            logger.info(
+                "Pruned %d ingest events (info: >%dd, other: >%dd)",
+                deleted,
+                poll_days,
+                days,
+            )
+            return deleted
+        except Exception:
+            logger.warning("Failed to prune ingest events", exc_info=True)
+            return 0
+
     def prune(self, retention_days: int | None = None) -> int:
         if self._db is None:
             return 0
@@ -238,6 +364,7 @@ class EventCollector:
             self._flush_timer.cancel()
             self._flush_timer = None
         self.flush()
+        self.flush_ingest()
         if self._db is not None:
             try:
                 self._db.close()

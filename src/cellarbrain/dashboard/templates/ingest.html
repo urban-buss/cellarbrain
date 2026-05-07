@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set active_nav = "ingest" %}
+
+{% block title %}Ingest — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Ingest Daemon{% endblock %}
+
+{% block content %}
+{% if not has_table %}
+<p>No ingest events recorded yet. The ingest daemon has not run or observability is not configured.</p>
+{% else %}
+
+{% if overview %}
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="value">{% if overview.daemon_running %}<span class="status-dot connected"></span>Active{% else %}<span class="status-dot disconnected"></span>Inactive{% endif %}</div>
+        <div class="label">Daemon Status</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.last_etl_batch_id or "—" }}</div>
+        <div class="label">Last ETL Success</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.failed_batches }}</div>
+        <div class="label">Failed Batches</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ overview.last_poll.strftime("%H:%M:%S") if overview.last_poll else "—" }}</div>
+        <div class="label">Last Activity</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="toolbar">
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+        <select onchange="window.location.search='?period={{ period }}&event_type='+this.value+'&severity={{ severity }}'">
+            <option value="">All Types</option>
+            {% for t in ["daemon_start", "daemon_stop", "poll", "batch_incomplete", "batch_complete", "etl_success", "etl_failure", "etl_failure_permanent", "reap", "imap_error", "uidvalidity_reset"] %}
+            <option value="{{ t }}" {% if event_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+        <select onchange="window.location.search='?period={{ period }}&event_type={{ event_type }}&severity='+this.value">
+            <option value="">All Severities</option>
+            {% for s in ["info", "warning", "error", "critical"] %}
+            <option value="{{ s }}" {% if severity == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Severity</th>
+            <th>Batch</th>
+            <th>Details</th>
+        </tr>
+    </thead>
+    <tbody id="ingest-tbody">
+    {% include "partials/ingest_rows.html" %}
+    </tbody>
+</table>
+
+{% if not events %}
+<p>No ingest events in this period.</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}

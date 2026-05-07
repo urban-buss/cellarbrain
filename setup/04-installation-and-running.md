@@ -577,7 +577,43 @@ processed_action = "flag"          # "flag" (mark read) or "move"
 processed_folder = "VinoCell/Processed"  # target for "move" action
 ```
 
-### 8.3 Set Up Credentials
+### 8.3 Sender Whitelist (Security)
+
+The sender whitelist is a **defence-in-depth** security control that restricts which email addresses are accepted for processing. Only emails whose `From:` address matches an entry in the list will be processed — all others are silently rejected and logged.
+
+By default the whitelist is empty, which means **all senders are accepted** (backward-compatible). Once you add at least one entry, only those senders are allowed.
+
+**Single sender:**
+
+```toml
+[ingest]
+sender_whitelist = ["noreply@vinocell.com"]
+```
+
+**Multiple senders:**
+
+```toml
+[ingest]
+sender_whitelist = [
+    "noreply@vinocell.com",
+    "backup@example.com",
+]
+```
+
+Matching is **case-insensitive** — `Noreply@Vinocell.com` matches `noreply@vinocell.com`.
+
+> **Tip:** There is also a separate `sender_filter` setting that works at the IMAP
+> protocol level (server-side `FROM` search). It accepts only a single address and
+> is a performance optimisation — use it to reduce the number of messages fetched,
+> and rely on `sender_whitelist` for actual security enforcement:
+>
+> ```toml
+> [ingest]
+> sender_filter = "noreply@vinocell.com"          # IMAP-level pre-filter (single address)
+> sender_whitelist = ["noreply@vinocell.com"]      # application-level enforcement (list)
+> ```
+
+### 8.4 Set Up Credentials
 
 **Option A: Interactive setup (stores in macOS Keychain)**
 
@@ -598,7 +634,7 @@ export CELLARBRAIN_IMAP_USER="user@icloud.com"
 export CELLARBRAIN_IMAP_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 ```
 
-### 8.4 iCloud App-Specific Password
+### 8.5 iCloud App-Specific Password
 
 For iCloud Mail (imap.mail.me.com):
 
@@ -611,7 +647,7 @@ For iCloud Mail (imap.mail.me.com):
 
 > **Important:** Your regular Apple ID password will NOT work with IMAP. You must use an app-specific password.
 
-### 8.5 Run Single Poll Cycle
+### 8.6 Run Single Poll Cycle
 
 ```bash
 # Process any pending emails, then exit
@@ -621,7 +657,7 @@ cellarbrain ingest --once
 cellarbrain ingest --once --dry-run
 ```
 
-### 8.6 Run as Daemon (Foreground)
+### 8.7 Run as Daemon (Foreground)
 
 ```bash
 cellarbrain ingest
@@ -640,7 +676,7 @@ The daemon:
 
 Stop with `Ctrl+C`.
 
-### 8.7 Run as launchd Service (Background, Always-On)
+### 8.8 Run as launchd Service (Background, Always-On)
 
 Create the plist file:
 

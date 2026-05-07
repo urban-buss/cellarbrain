@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cellarbrain.observability import EventCollector, ToolEvent, get_collector, init_observability
+from cellarbrain.observability import EventCollector, IngestEvent, ToolEvent, get_collector, init_observability
 from cellarbrain.settings import LoggingConfig
 
 
@@ -245,3 +245,186 @@ class TestPeriodicFlush:
         collector.close()
         assert collector._flush_timer is None
         assert collector._closed is True
+
+
+# ---------------------------------------------------------------------------
+# Ingest event tests
+# ---------------------------------------------------------------------------
+
+
+def _make_ingest_event(
+    *,
+    event_type: str = "etl_success",
+    severity: str = "info",
+    batch_id: str | None = "260507-1156",
+    uids: list[int] | None = None,
+    filenames: list[str] | None = None,
+    error_message: str | None = None,
+    exit_code: int | None = None,
+    duration_ms: float | None = 150.0,
+) -> IngestEvent:
+    return IngestEvent(
+        event_id="ingest-001",
+        event_type=event_type,
+        severity=severity,
+        timestamp=datetime.now(UTC),
+        batch_id=batch_id,
+        uids=uids or [85, 86, 87],
+        filenames=filenames or ["export-wines.csv", "export-bottles-stored.csv", "export-bottles-gone.csv"],
+        error_message=error_message,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+    )
+
+
+class TestIngestEvent:
+    def test_create_minimal(self):
+        now = datetime.now(UTC)
+        event = IngestEvent(
+            event_id="ie1",
+            event_type="daemon_start",
+            severity="info",
+            timestamp=now,
+        )
+        assert event.event_type == "daemon_start"
+        assert event.severity == "info"
+        assert event.batch_id is None
+        assert event.uids is None
+        assert event.error_message is None
+
+    def test_frozen(self):
+        event = _make_ingest_event()
+        with pytest.raises(AttributeError):
+            event.event_type = "changed"
+
+    def test_all_fields(self):
+        event = _make_ingest_event(
+            event_type="etl_failure",
+            severity="error",
+            error_message="delimiter error",
+            exit_code=1,
+        )
+        assert event.exit_code == 1
+        assert event.error_message == "delimiter error"
+
+
+class TestIngestEventLogger:
+    def test_ingest_table_created(self, tmp_path):
+        """EventCollector creates the ingest_events table on init."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        tables = collector._db.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'ingest_events'"
+        ).fetchall()
+        assert len(tables) == 1
+        collector.close()
+
+    def test_emit_ingest_appends_to_buffer(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = _make_ingest_event()
+        collector.emit_ingest(event)
+        assert len(collector._ingest_buffer) == 1
+        collector.close()
+
+    def test_flush_ingest_writes_to_duckdb(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = _make_ingest_event()
+        collector._ingest_buffer.append(event)
+        collector.flush_ingest()
+
+        assert len(collector._ingest_buffer) == 0
+        row = collector._db.execute("SELECT event_type, severity, batch_id FROM ingest_events").fetchone()
+        assert row[0] == "etl_success"
+        assert row[1] == "info"
+        assert row[2] == "260507-1156"
+        collector.close()
+
+    def test_auto_flush_at_threshold(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        for i in range(5):
+            e = IngestEvent(
+                event_id=f"ie{i}",
+                event_type="poll",
+                severity="info",
+                timestamp=datetime.now(UTC),
+            )
+            collector.emit_ingest(e)
+        # Buffer should be flushed after reaching threshold
+        assert len(collector._ingest_buffer) == 0
+        count = collector._db.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
+        assert count == 5
+        collector.close()
+
+    def test_close_flushes_ingest_buffer(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = _make_ingest_event()
+        collector._ingest_buffer.append(event)
+        collector.close()
+
+        import duckdb
+
+        con = duckdb.connect(str(tmp_path / "test.duckdb"), read_only=True)
+        count = con.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
+        assert count == 1
+        con.close()
+
+    def test_prune_ingest_tiered_retention(self, tmp_path):
+        config = LoggingConfig(
+            log_db=str(tmp_path / "test.duckdb"),
+            ingest_retention_days=0,
+            ingest_poll_retention_days=0,
+        )
+        collector = EventCollector(config, str(tmp_path))
+        # Insert an info and an error event
+        info_event = IngestEvent(
+            event_id="ie-info",
+            event_type="etl_success",
+            severity="info",
+            timestamp=datetime.now(UTC),
+        )
+        error_event = IngestEvent(
+            event_id="ie-error",
+            event_type="etl_failure",
+            severity="error",
+            timestamp=datetime.now(UTC),
+        )
+        collector._ingest_buffer.append(info_event)
+        collector._ingest_buffer.append(error_event)
+        collector.flush_ingest()
+
+        deleted = collector.prune_ingest()
+        assert deleted == 2
+        count = collector._db.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
+        assert count == 0
+        collector.close()
+
+    def test_prune_ingest_keeps_recent(self, tmp_path):
+        config = LoggingConfig(
+            log_db=str(tmp_path / "test.duckdb"),
+            ingest_retention_days=90,
+            ingest_poll_retention_days=7,
+        )
+        collector = EventCollector(config, str(tmp_path))
+        event = _make_ingest_event()
+        collector._ingest_buffer.append(event)
+        collector.flush_ingest()
+
+        deleted = collector.prune_ingest()
+        assert deleted == 0
+        count = collector._db.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
+        assert count == 1
+        collector.close()
+
+    def test_emit_ingest_no_db(self, tmp_path):
+        """emit_ingest should not raise even when DB is unavailable."""
+        config = LoggingConfig(log_db="/nonexistent/path/x/y/z/test.duckdb")
+        try:
+            collector = EventCollector(config, str(tmp_path))
+        except Exception:
+            pytest.skip("DB init raised on this OS")
+        event = _make_ingest_event()
+        collector.emit_ingest(event)  # should not raise
