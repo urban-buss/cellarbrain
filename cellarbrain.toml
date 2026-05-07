@@ -311,6 +311,7 @@ RON = 0.19
 # ]
 # processed_action = "flag"
 # processed_folder = "VinoCell/Processed"
+# processed_color = "orange"    # Apple Mail color: orange|red|yellow|blue|green|purple|gray|none
 #
 # # --- Security: Sender Whitelist ---
 # # Application-level post-fetch validation (defence-in-depth).

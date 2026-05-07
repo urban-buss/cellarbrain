@@ -8,20 +8,37 @@ metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
 
 Maintain the cellarbrain installation: upgrades, data refresh, currency rates, and health checks.
 
+## Workflow: Daemon Control
+
+### Check Status
+`ingest_status()` — returns running/stopped, PID, last poll time, recent errors.
+
+### Start Daemon
+`ingest_start()` — spawns daemon process if not running. Errors if already running.
+
+### Restart Daemon (kill + restart)
+`ingest_stop(restart=True)` — gracefully stops the running daemon, then starts fresh.
+
+### Stop Daemon
+`ingest_stop()` — sends termination signal for clean shutdown.
+
+### Troubleshooting
+If `ingest_status()` shows STOPPED but user expects it running:
+1. Check `cellar_info(verbose=True)` for environment issues
+2. Start daemon: `ingest_start()`
+3. Wait ~60s, then check `ingest_status()` again
+4. If still failing, report the error details to the user
+
 ## Workflow: Upgrade Cellarbrain
 
-1. **Stop ingest daemon** (if running):
-   - macOS: `launchctl unload ~/Library/LaunchAgents/com.cellarbrain.ingest.plist`
-   - Linux: `systemctl --user stop cellarbrain-ingest`
+1. **Stop ingest daemon** (if running): `ingest_stop()`
 2. **Upgrade package:**
    ```bash
    pip install --upgrade cellarbrain
    ```
 3. **Verify version:**
    `cellar_info(verbose=True)` — confirm new version number
-4. **Restart ingest daemon:**
-   - macOS: `launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist`
-   - Linux: `systemctl --user start cellarbrain-ingest`
+4. **Restart ingest daemon:** `ingest_start()`
 5. **Run quick health check** (see below)
 
 ## Workflow: Refresh Data
@@ -54,6 +71,9 @@ Check for: stale ETL (>24h old), missing data directory, version mismatch.
 
 | Tool | Purpose |
 |------|---------|
+| `ingest_status` | Check daemon running/stopped, PID, last poll |
+| `ingest_start` | Start daemon if not running |
+| `ingest_stop` | Stop daemon (optionally restart) |
 | `cellar_info` | Version, freshness, diagnostics |
 | `reload_data` | Re-run ETL pipeline |
 | `currency_rates` | Manage exchange rates |

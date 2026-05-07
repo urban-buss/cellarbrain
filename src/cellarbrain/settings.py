@@ -254,10 +254,12 @@ class IngestConfig:
     )
     processed_action: str = "flag"
     processed_folder: str = "VinoCell/Processed"
+    processed_color: str = "orange"
     etl_timeout: int = 300
     max_etl_retries: int = 3
     max_backoff_interval: int = 600
     max_attachment_bytes: int = 10_485_760
+    heartbeat_interval: int = 10
     imap_timeout: int = 60
     reaper_enabled: bool = True
     stale_threshold: int = 0

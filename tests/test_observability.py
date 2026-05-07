@@ -212,6 +212,55 @@ class TestInitObservability:
         assert get_collector() is None
         obs._collector = None
 
+    def test_register_signals_false_skips_signal_handlers(self, tmp_path):
+        """init_observability(register_signals=False) does not override signal handlers."""
+        import signal
+
+        import cellarbrain.observability as obs
+
+        obs._collector = None
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+
+        # Set a known handler first
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        sentinel = lambda s, f: None  # noqa: E731
+        signal.signal(signal.SIGINT, sentinel)
+
+        init_observability(config, str(tmp_path), register_signals=False)
+
+        # Signal handler should still be our sentinel (not overwritten)
+        current = signal.getsignal(signal.SIGINT)
+        assert current is sentinel
+
+        # Cleanup
+        signal.signal(signal.SIGINT, original_handler)
+        obs._collector = None
+
+    def test_register_signals_true_sets_signal_handlers(self, tmp_path):
+        """init_observability(register_signals=True) does register signal handlers."""
+        import signal
+
+        import cellarbrain.observability as obs
+
+        obs._collector = None
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        sentinel = lambda s, f: None  # noqa: E731
+        signal.signal(signal.SIGINT, sentinel)
+
+        init_observability(config, str(tmp_path), register_signals=True)
+
+        # Signal handler should have been overwritten
+        current = signal.getsignal(signal.SIGINT)
+        assert current is not sentinel
+
+        # Cleanup
+        signal.signal(signal.SIGINT, original_handler)
+        obs._collector = None
+
 
 class TestPeriodicFlush:
     def test_auto_flush_at_threshold(self, tmp_path):
