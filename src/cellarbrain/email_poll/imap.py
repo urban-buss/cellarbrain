@@ -119,6 +119,8 @@ class ImapClient:
             internal_date = data.get(b"INTERNALDATE")
             if internal_date is None:
                 internal_date = datetime.now(UTC)
+            elif internal_date.tzinfo is None:
+                internal_date = internal_date.replace(tzinfo=UTC)
 
             rfc822 = data.get(b"BODY[]") or data.get(b"RFC822", b"")
             if not rfc822:

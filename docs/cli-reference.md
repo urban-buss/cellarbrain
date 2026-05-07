@@ -277,6 +277,30 @@ This is equivalent to `cellarbrain etl ...` and will be removed in a future vers
 
 ---
 
+## `cellarbrain install-skills`
+
+Install bundled OpenClaw skill files to a target directory.
+
+```bash
+# Default: installs to ~/.openclaw/skills/cellarbrain/
+cellarbrain install-skills
+
+# Custom target directory
+cellarbrain install-skills -t /path/to/skills/dir
+
+# Force overwrite existing files (useful for upgrades)
+cellarbrain install-skills --force
+```
+
+| Arg / Flag | Required | Default | Description |
+|---|---|---|---|
+| `-t`, `--target` | No | `~/.openclaw/skills/cellarbrain/` | Target directory for skill files |
+| `--force` | No | `false` | Overwrite existing skill files |
+
+The command copies 8 skill files (SKILL.md) and a README.md from the bundled package data. Without `--force`, files that already exist are skipped.
+
+---
+
 ## `cellarbrain train-model`
 
 Fine-tune the sommelier embedding model on the pairing dataset.

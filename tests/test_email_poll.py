@@ -1463,6 +1463,86 @@ class TestReaper:
 
 
 # ---------------------------------------------------------------------------
+# TestNaiveAwareDatetimeHandling
+# ---------------------------------------------------------------------------
+
+
+class TestNaiveAwareDatetimeHandling:
+    """Issue #002: naive vs aware datetime comparison must not crash."""
+
+    def test_email_message_normalizes_naive_date(self):
+        """EmailMessage.__post_init__ normalizes naive date to UTC."""
+        msg = EmailMessage(uid=1, date=datetime(2026, 5, 6, 20, 0, 0), filename="x.csv", size=0)
+        assert msg.date.tzinfo is not None
+        assert msg.date.tzinfo is UTC
+
+    def test_email_message_preserves_aware_date(self):
+        """EmailMessage leaves already-aware dates untouched."""
+        aware = datetime(2026, 5, 6, 20, 0, 0, tzinfo=UTC)
+        msg = EmailMessage(uid=1, date=aware, filename="x.csv", size=0)
+        assert msg.date is aware
+
+    def test_reap_messages_with_naive_dates(self):
+        """_reap_messages handles timezone-naive msg.date without crashing."""
+        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(batch_window=300, stale_threshold=0)
+        now = datetime(2026, 5, 6, 21, 0, 0, tzinfo=UTC)
+        # Construct with naive date — __post_init__ normalizes it
+        naive_msg = _msg(1, datetime(2026, 5, 6, 20, 0, 0), "export-wines.csv")
+        state = {"reaped_uids": []}
+
+        mock_client = MagicMock()
+        # Should not raise TypeError
+        count = _reap_messages(
+            mock_client,
+            [naive_msg],
+            config=config,
+            now=now,
+            state=state,
+            reason="test",
+            ignore_age=True,
+            dry_run=True,
+        )
+        assert count == 1
+
+    def test_reap_messages_mixed_aware_naive(self):
+        """_reap_messages handles a mix of originally-aware and originally-naive dates."""
+        from cellarbrain.email_poll import _reap_messages
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(batch_window=300, stale_threshold=0)
+        now = datetime(2026, 5, 6, 21, 0, 0, tzinfo=UTC)
+        msgs = [
+            _msg(1, datetime(2026, 5, 6, 20, 0, 0), "export-wines.csv"),  # originally naive
+            _msg(2, datetime(2026, 5, 6, 20, 0, 5, tzinfo=UTC), "export-bottles-stored.csv"),  # aware
+        ]
+        state = {"reaped_uids": []}
+
+        mock_client = MagicMock()
+        count = _reap_messages(
+            mock_client,
+            msgs,
+            config=config,
+            now=now,
+            state=state,
+            reason="test",
+            ignore_age=True,
+            dry_run=True,
+        )
+        assert count == 2
+
+    def test_age_calculation_correct_after_normalization(self):
+        """Age is computed correctly for a message with originally-naive date."""
+        now = datetime(2026, 5, 6, 21, 0, 0, tzinfo=UTC)
+        # 20:00 naive → normalized to 20:00 UTC → age = 3600s
+        msg = _msg(1, datetime(2026, 5, 6, 20, 0, 0), "x.csv")
+        age = (now - msg.date).total_seconds()
+        assert age == 3600.0
+
+
+# ---------------------------------------------------------------------------
 # TestPollOnceDedup
 # ---------------------------------------------------------------------------
 

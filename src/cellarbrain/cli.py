@@ -664,6 +664,13 @@ def _subcommand_main(argv: list[str]) -> None:
         help="Run only specific checks (parquet, schema, dossier, sommelier, currency, etl, backup, disk, integrity)",
     )
 
+    # --- install-skills ---
+    skills_parser = sub.add_parser("install-skills", help="Install OpenClaw skills to a target directory")
+    skills_parser.add_argument(
+        "-t", "--target", default=None, help="Target directory (default: ~/.openclaw/skills/cellarbrain/)"
+    )
+    skills_parser.add_argument("--force", action="store_true", default=False, help="Overwrite existing skill files")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -728,6 +735,7 @@ def _subcommand_main(argv: list[str]) -> None:
         "backup": _cmd_backup,
         "restore": _cmd_restore,
         "doctor": _cmd_doctor,
+        "install-skills": _cmd_install_skills,
     }
     handler = handlers[args.command]
     _run_handler(lambda: handler(args, settings))
@@ -1402,6 +1410,25 @@ def _ingest_setup() -> None:
         print("Error: 'keyring' package not installed.", file=sys.stderr)
         print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Install skills
+# ---------------------------------------------------------------------------
+
+
+def _cmd_install_skills(args: argparse.Namespace, settings: Settings) -> None:
+    """Copy bundled OpenClaw skills to a target directory."""
+    from .skills import install_skills
+
+    target = pathlib.Path(args.target) if args.target else pathlib.Path.home() / ".openclaw" / "skills" / "cellarbrain"
+    installed = install_skills(target, force=args.force)
+    if installed:
+        print(f"Installed {len(installed)} skills to {target}")
+        for name in installed:
+            print(f"  {name}")
+    else:
+        print(f"All skills already present in {target} (use --force to overwrite)")
 
 
 # ---------------------------------------------------------------------------

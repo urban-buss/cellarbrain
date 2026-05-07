@@ -714,3 +714,41 @@ class TestVersionFlag:
 
         assert isinstance(cellarbrain.__version__, str)
         assert len(cellarbrain.__version__) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestInstallSkillsSubcommand
+# ---------------------------------------------------------------------------
+
+
+class TestInstallSkillsSubcommand:
+    def test_install_skills_default_target(self, tmp_path, capsys, monkeypatch):
+        """install-skills copies bundled skills to default target dir."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        main(["install-skills"])
+        captured = capsys.readouterr()
+        assert "Installed" in captured.out
+        target = tmp_path / ".openclaw" / "skills" / "cellarbrain"
+        assert (target / "tonight" / "SKILL.md").is_file()
+
+    def test_install_skills_custom_target(self, tmp_path, capsys):
+        """install-skills copies skills to a custom --target directory."""
+        target = tmp_path / "custom"
+        main(["install-skills", "-t", str(target)])
+        captured = capsys.readouterr()
+        assert "Installed" in captured.out
+        assert (target / "food-pairing" / "SKILL.md").is_file()
+
+    def test_install_skills_no_overwrite(self, tmp_path, capsys):
+        """Second run without --force reports all present."""
+        main(["install-skills", "-t", str(tmp_path)])
+        main(["install-skills", "-t", str(tmp_path)])
+        captured = capsys.readouterr()
+        assert "already present" in captured.out
+
+    def test_install_skills_force(self, tmp_path, capsys):
+        """--force overwrites existing files."""
+        main(["install-skills", "-t", str(tmp_path)])
+        main(["install-skills", "-t", str(tmp_path), "--force"])
+        captured = capsys.readouterr()
+        assert "Installed" in captured.out
