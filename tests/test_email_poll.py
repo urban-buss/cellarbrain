@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -1830,3 +1831,194 @@ class TestIngestConfigNewFields:
         assert config.stale_threshold == 900
         assert config.dedup_strategy == "none"
         assert config.dead_letter_folder == "VinoCell/DeadLetter"
+
+
+# ---------------------------------------------------------------------------
+# TestInterruptibleSleep
+# ---------------------------------------------------------------------------
+
+
+class TestInterruptibleSleep:
+    """Tests for IngestDaemon._interruptible_sleep (fix for Windows hang)."""
+
+    def test_sleeps_approximately_requested_duration(self):
+        """_interruptible_sleep returns after roughly the requested time."""
+        import time
+
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=60)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        start = time.monotonic()
+        daemon._interruptible_sleep(0.1)
+        elapsed = time.monotonic() - start
+
+        assert 0.08 <= elapsed <= 0.5  # allow some tolerance
+
+    def test_wakes_early_on_shutdown_event(self):
+        """_interruptible_sleep returns immediately when shutdown_event is set."""
+        import time
+
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=60)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+        daemon._shutdown_event.set()
+
+        start = time.monotonic()
+        daemon._interruptible_sleep(10.0)
+        elapsed = time.monotonic() - start
+
+        # Should return almost immediately (well under 1s)
+        assert elapsed < 1.0
+
+    def test_wakes_when_event_set_during_sleep(self):
+        """_interruptible_sleep wakes within ~2s when event is set mid-sleep."""
+        import time
+
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=60)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        def _set_after_delay():
+            time.sleep(0.2)
+            daemon._shutdown_event.set()
+
+        t = threading.Thread(target=_set_after_delay)
+        t.start()
+
+        start = time.monotonic()
+        daemon._interruptible_sleep(30.0)
+        elapsed = time.monotonic() - start
+        t.join()
+
+        # Should wake within ~2.2s (0.2s delay + one 2s tick max)
+        assert elapsed < 3.0
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonContinuesAfterETL
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonContinuesAfterETL:
+    """Regression test: daemon must continue polling after successful ETL."""
+
+    def test_multiple_poll_cycles_after_success(self):
+        """Daemon executes multiple poll cycles without hanging (issue #001)."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=0)  # no sleep between polls
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        call_count = 0
+
+        def _simulate_cycles(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First cycle: simulate successful ETL (returns > 0)
+                return 1
+            elif call_count == 2:
+                # Second cycle: no messages (returns 0)
+                return 0
+            else:
+                # Third cycle: stop daemon
+                daemon._shutdown_event.set()
+                return 0
+
+        with patch("cellarbrain.email_poll.poll_once", side_effect=_simulate_cycles):
+            daemon.run()
+
+        # Verify all three cycles ran — daemon didn't hang after first
+        assert call_count == 3
+
+    def test_continues_after_etl_failure(self):
+        """Daemon continues polling even after ETL failure (negative return)."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=0, max_backoff_interval=1)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        call_count = 0
+
+        def _fail_then_succeed(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return -1  # ETL failure
+            elif call_count == 2:
+                return 1  # ETL success
+            else:
+                daemon._shutdown_event.set()
+                return 0
+
+        with patch("cellarbrain.email_poll.poll_once", side_effect=_fail_then_succeed):
+            daemon.run()
+
+        assert call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# TestEtlRunnerProcessGroup
+# ---------------------------------------------------------------------------
+
+
+class TestEtlRunnerProcessGroup:
+    """Tests for CREATE_NEW_PROCESS_GROUP on Windows in run_etl."""
+
+    def test_creationflags_set_on_windows(self, tmp_path):
+        """On Windows, subprocess.run is called with CREATE_NEW_PROCESS_GROUP."""
+        from cellarbrain.email_poll.etl_runner import run_etl
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with (
+            patch("cellarbrain.email_poll.etl_runner.subprocess.run", return_value=mock_result) as mock_run,
+            patch("cellarbrain.email_poll.etl_runner.sys.platform", "win32"),
+        ):
+            run_etl(raw_dir, output_dir)
+
+        assert mock_run.call_args[1]["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
+
+    def test_creationflags_zero_on_non_windows(self, tmp_path):
+        """On non-Windows, creationflags is 0."""
+        from cellarbrain.email_poll.etl_runner import run_etl
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with (
+            patch("cellarbrain.email_poll.etl_runner.subprocess.run", return_value=mock_result) as mock_run,
+            patch("cellarbrain.email_poll.etl_runner.sys.platform", "linux"),
+        ):
+            run_etl(raw_dir, output_dir)
+
+        assert mock_run.call_args[1]["creationflags"] == 0

@@ -15,6 +15,7 @@ import json
 import logging
 import signal
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -439,6 +440,23 @@ class IngestDaemon:
         self._current_interval = config.poll_interval
         self._shutdown_event = threading.Event()
 
+    def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep for up to *seconds*, waking early if shutdown is requested.
+
+        Uses short ``time.sleep()`` intervals rather than a single
+        ``Event.wait(timeout)`` call.  On Windows, ``Event.wait(timeout)``
+        can hang indefinitely after a subprocess has run in the same console
+        group, because ``SleepConditionVariableSRW`` interactions with
+        Python's signal infrastructure corrupt the internal timeout.  Short
+        ``time.sleep()`` ticks (≤ 2 s) use ``SleepEx()`` which is reliable.
+        """
+        deadline = time.monotonic() + seconds
+        while not self._shutdown_event.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(remaining, 2.0))
+
     def run(self, *, dry_run: bool = False) -> None:
         """Run the poll loop indefinitely.
 
@@ -497,8 +515,10 @@ class IngestDaemon:
                     self._current_interval,
                 )
 
-            # Sleep with early wake on shutdown signal
-            self._shutdown_event.wait(timeout=self._current_interval)
+            # Sleep with early wake on shutdown signal.  Uses short
+            # time.sleep() ticks to avoid Windows Event.wait() hang.
+            logger.debug("Sleeping %ds until next poll", self._current_interval)
+            self._interruptible_sleep(self._current_interval)
 
         print("Ingest daemon stopped.", flush=True)
         logger.info("Ingest daemon stopped")
