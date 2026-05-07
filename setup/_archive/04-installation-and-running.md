@@ -573,9 +573,17 @@ mailbox = "INBOX"
 subject_filter = "[VinoCell] CSV file"
 poll_interval = 60                 # seconds between polls
 batch_window = 300                 # seconds to wait for all 3 files
-processed_action = "flag"          # "flag" (mark read) or "move"
+processed_action = "flag"          # "flag" (mark read + color flag) or "move"
 processed_folder = "VinoCell/Processed"  # target for "move" action
+processed_color = "orange"         # Apple Mail color: orange|red|yellow|green|blue|purple|gray|none
 ```
+
+> **Color flags:** When `processed_action = "flag"`, the daemon marks successfully
+> processed emails with an Apple Mail color flag (default: orange). This displays as
+> a colored dot in Apple Mail and iCloud Mail web. Non-Apple clients show a generic
+> "flagged" indicator. Set `processed_color = "none"` to skip the color and only mark
+> messages as read. See [Settings Reference](../docs/settings-reference.md) for the
+> full color table.
 
 ### 8.3 Sender Whitelist (Security)
 

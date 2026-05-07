@@ -462,6 +462,156 @@ class TestImapFetchMessages:
 
 
 # ---------------------------------------------------------------------------
+# TestImapFetchAbort
+# ---------------------------------------------------------------------------
+
+
+class TestImapFetchAbort:
+    """Verify fetch_messages raises IMAPTransientError on IMAP4.abort (#004)."""
+
+    def test_abort_raises_transient_error(self):
+        """imaplib.IMAP4.abort during FETCH becomes IMAPTransientError."""
+        import imaplib
+
+        from cellarbrain.email_poll.imap import ImapClient, IMAPTransientError
+
+        mock_client = MagicMock()
+        mock_client.fetch.side_effect = imaplib.IMAP4.abort(
+            "command: FETCH => unexpected response: b'Original-recipient: rfc822;test@example.com'"
+        )
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        with pytest.raises(IMAPTransientError, match="unexpected response"):
+            imap.fetch_messages([48], ["export-wines.csv"])
+
+    def test_abort_preserves_original_exception(self):
+        """IMAPTransientError chains the original IMAP4.abort as __cause__."""
+        import imaplib
+
+        from cellarbrain.email_poll.imap import ImapClient, IMAPTransientError
+
+        mock_client = MagicMock()
+        mock_client.fetch.side_effect = imaplib.IMAP4.abort("unexpected response")
+
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+
+        with pytest.raises(IMAPTransientError) as exc_info:
+            imap.fetch_messages([48], ["export-wines.csv"])
+
+        assert isinstance(exc_info.value.__cause__, imaplib.IMAP4.abort)
+
+
+# ---------------------------------------------------------------------------
+# TestImapMarkProcessed
+# ---------------------------------------------------------------------------
+
+
+class TestImapMarkProcessed:
+    """Tests for mark_processed color flagging and mark_seen add_flags fix."""
+
+    def _make_imap(self):
+        from cellarbrain.email_poll.imap import ImapClient
+
+        mock_client = MagicMock()
+        imap = ImapClient.__new__(ImapClient)
+        imap._client = mock_client
+        return imap, mock_client
+
+    def test_mark_processed_orange(self):
+        """Orange applies \\Seen, \\Flagged, and $MailFlagBit0."""
+        imap, mock_client = self._make_imap()
+        imap.mark_processed([10, 11], "orange")
+        mock_client.add_flags.assert_called_once_with([10, 11], [b"\\Seen", b"\\Flagged", b"$MailFlagBit0"])
+
+    def test_mark_processed_blue(self):
+        """Blue applies \\Flagged + $MailFlagBit0 + $MailFlagBit1."""
+        imap, mock_client = self._make_imap()
+        imap.mark_processed([5], "blue")
+        mock_client.add_flags.assert_called_once_with(
+            [5], [b"\\Seen", b"\\Flagged", b"$MailFlagBit0", b"$MailFlagBit1"]
+        )
+
+    def test_mark_processed_red(self):
+        """Red applies \\Flagged with no extra keywords."""
+        imap, mock_client = self._make_imap()
+        imap.mark_processed([1], "red")
+        mock_client.add_flags.assert_called_once_with([1], [b"\\Seen", b"\\Flagged"])
+
+    def test_mark_processed_none_only_marks_seen(self):
+        """Color 'none' skips \\Flagged — only marks \\Seen."""
+        imap, mock_client = self._make_imap()
+        imap.mark_processed([7, 8], "none")
+        mock_client.add_flags.assert_called_once_with([7, 8], [b"\\Seen"])
+
+    def test_mark_processed_empty_uids_noop(self):
+        """Empty uid list does not call add_flags."""
+        imap, mock_client = self._make_imap()
+        imap.mark_processed([], "orange")
+        mock_client.add_flags.assert_not_called()
+
+    def test_mark_seen_uses_add_flags(self):
+        """mark_seen uses add_flags (not set_flags) to preserve existing flags."""
+        imap, mock_client = self._make_imap()
+        imap.mark_seen([20, 21])
+        mock_client.add_flags.assert_called_once_with([20, 21], [b"\\Seen"])
+        mock_client.set_flags.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestPollOnceImapAbort
+# ---------------------------------------------------------------------------
+
+
+class TestPollOnceImapAbort:
+    """Verify poll_once returns 0 on IMAPTransientError without marking messages (#004)."""
+
+    def _make_settings(self, tmp_path):
+        """Build minimal Settings and IngestConfig for testing."""
+        from cellarbrain.settings import IngestConfig
+
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        config = IngestConfig()
+
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+
+        return config, settings, raw_dir
+
+    def test_imap_abort_returns_zero(self, tmp_path):
+        """poll_once returns 0 when fetch_messages raises IMAPTransientError."""
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.email_poll.imap import IMAPTransientError
+
+        config, settings, raw_dir = self._make_settings(tmp_path)
+
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.search_unseen.return_value = [48, 49, 50]
+        mock_imap.fetch_messages.side_effect = IMAPTransientError("IMAP abort")
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        mock_imap.mark_seen.assert_not_called()
+        mock_imap.move_messages.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # TestPollOnceEtlFailure
 # ---------------------------------------------------------------------------
 
@@ -571,9 +721,76 @@ class TestPollOnceEtlFailure:
         ):
             result = poll_once(config, settings)
 
-        # ETL succeeded → messages should be marked
-        mock_imap.mark_seen.assert_called_once_with([48, 49, 50])
+        # ETL succeeded → messages should be marked with color flag
+        mock_imap.mark_processed.assert_called_once_with([48, 49, 50], "orange")
         assert result == 1
+
+    def test_permanent_etl_failure_marks_seen(self, tmp_path):
+        """After max_etl_retries, permanently-failed batch messages are marked as read."""
+        from cellarbrain.email_poll import IngestState, _save_state, poll_once
+        from cellarbrain.settings import IngestConfig
+
+        config, settings, raw_dir = self._make_settings(tmp_path)
+        # Use max_etl_retries=2 so second failure = permanent
+        config = IngestConfig(max_etl_retries=2)
+
+        t0 = datetime(2026, 5, 1, 10, 0)
+
+        # Pre-seed state with 1 prior failed attempt for these UIDs
+        state = IngestState(uidvalidity=12345)
+        state.pending_retries = [{"uids": [48, 49, 50], "attempts": 1, "last_error": "prior"}]
+        _save_state(raw_dir, state)
+
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.search_unseen.return_value = [48, 49, 50]
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=48, date=t0, filename="export-wines.csv", size=100), b"wines"),
+            (EmailMessage(uid=49, date=t0, filename="export-bottles-stored.csv", size=100), b"bottles"),
+            (EmailMessage(uid=50, date=t0, filename="export-bottles-gone.csv", size=100), b"gone"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        snapshot_dir = raw_dir / "260501-1000"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(1, "Error: bad delimiter")),
+        ):
+            result = poll_once(config, settings)
+
+        # Permanently failed → mark_seen should be called
+        mock_imap.mark_seen.assert_called_once_with([48, 49, 50])
+        # mark_processed should NOT be called (not a success)
+        mock_imap.mark_processed.assert_not_called()
+        assert result == -1
+
+    def test_reap_threshold_uses_batch_window_plus_poll_interval(self):
+        """Default stale threshold is batch_window + poll_interval, not 2×batch_window."""
+        from cellarbrain.email_poll import IngestState, _reap_messages
+        from cellarbrain.settings import IngestConfig
+
+        # batch_window=300, poll_interval=60 → threshold=360
+        config = IngestConfig(batch_window=300, poll_interval=60, stale_threshold=0)
+        now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+        state = IngestState()
+        mock_client = MagicMock()
+
+        # Message aged 350s — below new threshold (360), should NOT be reaped
+        msg_below = _msg(1, now - timedelta(seconds=350), "export-wines.csv")
+        count = _reap_messages(mock_client, [msg_below], config=config, now=now, state=state, reason="stale")
+        assert count == 0
+        mock_client.mark_seen.assert_not_called()
+
+        # Message aged 400s — above threshold (360), should be reaped
+        msg_above = _msg(2, now - timedelta(seconds=400), "export-wines.csv")
+        count = _reap_messages(mock_client, [msg_above], config=config, now=now, state=state, reason="stale")
+        assert count == 1
+        mock_client.mark_seen.assert_called_once_with([2])
 
 
 # ---------------------------------------------------------------------------
@@ -736,7 +953,7 @@ class TestSenderWhitelist:
             result = poll_once(config, settings)
 
         assert result == 1
-        mock_imap.mark_seen.assert_called_once()
+        mock_imap.mark_processed.assert_called_once()
 
     def test_whitelist_filters_non_matching(self, tmp_path):
         """Non-whitelisted senders are rejected; incomplete batch → no ETL."""
@@ -1612,16 +1829,18 @@ class TestPollOnceDedup:
             result = poll_once(config, settings)
 
         assert result == 1
-        # 3 duplicates should have been marked seen (reaped)
-        # The batch UIDs (2, 4, 6) should also be marked seen
         # Duplicates (1, 3, 5) reaped via mark_seen
-        # Batch (2, 4, 6) marked via mark_seen
         all_seen_calls = mock_imap.mark_seen.call_args_list
         reaped_uids = set()
         for call in all_seen_calls:
             reaped_uids.update(call[0][0])
         assert {1, 3, 5} <= reaped_uids  # duplicates reaped
-        assert {2, 4, 6} <= reaped_uids  # batch processed
+        # Batch (2, 4, 6) marked via mark_processed (color flag)
+        processed_calls = mock_imap.mark_processed.call_args_list
+        processed_uids = set()
+        for call in processed_calls:
+            processed_uids.update(call[0][0])
+        assert {2, 4, 6} <= processed_uids  # batch processed
 
     def test_reaper_disabled_no_reaping(self, tmp_path):
         """When reaper_enabled=False, leftovers are not reaped."""
@@ -2579,3 +2798,207 @@ class TestIngestState:
             ]
         )
         assert state.failed_uid_set() == {1, 2, 3, 7, 8}
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonLogElevation
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonLogElevation:
+    """Tests that daemon mode auto-elevates to INFO unless --quiet."""
+
+    def test_daemon_elevates_to_info(self):
+        """_cmd_ingest elevates root logger to INFO for daemon mode."""
+        import logging
+
+        from cellarbrain.cli import _cmd_ingest
+
+        root = logging.getLogger()
+        original_level = root.level
+
+        args = MagicMock()
+        args.setup = False
+        args.status = False
+        args.reap_orphans = False
+        args.once = False
+        args.quiet = False
+        args.foreground = False
+        args.dry_run = False
+
+        settings = MagicMock()
+
+        # Set root to WARNING to simulate default config
+        root.setLevel(logging.WARNING)
+
+        # Patch IngestDaemon at the source so the local import finds our mock
+        with patch("cellarbrain.email_poll.IngestDaemon") as mock_daemon_cls:
+            mock_daemon = MagicMock()
+            mock_daemon.run.side_effect = KeyboardInterrupt
+            mock_daemon_cls.return_value = mock_daemon
+
+            try:
+                _cmd_ingest(args, settings)
+            except (KeyboardInterrupt, SystemExit):
+                pass
+
+        # After _cmd_ingest runs, root should be at INFO (not WARNING)
+        assert root.level <= logging.INFO
+
+        # Restore
+        root.setLevel(original_level)
+
+    def test_daemon_stays_warning_when_quiet(self):
+        """_cmd_ingest does NOT elevate to INFO when --quiet is passed."""
+        import logging
+
+        from cellarbrain.cli import _cmd_ingest
+
+        root = logging.getLogger()
+        original_level = root.level
+
+        args = MagicMock()
+        args.setup = False
+        args.status = False
+        args.reap_orphans = False
+        args.once = False
+        args.quiet = True
+        args.foreground = False
+        args.dry_run = False
+
+        settings = MagicMock()
+
+        root.setLevel(logging.WARNING)
+
+        with patch("cellarbrain.email_poll.IngestDaemon") as mock_daemon_cls:
+            mock_daemon = MagicMock()
+            mock_daemon.run.side_effect = KeyboardInterrupt
+            mock_daemon_cls.return_value = mock_daemon
+
+            try:
+                _cmd_ingest(args, settings)
+            except (KeyboardInterrupt, SystemExit):
+                pass
+
+        # Root should remain at WARNING
+        assert root.level == logging.WARNING
+
+        root.setLevel(original_level)
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonHeartbeat
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonHeartbeat:
+    """Tests for the periodic heartbeat print."""
+
+    def test_heartbeat_prints_at_interval(self, capsys):
+        """Heartbeat message printed every heartbeat_interval polls."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=0, heartbeat_interval=3)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        call_count = 0
+
+        def _poll_and_count(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 6:
+                daemon._shutdown_event.set()
+            return 0
+
+        with patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_count):
+            daemon.run()
+
+        captured = capsys.readouterr()
+        # Should have printed heartbeat at poll 3 and poll 6
+        assert captured.out.count("[heartbeat]") == 2
+        assert "6 polls completed" in captured.out
+
+    def test_heartbeat_disabled_when_zero(self, capsys):
+        """No heartbeat when heartbeat_interval is 0."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=0, heartbeat_interval=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        call_count = 0
+
+        def _poll_and_count(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 5:
+                daemon._shutdown_event.set()
+            return 0
+
+        with patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_count):
+            daemon.run()
+
+        captured = capsys.readouterr()
+        assert "[heartbeat]" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonSignalHandlerOrder
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonSignalHandlerOrder:
+    """Tests that daemon signal handlers are registered AFTER observability."""
+
+    def test_init_observability_called_without_signal_registration(self):
+        """Daemon passes register_signals=False to init_observability."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+        daemon._shutdown_event.set()
+
+        with patch("cellarbrain.email_poll.poll_once", return_value=0):
+            with patch("cellarbrain.observability.init_observability", wraps=None) as mock_init:
+                mock_init.return_value = MagicMock()
+                daemon.run()
+
+        mock_init.assert_called_once()
+        _, kwargs = mock_init.call_args
+        assert kwargs.get("register_signals") is False
+
+    def test_signal_handler_flushes_collector(self):
+        """Daemon's signal handler calls collector.close() before shutdown."""
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        call_count = 0
+        mock_collector = MagicMock()
+
+        def _poll_then_signal(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Simulate receiving SIGINT by calling the handler directly
+                import signal as _sig
+
+                handler = _sig.getsignal(_sig.SIGINT)
+                if callable(handler):
+                    handler(_sig.SIGINT, None)
+            return 0
+
+        with patch("cellarbrain.email_poll.poll_once", side_effect=_poll_then_signal):
+            with patch("cellarbrain.observability.get_collector", return_value=mock_collector):
+                daemon.run()
+
+        # Collector should have been closed during signal handling
+        mock_collector.close.assert_called()

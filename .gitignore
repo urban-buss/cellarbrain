@@ -36,6 +36,7 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+MagicMock/
 
 # QA test reports
 qa-reports/

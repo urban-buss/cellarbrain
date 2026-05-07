@@ -380,8 +380,19 @@ class EventCollector:
 _collector: EventCollector | None = None
 
 
-def init_observability(config: LoggingConfig, data_dir: str) -> EventCollector:
-    """Initialise the global EventCollector.  Idempotent — returns existing if set."""
+def init_observability(
+    config: LoggingConfig,
+    data_dir: str,
+    *,
+    register_signals: bool = True,
+) -> EventCollector:
+    """Initialise the global EventCollector.  Idempotent — returns existing if set.
+
+    Args:
+        register_signals: If False, skip SIGTERM/SIGINT handler registration.
+            The ingest daemon passes False here because it manages its own
+            signal handlers for graceful shutdown.
+    """
     global _collector
     if _collector is not None:
         return _collector
@@ -389,17 +400,18 @@ def init_observability(config: LoggingConfig, data_dir: str) -> EventCollector:
     atexit.register(_collector.close)
 
     # Register signal handlers for graceful flush on SIGTERM/SIGINT
-    def _signal_handler(signum: int, frame: object) -> None:
-        if _collector is not None:
-            _collector.close()
-        raise SystemExit(128 + signum)
+    if register_signals:
+        def _signal_handler(signum: int, frame: object) -> None:
+            if _collector is not None:
+                _collector.close()
+            raise SystemExit(128 + signum)
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            signal.signal(sig, _signal_handler)
-        except (OSError, ValueError):
-            # Cannot set signal handlers outside main thread
-            pass
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, _signal_handler)
+            except (OSError, ValueError):
+                # Cannot set signal handlers outside main thread
+                pass
 
     logger.info("Observability initialised — session=%s", _collector.session_id)
     return _collector

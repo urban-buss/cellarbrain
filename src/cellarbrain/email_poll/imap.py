@@ -10,13 +10,19 @@ from __future__ import annotations
 import email
 import email.policy
 import email.utils
+import imaplib
 import logging
 from datetime import UTC, datetime
 from types import TracebackType
+from typing import ClassVar
 
 from .grouping import EmailMessage
 
 logger = logging.getLogger(__name__)
+
+
+class IMAPTransientError(Exception):
+    """Raised when the IMAP connection is aborted by a transient server error."""
 
 
 class ImapClient:
@@ -114,7 +120,11 @@ class ImapClient:
             return []
 
         results: list[tuple[EmailMessage, bytes]] = []
-        raw_responses = self._client.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
+        try:
+            raw_responses = self._client.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
+        except imaplib.IMAP4.abort as exc:
+            logger.warning("IMAP connection aborted during FETCH: %s", exc)
+            raise IMAPTransientError(str(exc)) from exc
 
         for uid, data in raw_responses.items():
             internal_date = data.get(b"INTERNALDATE")
@@ -161,11 +171,40 @@ class ImapClient:
         logger.debug("Fetched %d valid attachment messages from %d UIDs", len(results), len(uids))
         return results
 
+    # Apple Mail color-flag keyword mapping (iCloud PERMANENTFLAGS \* compatible).
+    _COLOR_KEYWORDS: ClassVar[dict[str, list[bytes] | None]] = {
+        "orange": [b"$MailFlagBit0"],
+        "red": [],
+        "yellow": [b"$MailFlagBit1"],
+        "blue": [b"$MailFlagBit0", b"$MailFlagBit1"],
+        "green": [b"$MailFlagBit2"],
+        "purple": [b"$MailFlagBit0", b"$MailFlagBit2"],
+        "gray": [b"$MailFlagBit1", b"$MailFlagBit2"],
+        "none": None,
+    }
+
     def mark_seen(self, uids: list[int]) -> None:
-        """Mark messages as ``\\Seen`` (read)."""
+        """Mark messages as ``\\Seen`` (read) without removing existing flags."""
         if uids:
-            self._client.set_flags(uids, [b"\\Seen"])
+            self._client.add_flags(uids, [b"\\Seen"])
             logger.info("Marked %d messages as read (UIDs: %s)", len(uids), uids)
+
+    def mark_processed(self, uids: list[int], color: str = "orange") -> None:
+        """Mark messages as read and apply an Apple Mail color flag.
+
+        Uses IMAP ``add_flags`` so existing user-set flags are preserved.
+        Supported colors: orange, red, yellow, blue, green, purple, gray, none.
+        """
+        if not uids:
+            return
+        keywords = self._COLOR_KEYWORDS.get(color.lower())
+        if keywords is None:
+            # "none" — only mark as seen, no color flag
+            self._client.add_flags(uids, [b"\\Seen"])
+        else:
+            flags: list[bytes] = [b"\\Seen", b"\\Flagged", *keywords]
+            self._client.add_flags(uids, flags)
+        logger.info("Marked %d messages processed (color=%s, UIDs: %s)", len(uids), color, uids)
 
     def move_messages(self, uids: list[int], folder: str) -> None:
         """Copy messages to *folder* and delete from current folder."""
