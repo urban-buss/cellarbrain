@@ -353,11 +353,11 @@ Loads the trained model, encodes all food catalogue entries and/or wines with `b
 Start the IMAP email ingestion daemon that monitors a mailbox for Vinocell CSV export emails, groups them into complete batches, writes snapshot folders, flushes the `raw/` working set, and triggers the ETL pipeline.
 
 ```bash
-# Start polling daemon (foreground, runs until stopped)
+# Start polling daemon (foreground, INFO logging visible by default)
 cellarbrain ingest
 
-# Start with INFO logging visible on stderr (interactive use)
-cellarbrain ingest --foreground
+# Start with suppressed output (only warnings/errors shown)
+cellarbrain -q ingest
 
 # Single poll cycle, then exit (for cron/testing)
 cellarbrain ingest --once
@@ -382,9 +382,15 @@ cellarbrain ingest --reap-orphans --dry-run
 |------|-------------|
 | `--once` | Run a single poll cycle and exit |
 | `--dry-run` | Detect batches but don't write files or invoke ETL |
-| `--foreground`, `-f` | Force INFO-level logging to stderr (for interactive monitoring) |
+| `--foreground`, `-f` | *(deprecated)* No-op — INFO logging is now the default for daemon mode |
 | `--setup` | Interactive credential storage (prompts for IMAP user/password, stores in keyring) |
 | `--reap-orphans` | One-shot cleanup of orphan/duplicate messages that cannot form a batch |
+
+> **Note:** The daemon now defaults to INFO-level logging so poll activity is
+> always visible. Use `cellarbrain -q ingest` to suppress output (only warnings
+> and errors shown). A periodic heartbeat is printed to stdout every
+> `heartbeat_interval` polls (default: 10 cycles, ~10 minutes) regardless of
+> log level.
 
 ### Prerequisites
 
@@ -405,11 +411,11 @@ cellarbrain ingest --reap-orphans --dry-run
 
 ### macOS Deployment
 
-For always-on operation, deploy as a `launchd` user agent. A template plist is provided at `setup/com.cellarbrain.ingest.plist.template`. To install:
+For always-on operation, deploy as a `launchd` user agent. A template plist is provided — see `setup/reference/launchd-template.md`. To install:
 
 ```bash
-# Copy and edit the template
-cp setup/com.cellarbrain.ingest.plist.template ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
+# Copy and edit the template (see setup/reference/launchd-template.md for the full plist)
+cp com.cellarbrain.ingest.plist ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
 # Edit paths in the plist, then load:
 launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
 ```

@@ -413,7 +413,7 @@ def _reap_messages(
     if not messages:
         return 0
 
-    effective_threshold = config.stale_threshold or (2 * config.batch_window)
+    effective_threshold = config.stale_threshold or (config.batch_window + config.poll_interval)
 
     to_reap = []
     for msg in messages:
@@ -454,11 +454,11 @@ def _reap_messages(
         )
     else:
         client.mark_seen(reap_uids)
-        logger.info(
-            "Marked %d orphan message(s) as SEEN (reason=%s): UIDs %s",
+        logger.warning(
+            "Reaped %d stale message(s) — UIDs %s will not be retried (reason=%s)",
             len(to_reap),
-            reason,
             reap_uids,
+            reason,
         )
 
     # Record in state
@@ -507,7 +507,7 @@ def poll_once(
     from .credentials import resolve_credentials
     from .etl_runner import run_etl
     from .grouping import dedup_messages, group_messages_with_leftovers
-    from .imap import ImapClient
+    from .imap import ImapClient, IMAPTransientError
     from .placement import SnapshotCollisionError, place_batch
 
     raw_dir = Path(settings.paths.raw_dir)
@@ -539,7 +539,13 @@ def poll_once(
         logger.info("Found %d new messages", len(uids))
 
         # Fetch and parse
-        fetched = client.fetch_messages(uids, config.expected_files, max_attachment_bytes=config.max_attachment_bytes)
+        try:
+            fetched = client.fetch_messages(
+                uids, config.expected_files, max_attachment_bytes=config.max_attachment_bytes
+            )
+        except IMAPTransientError as exc:
+            logger.warning("IMAP transient error during fetch — will retry next cycle: %s", exc)
+            return 0
         if not fetched:
             logger.info("No messages with valid attachments")
             return 0
@@ -672,6 +678,8 @@ def poll_once(
                         config.max_etl_retries,
                         batch_uids_list,
                     )
+                    # Mark as read so IMAP stops returning these dead messages
+                    client.mark_seen(batch_uids_list)
                     _emit_ingest_event(
                         "etl_failure_permanent",
                         "critical",
@@ -716,7 +724,7 @@ def poll_once(
             if config.processed_action == "move":
                 client.move_messages(batch_uids, config.processed_folder)
             else:
-                client.mark_seen(batch_uids)
+                client.mark_processed(batch_uids, config.processed_color)
 
             # Update state — advance high-water-mark
             state.record_successful_batch(set(batch_uids))
@@ -882,17 +890,6 @@ class IngestDaemon:
         Handles SIGINT/SIGTERM for graceful shutdown.
         """
 
-        # Register signal handlers for clean shutdown
-        def _handle_signal(signum: int, frame: object) -> None:
-            logger.warning("Received signal %d — shutting down", signum)
-            self._shutdown_event.set()
-
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
-                signal.signal(sig, _handle_signal)
-            except (OSError, ValueError):
-                pass
-
         print(
             f"Ingest daemon started — polling {self.config.imap_host} every {self._base_interval}s (Ctrl+C to stop)",
             flush=True,
@@ -904,10 +901,34 @@ class IngestDaemon:
         )
 
         # Initialise observability (creates DuckDB table if needed)
-        from ..observability import init_observability
+        # Pass register_signals=False so daemon's own handlers aren't overwritten.
+        from ..observability import get_collector, init_observability
 
-        init_observability(self.settings.logging, self.settings.paths.data_dir)
+        init_observability(
+            self.settings.logging,
+            self.settings.paths.data_dir,
+            register_signals=False,
+        )
         _emit_ingest_event("daemon_start", "info")
+
+        # Register signal handlers for clean shutdown AFTER observability init
+        # so these are the final active handlers.
+        def _handle_signal(signum: int, frame: object) -> None:
+            logger.warning("Received signal %d — shutting down", signum)
+            collector = get_collector()
+            if collector is not None:
+                collector.close()
+            self._shutdown_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, _handle_signal)
+            except (OSError, ValueError):
+                pass
+
+        _poll_count = 0
+        _start_time = time.monotonic()
+        _heartbeat_interval = self.config.heartbeat_interval
 
         while not self._shutdown_event.is_set():
             try:
@@ -940,6 +961,15 @@ class IngestDaemon:
                 logger.info(
                     "Backing off — next poll in %ds",
                     self._current_interval,
+                )
+
+            # Periodic heartbeat — visible at any log level (stdout print).
+            _poll_count += 1
+            if _heartbeat_interval and _poll_count % _heartbeat_interval == 0:
+                elapsed = int(time.monotonic() - _start_time)
+                print(
+                    f"[heartbeat] {_poll_count} polls completed, uptime {elapsed}s",
+                    flush=True,
                 )
 
             # Sleep with early wake on shutdown signal.  Uses short

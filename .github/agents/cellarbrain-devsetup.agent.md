@@ -168,11 +168,11 @@ Then print next steps:
 >
 > 1. **Select the Python interpreter** in VS Code if you haven't already (Ctrl/Cmd+Shift+P → "Python: Select Interpreter" → `.venv`).
 > 2. **Install recommended extensions** — VS Code should prompt you, or run `@cellarbrain-devsetup install extensions` equivalent manually.
-> 3. **Place raw CSV exports** in `raw/` if you want to run the ETL pipeline (see `setup/03-vinocell-local-dev.md` Step 8).
+> 3. **Place raw CSV exports** in `raw/` if you want to run the ETL pipeline (see `setup/modules/etl.md`).
 > 4. **Run ETL:** `cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output`
 > 5. **Start the MCP server** in Copilot Chat — it should auto-discover from `.vscode/mcp.json`.
 >
-> For the full setup guide, see `setup/03-vinocell-local-dev.md`.
+> For the full setup guide, see `setup/development/local-setup.md`.
 
 ## Constraints
 

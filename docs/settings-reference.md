@@ -211,15 +211,17 @@ Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Creden
 | `poll_interval` | `int` | `60` | Seconds between poll cycles |
 | `batch_window` | `int` | `300` | Seconds within which all 3 files must arrive to form a batch |
 | `expected_files` | `tuple[str, ...]` | `("export-wines.csv", "export-bottles-stored.csv", "export-bottles-gone.csv")` | Attachment filenames that form a complete batch |
-| `processed_action` | `str` | `"flag"` | What to do with processed emails: `"flag"` (mark as read) or `"move"` |
+| `processed_action` | `str` | `"flag"` | What to do with processed emails: `"flag"` (mark as read + color flag) or `"move"` |
 | `processed_folder` | `str` | `"VinoCell/Processed"` | Target IMAP folder when `processed_action = "move"` |
+| `processed_color` | `str` | `"orange"` | Apple Mail color flag for processed batches: `orange` / `red` / `yellow` / `blue` / `green` / `purple` / `gray` / `none` |
 | `etl_timeout` | `int` | `300` | Seconds before the ETL subprocess is killed |
 | `max_etl_retries` | `int` | `3` | Maximum ETL attempts per batch before permanently failing. Prevents infinite retry loops for batches with validation errors |
 | `max_backoff_interval` | `int` | `600` | Maximum seconds between retries on transient errors |
 | `max_attachment_bytes` | `int` | `10485760` | Reject attachments larger than this (bytes). 0 = unlimited |
+| `heartbeat_interval` | `int` | `10` | Print a heartbeat to stdout every N polls. 0 = disabled |
 | `imap_timeout` | `int` | `60` | Socket timeout (seconds) for IMAP operations. Prevents indefinite hangs on stale connections |
 | `reaper_enabled` | `bool` | `True` | Enable automatic cleanup of orphan/stale messages |
-| `stale_threshold` | `int` | `0` | Seconds after which incomplete-batch messages are reaped. `0` = auto (`2 × batch_window`) |
+| `stale_threshold` | `int` | `0` | Seconds after which incomplete-batch messages are reaped. `0` = auto (`batch_window + poll_interval`) |
 | `dedup_strategy` | `str` | `"latest"` | How to handle duplicate filenames: `"latest"` (keep newest) or `"none"` (disabled) |
 | `dead_letter_folder` | `str` | `""` | IMAP folder to move reaped messages into. Empty = mark as read instead |
 
@@ -243,15 +245,33 @@ poll_interval = 30
 batch_window = 600
 processed_action = "move"
 processed_folder = "Archive/VinoCell"
+processed_color = "orange"   # Apple Mail color flag (see table below)
 sender_whitelist = ["noreply@vinocell.com"]
 etl_timeout = 600
 max_backoff_interval = 300
 max_attachment_bytes = 10485760
 reaper_enabled = true
-stale_threshold = 0          # auto = 2 × batch_window (1200s)
+stale_threshold = 0          # auto = batch_window + poll_interval (360s with defaults)
 dedup_strategy = "latest"
 dead_letter_folder = ""      # empty = mark as read; set a folder to preserve orphans
 ```
+
+#### Apple Mail color flags
+
+When `processed_action = "flag"`, processed emails receive an Apple Mail color flag via IMAP keywords. iCloud supports `PERMANENTFLAGS \*`, so custom keywords persist. The mapping uses the `\Flagged` system flag plus `$MailFlagBit*` keywords:
+
+| Color | IMAP keywords |
+|-------|---------------|
+| `orange` | `\Flagged` + `$MailFlagBit0` |
+| `red` | `\Flagged` |
+| `yellow` | `\Flagged` + `$MailFlagBit1` |
+| `blue` | `\Flagged` + `$MailFlagBit0` + `$MailFlagBit1` |
+| `green` | `\Flagged` + `$MailFlagBit2` |
+| `purple` | `\Flagged` + `$MailFlagBit0` + `$MailFlagBit2` |
+| `gray` | `\Flagged` + `$MailFlagBit1` + `$MailFlagBit2` |
+| `none` | (no flag — only marks `\Seen`) |
+
+Set `processed_color = "none"` to preserve the legacy "mark as read" behaviour without a colour flag.
 
 Credential storage:
 

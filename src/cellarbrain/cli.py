@@ -637,7 +637,10 @@ def _subcommand_main(argv: list[str]) -> None:
     ingest.add_argument("--dry-run", action="store_true", help="Detect batches but don't write files or run ETL")
     ingest.add_argument("--setup", action="store_true", help="Interactive credential storage")
     ingest.add_argument(
-        "--foreground", "-f", action="store_true", help="Force INFO logging to stderr (interactive use)"
+        "--foreground",
+        "-f",
+        action="store_true",
+        help="(deprecated — INFO logging is now the default for daemon mode)",
     )
     ingest.add_argument("--reap-orphans", action="store_true", help="One-shot cleanup of orphan/duplicate messages")
     ingest.add_argument("--status", action="store_true", help="Show ingest daemon status from log database")
@@ -1381,13 +1384,15 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
         print(f"Processed {count} batch(es).")
         sys.exit(0)
 
-    # --foreground: raise log level to INFO for interactive use
-    if getattr(args, "foreground", False):
+    # Daemon mode defaults to INFO — silence is never the right default
+    # for a foreground interactive process.  Use -q/--quiet to suppress.
+    if not args.quiet:
         root = logging.getLogger()
-        root.setLevel(logging.INFO)
-        for handler in root.handlers:
-            if handler.level > logging.INFO:
-                handler.setLevel(logging.INFO)
+        if root.level > logging.INFO:
+            root.setLevel(logging.INFO)
+            for handler in root.handlers:
+                if handler.level > logging.INFO:
+                    handler.setLevel(logging.INFO)
 
     try:
         daemon = IngestDaemon(config, settings)
