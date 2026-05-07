@@ -72,5 +72,5 @@ class TestSyncWithOpenclaw:
             assert src.is_file(), f".openclaw/{skill_name}/SKILL.md missing"
             assert dst.is_file(), f"skills/{skill_name}/SKILL.md missing"
             assert src.read_text() == dst.read_text(), (
-                f"skills/{skill_name}/SKILL.md out of sync with .openclaw/ — run: python scripts/sync-skills.py"
+                f"skills/{skill_name}/SKILL.md out of sync with .openclaw/ — run: python .github/tools/sync-skills.py"
             )
