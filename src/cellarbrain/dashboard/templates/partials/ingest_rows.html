@@ -1,0 +1,9 @@
+{% for e in events %}
+<tr>
+    <td class="mono">{{ e.timestamp.strftime("%Y-%m-%d %H:%M:%S") if e.timestamp else "—" }}</td>
+    <td><span class="badge {% if e.event_type.startswith('etl_failure') %}badge-error{% elif e.event_type == 'etl_success' %}badge-ok{% elif e.severity == 'warning' %}badge-warn{% else %}badge-ok{% endif %}">{{ e.event_type }}</span></td>
+    <td><span class="badge {% if e.severity == 'critical' or e.severity == 'error' %}badge-error{% elif e.severity == 'warning' %}badge-warn{% else %}badge-ok{% endif %}">{{ e.severity }}</span></td>
+    <td class="mono">{{ e.batch_id or "—" }}</td>
+    <td class="truncate">{% if e.error_message %}{{ e.error_message[:100] }}{% elif e.filenames %}{{ e.filenames | join(", ") }}{% elif e.uids %}UIDs: {{ e.uids }}{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}

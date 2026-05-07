@@ -7,6 +7,7 @@ them into complete batches, writes snapshot folders, flushes the
 Public API:
     - ``poll_once()`` — single poll cycle (for ``--once`` / testing)
     - ``IngestDaemon`` — main loop with sleep + exponential backoff
+    - ``IngestState`` — bounded state model with high-water-mark UID tracking
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import logging
 import signal
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,32 +27,368 @@ logger = logging.getLogger(__name__)
 
 _STATE_FILE = ".ingest-state.json"
 
+_MAX_REAPED_ENTRIES = 500
+_MAX_FAILED_ENTRIES = 20
+
+# Max bytes of ETL output to store in an ingest event
+_MAX_ERROR_MESSAGE_BYTES = 10_240
+
+
+# ---------------------------------------------------------------------------
+# Ingest event emission helper
+# ---------------------------------------------------------------------------
+
+
+def _emit_ingest_event(
+    event_type: str,
+    severity: str,
+    *,
+    batch_id: str | None = None,
+    uids: list[int] | None = None,
+    filenames: list[str] | None = None,
+    missing_files: list[str] | None = None,
+    error_message: str | None = None,
+    exit_code: int | None = None,
+    duration_ms: float | None = None,
+    attempt_number: int | None = None,
+    metadata: str | None = None,
+) -> None:
+    """Emit an ingest event to the observability log store.
+
+    Silently no-ops if observability is not initialised.
+    """
+    from ..observability import IngestEvent, get_collector
+
+    collector = get_collector()
+    if collector is None:
+        return
+
+    import uuid as _uuid
+
+    event = IngestEvent(
+        event_id=_uuid.uuid4().hex,
+        event_type=event_type,
+        severity=severity,
+        timestamp=datetime.now(UTC),
+        batch_id=batch_id,
+        uids=uids,
+        filenames=filenames,
+        missing_files=missing_files,
+        error_message=error_message[:_MAX_ERROR_MESSAGE_BYTES] if error_message else None,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+        attempt_number=attempt_number,
+        metadata=metadata,
+    )
+    collector.emit_ingest(event)
+
+
+# ---------------------------------------------------------------------------
+# IngestState — bounded state model with high-water-mark UID tracking
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class IngestState:
+    """Bounded ingest state using a high-water-mark UID scheme.
+
+    Instead of storing every processed UID (unbounded growth), tracks
+    the highest contiguously-processed UID.  Any UID <= high_water_uid
+    (and not in pending_uids) is considered processed.
+
+    Fields:
+        uidvalidity: IMAP UIDVALIDITY value; reset state if it changes.
+        high_water_uid: Highest UID where all UIDs at or below are processed.
+        pending_uids: UIDs below high_water_uid belonging to incomplete batches.
+        failed_below_uid: Threshold for collapsed old failures (all skipped).
+        failed_batches: Recent permanently-failed batches (capped at _MAX_FAILED_ENTRIES).
+        pending_retries: Batches awaiting retry (not yet permanently failed).
+        last_poll: ISO timestamp of last poll cycle.
+        last_batch: Name of last successfully-processed snapshot folder.
+        reaped_uids: Informational log of reaped messages (capped).
+    """
+
+    uidvalidity: int | None = None
+    high_water_uid: int = 0
+    pending_uids: set[int] = field(default_factory=set)
+    failed_below_uid: int = 0
+    failed_batches: list[dict] = field(default_factory=list)
+    pending_retries: list[dict] = field(default_factory=list)
+    last_poll: str | None = None
+    last_batch: str | None = None
+    reaped_uids: list[dict] = field(default_factory=list)
+
+    # ------------------------------------------------------------------
+    # Query
+    # ------------------------------------------------------------------
+
+    def is_processed(self, uid: int) -> bool:
+        """Return True if *uid* should be skipped (already processed or failed)."""
+        if uid <= self.failed_below_uid:
+            return True
+        if uid in self.failed_uid_set():
+            return True
+        return uid <= self.high_water_uid and uid not in self.pending_uids
+
+    def failed_uid_set(self) -> set[int]:
+        """Return the set of all UIDs in permanently-failed batches."""
+        return {uid for entry in self.failed_batches for uid in entry["uids"]}
+
+    # ------------------------------------------------------------------
+    # Mutations
+    # ------------------------------------------------------------------
+
+    def record_successful_batch(self, uids: set[int]) -> None:
+        """Mark *uids* as successfully processed and advance high-water-mark."""
+        self._clear_pending_retry(uids)
+        self._advance_high_water(uids)
+
+    def record_etl_failure(
+        self,
+        batch_uids: list[int],
+        error_output: str,
+        max_retries: int,
+    ) -> bool:
+        """Record an ETL failure; return True if permanently failed."""
+        sorted_uids = sorted(batch_uids)
+        reason = error_output[:500] if error_output else "unknown"
+
+        # Find existing pending entry
+        entry = None
+        for item in self.pending_retries:
+            if sorted(item["uids"]) == sorted_uids:
+                entry = item
+                break
+
+        if entry is None:
+            entry = {"uids": sorted_uids, "attempts": 0, "last_error": ""}
+            self.pending_retries.append(entry)
+
+        entry["attempts"] += 1
+        entry["last_error"] = reason
+
+        if entry["attempts"] >= max_retries:
+            self.pending_retries.remove(entry)
+            self.failed_batches.append(
+                {
+                    "uids": sorted_uids,
+                    "reason": reason,
+                    "failed_at": datetime.now(UTC).isoformat(),
+                    "attempts": entry["attempts"],
+                }
+            )
+            self._enforce_failed_cap()
+            return True
+
+        return False
+
+    def handle_uidvalidity(self, server_uidvalidity: int) -> None:
+        """Reset UID-tracking state if UIDVALIDITY has changed."""
+        if self.uidvalidity is None:
+            self.uidvalidity = server_uidvalidity
+        elif self.uidvalidity != server_uidvalidity:
+            logger.warning(
+                "UIDVALIDITY changed (%s → %s); resetting UID-tracking state",
+                self.uidvalidity,
+                server_uidvalidity,
+            )
+            _emit_ingest_event(
+                "uidvalidity_reset",
+                "warning",
+                metadata=json.dumps(
+                    {
+                        "old": self.uidvalidity,
+                        "new": server_uidvalidity,
+                    }
+                ),
+            )
+            self.high_water_uid = 0
+            self.pending_uids = set()
+            self.failed_batches = []
+            self.failed_below_uid = 0
+            self.uidvalidity = server_uidvalidity
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _advance_high_water(self, completed_uids: set[int]) -> None:
+        """Advance high_water_uid past any contiguous processed UIDs."""
+        # Combine all UIDs we know are "done" (failed or completed)
+        failed = self.failed_uid_set()
+        candidate = self.high_water_uid
+        while True:
+            nxt = candidate + 1
+            if nxt in completed_uids or nxt in failed:
+                candidate = nxt
+                self.pending_uids.discard(nxt)
+            elif nxt in self.pending_uids:
+                # Gap — cannot advance past a pending UID
+                break
+            else:
+                # Next UID is unknown — stop
+                break
+        self.high_water_uid = candidate
+
+    def _clear_pending_retry(self, batch_uids: set[int]) -> None:
+        """Remove a batch from pending_retries after successful ETL."""
+        sorted_uids = sorted(batch_uids)
+        self.pending_retries = [entry for entry in self.pending_retries if sorted(entry["uids"]) != sorted_uids]
+
+    def _enforce_failed_cap(self) -> None:
+        """Ensure failed_batches does not exceed _MAX_FAILED_ENTRIES."""
+        while len(self.failed_batches) > _MAX_FAILED_ENTRIES:
+            oldest = self.failed_batches.pop(0)
+            max_uid = max(oldest["uids"])
+            if max_uid > self.failed_below_uid:
+                self.failed_below_uid = max_uid
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialize state for JSON persistence."""
+        return {
+            "uidvalidity": self.uidvalidity,
+            "high_water_uid": self.high_water_uid,
+            "pending_uids": sorted(self.pending_uids),
+            "failed_below_uid": self.failed_below_uid,
+            "failed_batches": self.failed_batches,
+            "pending_retries": self.pending_retries,
+            "last_poll": self.last_poll,
+            "last_batch": self.last_batch,
+            "reaped_uids": self.reaped_uids,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> IngestState:
+        """Deserialize from a v2 state dict."""
+        return cls(
+            uidvalidity=data.get("uidvalidity"),
+            high_water_uid=data.get("high_water_uid", 0),
+            pending_uids=set(data.get("pending_uids", [])),
+            failed_below_uid=data.get("failed_below_uid", 0),
+            failed_batches=data.get("failed_batches", []),
+            pending_retries=data.get("pending_retries", []),
+            last_poll=data.get("last_poll"),
+            last_batch=data.get("last_batch"),
+            reaped_uids=data.get("reaped_uids", []),
+        )
+
+    def to_json(self) -> str:
+        """Serialize to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Migration from v1 state (processed_uids list) to v2 (high-water-mark)
+# ---------------------------------------------------------------------------
+
+
+def _migrate_v1_to_v2(old_state: dict) -> IngestState:
+    """Convert a v1 state dict (processed_uids list) to an IngestState."""
+    processed = sorted(old_state.get("processed_uids", []))
+
+    high_water = 0
+    if processed:
+        # Find the contiguous prefix starting from min UID
+        high_water = processed[0] - 1
+        for uid in processed:
+            if uid == high_water + 1:
+                high_water = uid
+            else:
+                break
+
+    # Transfer failed_batches and pending_retries as-is
+    failed_batches = old_state.get("failed_batches", [])
+    pending_retries = old_state.get("pending_retries", [])
+    reaped_uids = old_state.get("reaped_uids", [])
+
+    return IngestState(
+        uidvalidity=None,  # Set on next IMAP connect
+        high_water_uid=high_water,
+        pending_uids=set(),
+        failed_below_uid=0,
+        failed_batches=failed_batches,
+        pending_retries=pending_retries,
+        last_poll=old_state.get("last_poll"),
+        last_batch=old_state.get("last_batch"),
+        reaped_uids=reaped_uids,
+    )
+
 
 # ---------------------------------------------------------------------------
 # State file helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_state(raw_dir: Path) -> dict:
-    """Load the deduplication state file, or return empty state."""
+def _is_v2_state(data: dict) -> bool:
+    """Return True if *data* is a v2 state file (has high_water_uid key)."""
+    return "high_water_uid" in data
+
+
+def _load_state(raw_dir: Path) -> IngestState:
+    """Load the ingest state file, auto-migrating from v1 if needed."""
     path = raw_dir / _STATE_FILE
     if not path.exists():
-        return {"processed_uids": [], "last_poll": None, "last_batch": None, "reaped_uids": []}
+        return IngestState()
     with open(path, encoding="utf-8") as f:
-        state = json.load(f)
-    # Ensure reaped_uids key exists for older state files
-    state.setdefault("reaped_uids", [])
-    return state
+        data = json.load(f)
+    if _is_v2_state(data):
+        return IngestState.from_dict(data)
+    # v1 format — migrate
+    logger.info("Migrating ingest state file from v1 to v2 (high-water-mark)")
+    return _migrate_v1_to_v2(data)
 
 
-def _save_state(raw_dir: Path, state: dict) -> None:
-    """Persist the deduplication state file."""
+def _save_state(raw_dir: Path, state: IngestState) -> None:
+    """Persist the ingest state file."""
     path = raw_dir / _STATE_FILE
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, default=str)
+        json.dump(state.to_dict(), f, indent=2, default=str)
 
 
-_MAX_REAPED_ENTRIES = 500
+# ---------------------------------------------------------------------------
+# Backward-compatible wrappers (used by existing tests and callers)
+# ---------------------------------------------------------------------------
+
+
+def _record_etl_failure(
+    state: dict | IngestState,
+    batch_uids: list[int],
+    error_output: str,
+    max_retries: int,
+) -> bool:
+    """Backward-compatible wrapper — delegates to IngestState.record_etl_failure.
+
+    Accepts either a raw dict (v1 tests) or an IngestState object.
+    When given a dict, mutates it in-place for test compatibility.
+    """
+    if isinstance(state, IngestState):
+        return state.record_etl_failure(batch_uids, error_output, max_retries)
+
+    # Dict path: create a temporary IngestState, mutate, write back
+    tmp = IngestState(
+        pending_retries=state.setdefault("pending_retries", []),
+        failed_batches=state.setdefault("failed_batches", []),
+    )
+    result = tmp.record_etl_failure(batch_uids, error_output, max_retries)
+    state["pending_retries"] = tmp.pending_retries
+    state["failed_batches"] = tmp.failed_batches
+    return result
+
+
+def _clear_pending_retry(state: dict | IngestState, batch_uids: list[int]) -> None:
+    """Backward-compatible wrapper — delegates to IngestState._clear_pending_retry."""
+    if isinstance(state, IngestState):
+        state._clear_pending_retry(set(batch_uids))
+        return
+
+    sorted_uids = sorted(batch_uids)
+    state["pending_retries"] = [
+        entry for entry in state.get("pending_retries", []) if sorted(entry["uids"]) != sorted_uids
+    ]
 
 
 def _reap_messages(
@@ -59,7 +397,7 @@ def _reap_messages(
     *,
     config: object,
     now: datetime,
-    state: dict,
+    state: IngestState,
     reason: str,
     dry_run: bool = False,
     ignore_age: bool = False,
@@ -126,7 +464,7 @@ def _reap_messages(
     # Record in state
     reaped_at = now.isoformat()
     for msg in to_reap:
-        state["reaped_uids"].append(
+        state.reaped_uids.append(
             {
                 "uid": msg.uid,
                 "filename": msg.filename,
@@ -135,9 +473,17 @@ def _reap_messages(
             }
         )
 
+    _emit_ingest_event(
+        "reap",
+        "warning",
+        uids=reap_uids,
+        filenames=[m.filename for m in to_reap],
+        metadata=json.dumps({"reason": reason}),
+    )
+
     # Cap reaped_uids to prevent unbounded growth
-    if len(state["reaped_uids"]) > _MAX_REAPED_ENTRIES:
-        state["reaped_uids"] = state["reaped_uids"][-_MAX_REAPED_ENTRIES:]
+    if len(state.reaped_uids) > _MAX_REAPED_ENTRIES:
+        state.reaped_uids = state.reaped_uids[-_MAX_REAPED_ENTRIES:]
 
     return len(to_reap)
 
@@ -170,13 +516,13 @@ def poll_once(
 
     # Load dedup state
     state = _load_state(raw_dir)
-    processed_uids = set(state.get("processed_uids", []))
 
     user, password = resolve_credentials()
 
     with ImapClient(config.imap_host, config.imap_port, config.use_ssl, timeout=config.imap_timeout) as client:
         client.login(user, password)
-        client.select_folder(config.mailbox)
+        uidvalidity = client.select_folder(config.mailbox)
+        state.handle_uidvalidity(uidvalidity)
 
         # Search for unseen messages
         uids = client.search_unseen(config.subject_filter, config.sender_filter)
@@ -185,7 +531,7 @@ def poll_once(
             return 0
 
         # Filter out already-processed UIDs (dedup safety)
-        uids = [u for u in uids if u not in processed_uids]
+        uids = [u for u in uids if not state.is_processed(u)]
         if not uids:
             logger.info("All messages already processed (state file)")
             return 0
@@ -253,9 +599,21 @@ def poll_once(
                 dry_run=dry_run,
             )
 
+        # Emit batch_incomplete for ungrouped messages
+        if leftovers:
+            expected = set(config.expected_files)
+            have = {m.filename for m in leftovers}
+            _emit_ingest_event(
+                "batch_incomplete",
+                "warning",
+                uids=[m.uid for m in leftovers],
+                filenames=sorted(have),
+                missing_files=sorted(expected - have),
+            )
+
         if not batches:
             # Persist state if reaping happened (reaped_uids updated)
-            state["last_poll"] = now.isoformat()
+            state.last_poll = now.isoformat()
             _save_state(raw_dir, state)
             logger.info("No complete batches detected")
             return 0
@@ -286,7 +644,16 @@ def poll_once(
                 logger.warning("Snapshot collision — skipping batch")
                 continue
 
+            _emit_ingest_event(
+                "batch_complete",
+                "info",
+                batch_id=snapshot_dir.name,
+                uids=list(batch.uids),
+                filenames=[m.filename for m in batch.messages],
+            )
+
             # Run ETL
+            _etl_start = time.monotonic()
             exit_code, _output = run_etl(
                 raw_dir,
                 output_dir,
@@ -295,27 +662,76 @@ def poll_once(
                 timeout=config.etl_timeout,
             )
             if exit_code != 0:
-                logger.error(
-                    "ETL failed (exit %d) — leaving messages unprocessed (UIDs: %s)",
-                    exit_code,
-                    list(batch.uids),
-                )
+                _etl_duration = (time.monotonic() - _etl_start) * 1000
+                batch_uids_list = list(batch.uids)
+                permanently_failed = state.record_etl_failure(batch_uids_list, _output, config.max_etl_retries)
+                if permanently_failed:
+                    logger.error(
+                        "ETL failed (exit %d) — batch permanently failed after %d attempts (UIDs: %s)",
+                        exit_code,
+                        config.max_etl_retries,
+                        batch_uids_list,
+                    )
+                    _emit_ingest_event(
+                        "etl_failure_permanent",
+                        "critical",
+                        batch_id=snapshot_dir.name,
+                        uids=batch_uids_list,
+                        filenames=[m.filename for m in batch.messages],
+                        error_message=_output[:_MAX_ERROR_MESSAGE_BYTES] if _output else None,
+                        exit_code=exit_code,
+                        duration_ms=_etl_duration,
+                        attempt_number=config.max_etl_retries,
+                    )
+                else:
+                    logger.warning(
+                        "ETL failed (exit %d) — will retry next cycle (UIDs: %s)",
+                        exit_code,
+                        batch_uids_list,
+                    )
+                    # Determine attempt number from pending retries
+                    attempt = 1
+                    for entry in state.pending_retries:
+                        if sorted(entry["uids"]) == sorted(batch_uids_list):
+                            attempt = entry["attempts"]
+                            break
+                    _emit_ingest_event(
+                        "etl_failure",
+                        "error",
+                        batch_id=snapshot_dir.name,
+                        uids=batch_uids_list,
+                        filenames=[m.filename for m in batch.messages],
+                        error_message=_output[:_MAX_ERROR_MESSAGE_BYTES] if _output else None,
+                        exit_code=exit_code,
+                        duration_ms=_etl_duration,
+                        attempt_number=attempt,
+                    )
+                _save_state(raw_dir, state)
                 failed += 1
                 continue
 
             # Mark as processed only on successful ETL
+            _etl_duration = (time.monotonic() - _etl_start) * 1000
             batch_uids = list(batch.uids)
             if config.processed_action == "move":
                 client.move_messages(batch_uids, config.processed_folder)
             else:
                 client.mark_seen(batch_uids)
 
-            # Update state
-            processed_uids.update(batch_uids)
-            state["processed_uids"] = sorted(processed_uids)
-            state["last_poll"] = now.isoformat()
-            state["last_batch"] = snapshot_dir.name
+            # Update state — advance high-water-mark
+            state.record_successful_batch(set(batch_uids))
+            state.last_poll = now.isoformat()
+            state.last_batch = snapshot_dir.name
             _save_state(raw_dir, state)
+
+            _emit_ingest_event(
+                "etl_success",
+                "info",
+                batch_id=snapshot_dir.name,
+                uids=batch_uids,
+                filenames=[m.filename for m in batch.messages],
+                duration_ms=_etl_duration,
+            )
 
             processed += 1
 
@@ -350,7 +766,6 @@ def reap_orphans(
     raw_dir = Path(settings.paths.raw_dir)
 
     state = _load_state(raw_dir)
-    processed_uids = set(state.get("processed_uids", []))
 
     user, password = resolve_credentials()
 
@@ -358,14 +773,15 @@ def reap_orphans(
 
     with ImapClient(config.imap_host, config.imap_port, config.use_ssl, timeout=config.imap_timeout) as client:
         client.login(user, password)
-        client.select_folder(config.mailbox)
+        uidvalidity = client.select_folder(config.mailbox)
+        state.handle_uidvalidity(uidvalidity)
 
         uids = client.search_unseen(config.subject_filter, config.sender_filter)
         if not uids:
             logger.info("No unseen messages found — nothing to reap")
             return 0
 
-        uids = [u for u in uids if u not in processed_uids]
+        uids = [u for u in uids if not state.is_processed(u)]
         if not uids:
             logger.info("All messages already processed — nothing to reap")
             return 0
@@ -417,7 +833,7 @@ def reap_orphans(
             total_reaped += count
 
     # Persist state
-    state["last_poll"] = datetime.now(UTC).isoformat()
+    state.last_poll = datetime.now(UTC).isoformat()
     _save_state(raw_dir, state)
 
     logger.info("Reap complete — %d message(s) reaped", total_reaped)
@@ -487,6 +903,12 @@ class IngestDaemon:
             self._base_interval,
         )
 
+        # Initialise observability (creates DuckDB table if needed)
+        from ..observability import init_observability
+
+        init_observability(self.settings.logging, self.settings.paths.data_dir)
+        _emit_ingest_event("daemon_start", "info")
+
         while not self._shutdown_event.is_set():
             try:
                 count = poll_once(self.config, self.settings, dry_run=dry_run)
@@ -504,8 +926,13 @@ class IngestDaemon:
             except ValueError:
                 # Credential / config errors — fatal, stop daemon
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.error("Poll cycle failed", exc_info=True)
+                _emit_ingest_event(
+                    "imap_error",
+                    "error",
+                    error_message=str(exc),
+                )
                 self._current_interval = min(
                     self._current_interval * 2,
                     self._max_interval,
@@ -522,3 +949,4 @@ class IngestDaemon:
 
         print("Ingest daemon stopped.", flush=True)
         logger.info("Ingest daemon stopped")
+        _emit_ingest_event("daemon_stop", "info")

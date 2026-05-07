@@ -24,6 +24,26 @@
     </div>
 </div>
 
+{% if ingest and ingest.last_poll %}
+<h5>Ingest Status
+    <a href="/ingest" style="font-size:0.8rem; margin-left:0.5rem;">Details &rarr;</a>
+</h5>
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="value">{% if ingest.daemon_running %}<span class="status-dot connected"></span>Active{% else %}<span class="status-dot disconnected"></span>Inactive{% endif %}</div>
+        <div class="label">Daemon</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ ingest.last_etl_batch_id or "—" }}</div>
+        <div class="label">Last ETL</div>
+    </div>
+    <div class="kpi-card">
+        <div class="value">{{ ingest.failed_batches }}</div>
+        <div class="label">Failed Batches</div>
+    </div>
+</div>
+{% endif %}
+
 <h5>Call Volume</h5>
 <div class="chart-container">
     <canvas id="volumeChart"></canvas>

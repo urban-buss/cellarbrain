@@ -17,6 +17,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from . import cellar_queries as cellar_q
+from . import ingest_queries as ingest_q
 from . import queries as obs_q
 from . import workbench as wb
 
@@ -91,6 +92,7 @@ async def index(request: Request) -> HTMLResponse:
         overview = obs_q.get_overview(con, hours, exclude_workbench=excl)
         recent_errors = obs_q.get_errors(con, hours, limit=5, exclude_workbench=excl)
         top_tools = obs_q.get_tool_usage(con, hours, limit=10, exclude_workbench=excl)
+        ingest_overview = ingest_q.get_ingest_overview(con, hours)
     return _TEMPLATES.TemplateResponse(
         request,
         "index.html",
@@ -100,6 +102,7 @@ async def index(request: Request) -> HTMLResponse:
             "errors": recent_errors,
             "top_tools": top_tools,
             "include_workbench": _include_wb(request),
+            "ingest": ingest_overview,
         },
     )
 
@@ -264,6 +267,33 @@ async def latency(request: Request) -> HTMLResponse:
 
 async def live(request: Request) -> HTMLResponse:
     return _TEMPLATES.TemplateResponse(request, "live.html")
+
+
+# ---- Ingest routes --------------------------------------------------------
+
+
+async def ingest_page(request: Request) -> HTMLResponse:
+    period, hours = _period(request)
+    con = request.app.state.log_db
+    event_type = request.query_params.get("event_type")
+    severity = request.query_params.get("severity")
+    async with request.app.state.db_lock:
+        has_table = ingest_q.has_ingest_table(con)
+        overview = ingest_q.get_ingest_overview(con, hours) if has_table else None
+        events = ingest_q.get_ingest_events(con, hours, event_type=event_type, severity=severity) if has_table else []
+    template = "partials/ingest_rows.html" if _wants_partial(request) else "ingest.html"
+    return _TEMPLATES.TemplateResponse(
+        request,
+        template,
+        context={
+            "period": period,
+            "has_table": has_table,
+            "overview": overview,
+            "events": events,
+            "event_type": event_type or "",
+            "severity": severity or "",
+        },
+    )
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -1024,6 +1054,7 @@ def build_app(
             Route("/sessions/{session_id}/{turn_id}", turn_events),
             Route("/latency", latency),
             Route("/live", live),
+            Route("/ingest", ingest_page),
             # Cellar browser
             Route("/cellar", cellar),
             Route("/cellar/{wine_id:int}", wine_detail),

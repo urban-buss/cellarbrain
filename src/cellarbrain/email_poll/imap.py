@@ -67,9 +67,10 @@ class ImapClient:
         self._client.login(user, password)
         logger.debug("Authenticated as %s", user)
 
-    def select_folder(self, folder: str) -> None:
-        """Select an IMAP folder (mailbox)."""
-        self._client.select_folder(folder, readonly=False)
+    def select_folder(self, folder: str) -> int:
+        """Select an IMAP folder (mailbox) and return its UIDVALIDITY."""
+        response = self._client.select_folder(folder, readonly=False)
+        return response.get(b"UIDVALIDITY", 0)
 
     def search_unseen(
         self,
