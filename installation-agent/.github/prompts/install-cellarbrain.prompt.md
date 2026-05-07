@@ -69,3 +69,11 @@ py -3 -m cellarbrain -d output ingest --once --dry-run
 ```
 
 Expect a credential error (no IMAP configured) — this confirms the module loads correctly.
+
+## 5. Install OpenClaw Skills (optional)
+
+```
+py -3 -m cellarbrain install-skills
+```
+
+This copies the bundled skill files to `~/.openclaw/skills/cellarbrain/`. Verify the skills directory was populated with 8 subdirectories.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,10 @@ class EmailMessage:
     filename: str
     size: int
     sender: str = ""
+
+    def __post_init__(self) -> None:
+        if self.date.tzinfo is None:
+            object.__setattr__(self, "date", self.date.replace(tzinfo=UTC))
 
 
 @dataclass(frozen=True)

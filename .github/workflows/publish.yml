@@ -13,6 +13,7 @@ jobs:
         with:
           python-version: "3.x"
       - run: pip install build
+      - run: python scripts/sync-skills.py
       - run: python -m build
       - uses: actions/upload-artifact@v4
         with:

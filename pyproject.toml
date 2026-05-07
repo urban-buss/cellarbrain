@@ -70,6 +70,10 @@ where = ["src"]
     "static/**/*",
     "templates/**/*",
 ]
+"cellarbrain.skills" = [
+    "README.md",
+    "*/SKILL.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
