@@ -29,6 +29,7 @@ _STATE_FILE = ".ingest-state.json"
 
 _MAX_REAPED_ENTRIES = 500
 _MAX_FAILED_ENTRIES = 20
+_MAX_INCOMPLETE_ENTRIES = 200
 
 # Max bytes of ETL output to store in an ingest event
 _MAX_ERROR_MESSAGE_BYTES = 10_240
@@ -103,6 +104,7 @@ class IngestState:
         failed_below_uid: Threshold for collapsed old failures (all skipped).
         failed_batches: Recent permanently-failed batches (capped at _MAX_FAILED_ENTRIES).
         pending_retries: Batches awaiting retry (not yet permanently failed).
+        incomplete_batch_uids: UID → ISO first-seen timestamp for incomplete-batch leftovers.
         last_poll: ISO timestamp of last poll cycle.
         last_batch: Name of last successfully-processed snapshot folder.
         reaped_uids: Informational log of reaped messages (capped).
@@ -114,6 +116,7 @@ class IngestState:
     failed_below_uid: int = 0
     failed_batches: list[dict] = field(default_factory=list)
     pending_retries: list[dict] = field(default_factory=list)
+    incomplete_batch_uids: dict[int, str] = field(default_factory=dict)
     last_poll: str | None = None
     last_batch: str | None = None
     reaped_uids: list[dict] = field(default_factory=list)
@@ -206,6 +209,7 @@ class IngestState:
             self.pending_uids = set()
             self.failed_batches = []
             self.failed_below_uid = 0
+            self.incomplete_batch_uids = {}
             self.uidvalidity = server_uidvalidity
 
     # ------------------------------------------------------------------
@@ -256,6 +260,7 @@ class IngestState:
             "failed_below_uid": self.failed_below_uid,
             "failed_batches": self.failed_batches,
             "pending_retries": self.pending_retries,
+            "incomplete_batch_uids": {str(k): v for k, v in self.incomplete_batch_uids.items()},
             "last_poll": self.last_poll,
             "last_batch": self.last_batch,
             "reaped_uids": self.reaped_uids,
@@ -264,6 +269,8 @@ class IngestState:
     @classmethod
     def from_dict(cls, data: dict) -> IngestState:
         """Deserialize from a v2 state dict."""
+        raw_incomplete = data.get("incomplete_batch_uids", {})
+        incomplete = {int(k): v for k, v in raw_incomplete.items()}
         return cls(
             uidvalidity=data.get("uidvalidity"),
             high_water_uid=data.get("high_water_uid", 0),
@@ -271,6 +278,7 @@ class IngestState:
             failed_below_uid=data.get("failed_below_uid", 0),
             failed_batches=data.get("failed_batches", []),
             pending_retries=data.get("pending_retries", []),
+            incomplete_batch_uids=incomplete,
             last_poll=data.get("last_poll"),
             last_batch=data.get("last_batch"),
             reaped_uids=data.get("reaped_uids", []),
@@ -413,7 +421,7 @@ def _reap_messages(
     if not messages:
         return 0
 
-    effective_threshold = config.stale_threshold or (config.batch_window + config.poll_interval)
+    effective_threshold = config.stale_threshold or (config.batch_window * 2)
 
     to_reap = []
     for msg in messages:
@@ -536,12 +544,49 @@ def poll_once(
             logger.info("All messages already processed (state file)")
             return 0
 
-        logger.info("Found %d new messages", len(uids))
+        # --- Incomplete batch tracking: decide which UIDs to fetch ---
+        effective_threshold = config.stale_threshold or (config.batch_window * 2)
+        now_pre = datetime.now(UTC)
+
+        new_uids = [u for u in uids if u not in state.incomplete_batch_uids]
+        tracked_uids = [u for u in uids if u in state.incomplete_batch_uids]
+
+        # Separate tracked UIDs into stale (need re-fetch/reap) vs waiting
+        stale_tracked: list[int] = []
+        waiting_tracked: list[int] = []
+        for uid in tracked_uids:
+            first_seen = datetime.fromisoformat(state.incomplete_batch_uids[uid])
+            age = (now_pre - first_seen).total_seconds()
+            if age > effective_threshold:
+                stale_tracked.append(uid)
+            else:
+                waiting_tracked.append(uid)
+
+        # Decide which UIDs to fetch:
+        # - Always fetch new UIDs
+        # - Always re-fetch stale tracked UIDs (reaper will handle them)
+        # - Re-fetch waiting tracked UIDs only if new messages might complete them
+        if new_uids:
+            uids_to_fetch = new_uids + stale_tracked + waiting_tracked
+        else:
+            uids_to_fetch = stale_tracked
+
+        if not uids_to_fetch:
+            if waiting_tracked:
+                logger.debug(
+                    "Skipping %d tracked incomplete-batch UID(s) — below stale threshold",
+                    len(waiting_tracked),
+                )
+            state.last_poll = now_pre.isoformat()
+            _save_state(raw_dir, state)
+            return 0
+
+        logger.info("Found %d new messages", len(uids_to_fetch))
 
         # Fetch and parse
         try:
             fetched = client.fetch_messages(
-                uids, config.expected_files, max_attachment_bytes=config.max_attachment_bytes
+                uids_to_fetch, config.expected_files, max_attachment_bytes=config.max_attachment_bytes
             )
         except IMAPTransientError as exc:
             logger.warning("IMAP transient error during fetch — will retry next cycle: %s", exc)
@@ -594,8 +639,9 @@ def poll_once(
         )
 
         # --- Reaper step: mark stale leftovers as read ---
+        reaped_uids_set: set[int] = set()
         if config.reaper_enabled and leftovers:
-            _reap_messages(
+            reaped_count = _reap_messages(
                 client,
                 leftovers,
                 config=config,
@@ -604,18 +650,45 @@ def poll_once(
                 reason="stale",
                 dry_run=dry_run,
             )
+            if reaped_count:
+                reaped_uids_set = {m.uid for m in leftovers if (now - m.date).total_seconds() > effective_threshold}
 
-        # Emit batch_incomplete for ungrouped messages
-        if leftovers:
-            expected = set(config.expected_files)
-            have = {m.filename for m in leftovers}
-            _emit_ingest_event(
-                "batch_incomplete",
-                "warning",
-                uids=[m.uid for m in leftovers],
-                filenames=sorted(have),
-                missing_files=sorted(expected - have),
-            )
+        # --- Update incomplete_batch_uids tracking ---
+        # Remove UIDs that were reaped
+        for uid in reaped_uids_set:
+            state.incomplete_batch_uids.pop(uid, None)
+
+        # Remove UIDs that formed complete batches
+        completed_uids = {uid for b in batches for uid in b.uids}
+        for uid in completed_uids:
+            state.incomplete_batch_uids.pop(uid, None)
+
+        # Identify surviving leftovers (not reaped)
+        surviving_leftovers = [m for m in leftovers if m.uid not in reaped_uids_set]
+
+        # Emit batch_incomplete only for NEW leftover UIDs (log dedup)
+        if surviving_leftovers:
+            new_leftover_uids = [m for m in surviving_leftovers if m.uid not in state.incomplete_batch_uids]
+            if new_leftover_uids:
+                expected = set(config.expected_files)
+                have = {m.filename for m in surviving_leftovers}
+                _emit_ingest_event(
+                    "batch_incomplete",
+                    "warning",
+                    uids=[m.uid for m in new_leftover_uids],
+                    filenames=sorted(have),
+                    missing_files=sorted(expected - have),
+                )
+
+            # Record surviving leftovers (preserve original first-seen time)
+            for msg in surviving_leftovers:
+                if msg.uid not in state.incomplete_batch_uids:
+                    state.incomplete_batch_uids[msg.uid] = now.isoformat()
+
+        # Cap incomplete_batch_uids to prevent unbounded growth
+        if len(state.incomplete_batch_uids) > _MAX_INCOMPLETE_ENTRIES:
+            sorted_entries = sorted(state.incomplete_batch_uids.items(), key=lambda x: x[1])
+            state.incomplete_batch_uids = dict(sorted_entries[-_MAX_INCOMPLETE_ENTRIES:])
 
         if not batches:
             # Persist state if reaping happened (reaped_uids updated)
@@ -845,6 +918,70 @@ def reap_orphans(
     _save_state(raw_dir, state)
 
     logger.info("Reap complete — %d message(s) reaped", total_reaped)
+    return total_reaped
+
+
+def reap_stale(
+    config: IngestConfig,
+    settings: Settings,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """One-shot cleanup of messages tracked as incomplete-batch leftovers.
+
+    Connects to IMAP, fetches messages currently in
+    ``state.incomplete_batch_uids``, marks them as seen (or moves to
+    dead-letter), and clears the tracking.  Does not run ETL.
+
+    Returns the total number of messages reaped.
+    """
+    from .credentials import resolve_credentials
+    from .imap import ImapClient
+
+    raw_dir = Path(settings.paths.raw_dir)
+    state = _load_state(raw_dir)
+
+    if not state.incomplete_batch_uids:
+        logger.info("No incomplete-batch UIDs tracked — nothing to reap")
+        return 0
+
+    tracked = list(state.incomplete_batch_uids.keys())
+    logger.info("Found %d tracked incomplete-batch UID(s)", len(tracked))
+
+    user, password = resolve_credentials()
+    total_reaped = 0
+
+    with ImapClient(config.imap_host, config.imap_port, config.use_ssl, timeout=config.imap_timeout) as client:
+        client.login(user, password)
+        uidvalidity = client.select_folder(config.mailbox)
+        state.handle_uidvalidity(uidvalidity)
+
+        # Fetch tracked UIDs to get EmailMessage objects for _reap_messages
+        fetched = client.fetch_messages(tracked, config.expected_files, max_attachment_bytes=0)
+        now = datetime.now(UTC)
+
+        if fetched:
+            messages = [em for em, _ in fetched]
+            count = _reap_messages(
+                client,
+                messages,
+                config=config,
+                now=now,
+                state=state,
+                reason="stale_manual",
+                dry_run=dry_run,
+                ignore_age=True,
+            )
+            total_reaped += count
+
+        # Clear all tracked incomplete-batch UIDs (even those not fetched,
+        # e.g. already marked as seen by another client)
+        state.incomplete_batch_uids.clear()
+
+    state.last_poll = datetime.now(UTC).isoformat()
+    _save_state(raw_dir, state)
+
+    logger.info("Reap stale complete — %d message(s) reaped", total_reaped)
     return total_reaped
 
 

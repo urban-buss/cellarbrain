@@ -114,13 +114,12 @@ def _make_dataset(tmp_path):
         make_bottle(
             4,
             2,
+            cellar_id=2,
             shelf="B1",
             provider_id=2,
             purchase_date=date(2025, 3, 10),
             original_purchase_price=Decimal("20.00"),
             purchase_price=Decimal("20.00"),
-            is_onsite=False,
-            is_in_transit=True,
         ),
         # Bottles for churn testing (span 2024-2025)
         make_bottle(
@@ -187,7 +186,7 @@ def _make_dataset(tmp_path):
                 make_wine_grape(3, 1),
             ],
             "bottle": bottles,
-            "cellar": [make_cellar(name="Main Cellar")],
+            "cellar": [make_cellar(name="Main Cellar"), make_cellar(2, name="Transit", location_type="in_transit")],
             "provider": [
                 make_provider(1, name="Wine Shop A"),
                 make_provider(2, name="Bodega Direct"),
@@ -345,7 +344,7 @@ class TestViews:
         con = get_connection(data_dir)
         # Internal views have all 40 columns from bottles_full
         stored_cols = [r[0] for r in con.execute("DESCRIBE SELECT * FROM _bottles_stored_full").fetchall()]
-        assert len(stored_cols) == 40
+        assert len(stored_cols) == 41
         assert "volume_ml" in stored_cols
         assert "provider_name" in stored_cols
         assert "is_in_transit" in stored_cols
@@ -663,13 +662,20 @@ class TestCellarStats:
                 "output_date": None,
                 "output_type": None,
                 "output_comment": None,
-                "is_onsite": True,
-                "is_in_transit": False,
                 "etl_run_id": rid,
                 "updated_at": now,
             }
         ]
-        cellars = [{"cellar_id": 1, "name": "Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now}]
+        cellars = [
+            {
+                "cellar_id": 1,
+                "name": "Cellar",
+                "location_type": "onsite",
+                "sort_order": 1,
+                "etl_run_id": rid,
+                "updated_at": now,
+            }
+        ]
         providers = [{"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now}]
         etl_runs = [
             {
@@ -1058,14 +1064,24 @@ class TestCellarStats:
                         "output_date": None,
                         "output_type": None,
                         "output_comment": None,
-                        "is_onsite": True,
-                        "is_in_transit": False,
                         "etl_run_id": rid,
                         "updated_at": now,
                     }
                 ],
             ),
-            ("cellar", [{"cellar_id": 1, "name": "Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now}]),
+            (
+                "cellar",
+                [
+                    {
+                        "cellar_id": 1,
+                        "name": "Cellar",
+                        "location_type": "onsite",
+                        "sort_order": 1,
+                        "etl_run_id": rid,
+                        "updated_at": now,
+                    }
+                ],
+            ),
             ("provider", [{"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now}]),
             ("tasting", []),
             ("pro_rating", []),
@@ -1216,14 +1232,24 @@ class TestCellarStats:
                         "output_date": None,
                         "output_type": None,
                         "output_comment": None,
-                        "is_onsite": True,
-                        "is_in_transit": False,
                         "etl_run_id": rid,
                         "updated_at": now,
                     }
                 ],
             ),
-            ("cellar", [{"cellar_id": 1, "name": "Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now}]),
+            (
+                "cellar",
+                [
+                    {
+                        "cellar_id": 1,
+                        "name": "Cellar",
+                        "location_type": "onsite",
+                        "sort_order": 1,
+                        "etl_run_id": rid,
+                        "updated_at": now,
+                    }
+                ],
+            ),
             ("provider", [{"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now}]),
             ("tasting", []),
             ("pro_rating", []),

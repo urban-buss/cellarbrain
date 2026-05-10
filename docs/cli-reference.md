@@ -421,3 +421,49 @@ launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
 ```
 
 See also the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for background.
+
+---
+
+## `cellarbrain info`
+
+Show installation and configuration diagnostics — version, Python environment, resolved paths, installed optional dependencies, MCP server connection details, and a ready-to-paste Claude Desktop / OpenClaw config snippet.
+
+```bash
+# Full diagnostic report
+cellarbrain info
+
+# JSON output (for scripting)
+cellarbrain info --json
+
+# Print only the MCP client config snippet (copy-paste into claude_desktop_config.json)
+cellarbrain info --mcp-config
+
+# Print only resolved paths
+cellarbrain info --paths
+
+# Print only installed modules
+cellarbrain info --modules
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output as JSON for scripting or MCP integration |
+| `--mcp-config` | Print only the Claude Desktop / OpenClaw JSON config snippet |
+| `--paths` | Print only the resolved paths section |
+| `--modules` | Print only the installed modules section |
+
+### Output Sections
+
+| Section | Content |
+|---------|---------|
+| **Header** | Package version, Python version & path, platform, install type (editable or regular), entry point |
+| **Config** | Resolved config file path, resolution source, `CELLARBRAIN_CONFIG` and `CELLARBRAIN_DATA_DIR` env var status |
+| **Paths** | Data directory, raw directory, dossier directory, backup directory, log database, sommelier model directory, Parquet file count |
+| **Modules** | Core dependencies with versions, optional extras with install status |
+| **MCP Server** | Command, transport options, tool/resource counts, dashboard port, Claude Desktop config snippet |
+| **Skills** | Bundled skill count, install target, installed status |
+| **Data Summary** | Last ETL run, wine count, bottle counts (only shown when data exists) |
+
+### Complementary to `doctor`
+
+`cellarbrain info` answers *"where is everything and how do I connect?"* while `cellarbrain doctor` answers *"is my data healthy?"*. Use `info` for setup verification and `doctor` for ongoing health checks.

@@ -146,8 +146,6 @@ SCHEMAS: dict[str, pa.Schema] = {
             ("output_date", pa.date32(), True),
             ("output_type", pa.string(), True),
             ("output_comment", pa.string(), True),
-            ("is_onsite", pa.bool_(), False),
-            ("is_in_transit", pa.bool_(), False),
             ("etl_run_id", pa.int32(), False),
             ("updated_at", pa.timestamp("us"), False),
         ]
@@ -156,6 +154,7 @@ SCHEMAS: dict[str, pa.Schema] = {
         [
             ("cellar_id", pa.int32(), False),
             ("name", pa.string(), False),
+            ("location_type", pa.string(), False),
             ("sort_order", pa.int8(), False),
             ("etl_run_id", pa.int32(), False),
             ("updated_at", pa.timestamp("us"), False),

@@ -93,6 +93,25 @@ cellarbrain logs --sessions              # session summary
 cellarbrain logs --prune                 # delete events older than retention_days
 ```
 
+## Installation Diagnostics
+
+```bash
+# Full diagnostic report (version, paths, modules, MCP config)
+cellarbrain info
+
+# JSON output for scripting
+cellarbrain info --json
+
+# Ready-to-paste MCP client config for Claude Desktop / OpenClaw
+cellarbrain info --mcp-config
+
+# Just resolved paths
+cellarbrain info --paths
+
+# Just installed modules and optional extras
+cellarbrain info --modules
+```
+
 ## Global Options
 
 | Flag | Effect |

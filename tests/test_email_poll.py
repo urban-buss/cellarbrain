@@ -769,25 +769,25 @@ class TestPollOnceEtlFailure:
         mock_imap.mark_processed.assert_not_called()
         assert result == -1
 
-    def test_reap_threshold_uses_batch_window_plus_poll_interval(self):
-        """Default stale threshold is batch_window + poll_interval, not 2×batch_window."""
+    def test_reap_threshold_uses_batch_window_times_two(self):
+        """Default stale threshold is batch_window * 2."""
         from cellarbrain.email_poll import IngestState, _reap_messages
         from cellarbrain.settings import IngestConfig
 
-        # batch_window=300, poll_interval=60 → threshold=360
+        # batch_window=300 → threshold=600
         config = IngestConfig(batch_window=300, poll_interval=60, stale_threshold=0)
         now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         state = IngestState()
         mock_client = MagicMock()
 
-        # Message aged 350s — below new threshold (360), should NOT be reaped
-        msg_below = _msg(1, now - timedelta(seconds=350), "export-wines.csv")
+        # Message aged 500s — below new threshold (600), should NOT be reaped
+        msg_below = _msg(1, now - timedelta(seconds=500), "export-wines.csv")
         count = _reap_messages(mock_client, [msg_below], config=config, now=now, state=state, reason="stale")
         assert count == 0
         mock_client.mark_seen.assert_not_called()
 
-        # Message aged 400s — above threshold (360), should be reaped
-        msg_above = _msg(2, now - timedelta(seconds=400), "export-wines.csv")
+        # Message aged 700s — above threshold (600), should be reaped
+        msg_above = _msg(2, now - timedelta(seconds=700), "export-wines.csv")
         count = _reap_messages(mock_client, [msg_above], config=config, now=now, state=state, reason="stale")
         assert count == 1
         mock_client.mark_seen.assert_called_once_with([2])
@@ -2821,6 +2821,7 @@ class TestDaemonLogElevation:
         args.setup = False
         args.status = False
         args.reap_orphans = False
+        args.reap_stale = False
         args.once = False
         args.quiet = False
         args.foreground = False
@@ -2861,6 +2862,7 @@ class TestDaemonLogElevation:
         args.setup = False
         args.status = False
         args.reap_orphans = False
+        args.reap_stale = False
         args.once = False
         args.quiet = True
         args.foreground = False
@@ -3002,3 +3004,440 @@ class TestDaemonSignalHandlerOrder:
 
         # Collector should have been closed during signal handling
         mock_collector.close.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# TestIncompleteBatchTracking
+# ---------------------------------------------------------------------------
+
+
+class TestIncompleteBatchTracking:
+    """Tests for incomplete-batch UID tracking (issue #18)."""
+
+    def _make_settings(self, tmp_path):
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+        return settings, raw_dir
+
+    def _make_imap(self, uids, fetched):
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.search_unseen.return_value = uids
+        mock_imap.fetch_messages.return_value = fetched
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+        return mock_imap
+
+    def test_leftovers_recorded_in_state(self, tmp_path):
+        """After poll_once with incomplete batch, state tracks leftover UIDs."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        # Use a very high stale_threshold so the reaper does not fire
+        config = IngestConfig(dedup_strategy="none", reaper_enabled=True, stale_threshold=999999)
+
+        t0 = datetime.now(UTC) - timedelta(seconds=10)
+        mock_imap = self._make_imap(
+            [1, 2],
+            [
+                (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100), b"w"),
+                (
+                    EmailMessage(uid=2, date=t0 + timedelta(seconds=5), filename="export-bottles-stored.csv", size=200),
+                    b"b",
+                ),
+            ],
+        )
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        # Check state was saved with incomplete_batch_uids
+        state_data = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert "incomplete_batch_uids" in state_data
+        incomplete = state_data["incomplete_batch_uids"]
+        assert "1" in incomplete
+        assert "2" in incomplete
+
+    def test_known_incomplete_uids_not_refetched(self, tmp_path):
+        """On second poll cycle with no new messages, tracked UIDs are not re-fetched."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        # Use a high stale_threshold so tracked UIDs stay below threshold
+        config = IngestConfig(dedup_strategy="none", reaper_enabled=True, stale_threshold=999999)
+
+        # Pre-seed state with tracked incomplete UIDs (first-seen 100s ago from *real* now)
+        first_seen = (datetime.now(UTC) - timedelta(seconds=100)).isoformat()
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {"1": first_seen, "2": first_seen},
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        mock_imap = self._make_imap([1, 2], [])  # fetch_messages won't be called for these
+        mock_imap.search_unseen.return_value = [1, 2]
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        # fetch_messages should NOT have been called (all UIDs are tracked + below threshold)
+        mock_imap.fetch_messages.assert_not_called()
+
+    def test_known_incomplete_uids_refetched_when_stale(self, tmp_path):
+        """Tracked UIDs older than stale threshold are re-fetched and reaped."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(dedup_strategy="none", reaper_enabled=True, batch_window=300, stale_threshold=0)
+        # Default threshold = batch_window * 2 = 600s
+
+        now = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+        first_seen = (now - timedelta(seconds=700)).isoformat()  # 700s > 600s threshold
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {"1": first_seen},
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        # Message date must also be old enough for the reaper
+        t_old = now - timedelta(seconds=700)
+        mock_imap = self._make_imap(
+            [1],
+            [(EmailMessage(uid=1, date=t_old, filename="export-wines.csv", size=100), b"w")],
+        )
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 0
+        # Should have been fetched and reaped
+        mock_imap.fetch_messages.assert_called_once()
+        mock_imap.mark_seen.assert_called_once_with([1])
+        # Should be removed from incomplete_batch_uids
+        state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert "1" not in state_after.get("incomplete_batch_uids", {})
+
+    def test_new_sibling_triggers_refetch_of_tracked(self, tmp_path):
+        """When a new message arrives, tracked incomplete UIDs are re-included for grouping."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(dedup_strategy="none", reaper_enabled=True)
+
+        now = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+        first_seen = (now - timedelta(seconds=100)).isoformat()
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {"1": first_seen, "2": first_seen},
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        t0 = now - timedelta(seconds=100)
+        mock_imap = self._make_imap(
+            [1, 2, 3],  # 3 is new, 1 and 2 are tracked
+            [
+                (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100), b"w"),
+                (
+                    EmailMessage(uid=2, date=t0 + timedelta(seconds=5), filename="export-bottles-stored.csv", size=200),
+                    b"b",
+                ),
+                (
+                    EmailMessage(uid=3, date=t0 + timedelta(seconds=10), filename="export-bottles-gone.csv", size=150),
+                    b"g",
+                ),
+            ],
+        )
+
+        snapshot_dir = raw_dir / "260501-0958"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        # Complete batch formed — all 3 messages processed
+        assert result == 1
+        # All tracked UIDs should be cleared from incomplete_batch_uids
+        state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert state_after.get("incomplete_batch_uids", {}) == {}
+
+    def test_completed_batch_clears_tracking(self, tmp_path):
+        """UIDs that form a complete batch are removed from incomplete_batch_uids."""
+        import json
+
+        from cellarbrain.email_poll import poll_once
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig(dedup_strategy="none", reaper_enabled=True)
+
+        now = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+        first_seen = (now - timedelta(seconds=50)).isoformat()
+        # Pre-track UIDs 1 and 2 as incomplete
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {"1": first_seen, "2": first_seen},
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        t0 = now - timedelta(seconds=50)
+        # New message 3 arrives — completes the batch
+        mock_imap = self._make_imap(
+            [1, 2, 3],
+            [
+                (EmailMessage(uid=1, date=t0, filename="export-wines.csv", size=100), b"w"),
+                (
+                    EmailMessage(uid=2, date=t0 + timedelta(seconds=5), filename="export-bottles-stored.csv", size=200),
+                    b"b",
+                ),
+                (
+                    EmailMessage(uid=3, date=t0 + timedelta(seconds=10), filename="export-bottles-gone.csv", size=150),
+                    b"g",
+                ),
+            ],
+        )
+
+        snapshot_dir = raw_dir / "260501-0959"
+        snapshot_dir.mkdir(parents=True)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+            patch("cellarbrain.email_poll.placement.place_batch", return_value=snapshot_dir),
+            patch("cellarbrain.email_poll.etl_runner.run_etl", return_value=(0, "OK")),
+        ):
+            result = poll_once(config, settings)
+
+        assert result == 1
+        state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert state_after.get("incomplete_batch_uids", {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# TestIngestStateIncompleteBatchUids
+# ---------------------------------------------------------------------------
+
+
+class TestIngestStateIncompleteBatchUids:
+    """Tests for IngestState.incomplete_batch_uids serialization and lifecycle."""
+
+    def test_serialization_roundtrip(self):
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            incomplete_batch_uids={42: "2026-05-01T10:00:00+00:00", 99: "2026-05-01T11:00:00+00:00"},
+        )
+        d = state.to_dict()
+        restored = IngestState.from_dict(d)
+        assert restored.incomplete_batch_uids == {42: "2026-05-01T10:00:00+00:00", 99: "2026-05-01T11:00:00+00:00"}
+
+    def test_backward_compat_missing_field(self):
+        from cellarbrain.email_poll import IngestState
+
+        data = {"high_water_uid": 10, "pending_uids": []}
+        state = IngestState.from_dict(data)
+        assert state.incomplete_batch_uids == {}
+
+    def test_uidvalidity_reset_clears_tracking(self):
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(
+            uidvalidity=100,
+            incomplete_batch_uids={1: "2026-05-01T10:00:00+00:00"},
+        )
+        state.handle_uidvalidity(200)
+        assert state.incomplete_batch_uids == {}
+
+    def test_json_keys_are_strings(self):
+        from cellarbrain.email_poll import IngestState
+
+        state = IngestState(incomplete_batch_uids={42: "2026-05-01T10:00:00+00:00"})
+        d = state.to_dict()
+        # JSON keys must be strings
+        assert "42" in d["incomplete_batch_uids"]
+        assert isinstance(list(d["incomplete_batch_uids"].keys())[0], str)
+
+    def test_from_dict_converts_string_keys_to_int(self):
+        from cellarbrain.email_poll import IngestState
+
+        data = {
+            "incomplete_batch_uids": {"42": "2026-05-01T10:00:00+00:00"},
+        }
+        state = IngestState.from_dict(data)
+        assert 42 in state.incomplete_batch_uids
+
+
+# ---------------------------------------------------------------------------
+# TestReapStale
+# ---------------------------------------------------------------------------
+
+
+class TestReapStale:
+    """Tests for reap_stale one-shot cleanup."""
+
+    def _make_settings(self, tmp_path):
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = MagicMock()
+        settings.paths.raw_dir = str(raw_dir)
+        settings.paths.data_dir = str(output_dir)
+        settings.config_source = None
+        return settings, raw_dir
+
+    def test_reap_stale_no_tracked_uids(self, tmp_path):
+        """When no incomplete_batch_uids, returns 0 immediately."""
+        from cellarbrain.email_poll import reap_stale
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig()
+
+        count = reap_stale(config, settings)
+        assert count == 0
+
+    def test_reap_stale_marks_seen(self, tmp_path):
+        """Tracked UIDs are fetched and marked as seen."""
+        import json
+
+        from cellarbrain.email_poll import reap_stale
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig()
+
+        # Pre-seed state
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {
+                "10": "2026-05-01T10:00:00+00:00",
+                "11": "2026-05-01T10:00:00+00:00",
+            },
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        t0 = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=10, date=t0, filename="export-wines.csv", size=100), b"w"),
+            (EmailMessage(uid=11, date=t0, filename="export-bottles-stored.csv", size=200), b"b"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            count = reap_stale(config, settings)
+
+        assert count == 2
+        mock_imap.mark_seen.assert_called_once_with([10, 11])
+        # State should have cleared incomplete_batch_uids
+        state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert state_after.get("incomplete_batch_uids", {}) == {}
+
+    def test_reap_stale_dry_run(self, tmp_path):
+        """Dry run does not touch IMAP but still clears tracking."""
+        import json
+
+        from cellarbrain.email_poll import reap_stale
+        from cellarbrain.settings import IngestConfig
+
+        settings, raw_dir = self._make_settings(tmp_path)
+        config = IngestConfig()
+
+        state_data = {
+            "high_water_uid": 0,
+            "pending_uids": [],
+            "failed_below_uid": 0,
+            "failed_batches": [],
+            "pending_retries": [],
+            "incomplete_batch_uids": {"10": "2026-05-01T10:00:00+00:00"},
+            "reaped_uids": [],
+        }
+        (raw_dir / ".ingest-state.json").write_text(json.dumps(state_data))
+
+        t0 = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+        mock_imap = MagicMock()
+        mock_imap.select_folder.return_value = 12345
+        mock_imap.fetch_messages.return_value = [
+            (EmailMessage(uid=10, date=t0, filename="export-wines.csv", size=100), b"w"),
+        ]
+        mock_imap.__enter__ = MagicMock(return_value=mock_imap)
+        mock_imap.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("cellarbrain.email_poll.imap.ImapClient", return_value=mock_imap),
+            patch("cellarbrain.email_poll.credentials.resolve_credentials", return_value=("u", "p")),
+        ):
+            count = reap_stale(config, settings, dry_run=True)
+
+        assert count == 1
+        mock_imap.mark_seen.assert_not_called()
+        mock_imap.move_messages.assert_not_called()
+        # Tracking still cleared
+        state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
+        assert state_after.get("incomplete_batch_uids", {}) == {}

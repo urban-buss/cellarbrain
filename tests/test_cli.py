@@ -752,3 +752,56 @@ class TestInstallSkillsSubcommand:
         main(["install-skills", "-t", str(tmp_path), "--force"])
         captured = capsys.readouterr()
         assert "Installed" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestInfoSubcommand
+# ---------------------------------------------------------------------------
+
+
+class TestInfoSubcommand:
+    def test_info_basic(self, data_dir, capsys, monkeypatch):
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "info"])
+        captured = capsys.readouterr()
+        assert "Cellarbrain Info" in captured.out
+        assert "Version:" in captured.out
+        assert "MCP Server" in captured.out
+
+    def test_info_json(self, data_dir, capsys, monkeypatch):
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "info", "--json"])
+        captured = capsys.readouterr()
+        import json
+
+        data = json.loads(captured.out)
+        assert "version" in data
+        assert "mcp_config_snippet" in data
+
+    def test_info_mcp_config(self, data_dir, capsys, monkeypatch):
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "info", "--mcp-config"])
+        captured = capsys.readouterr()
+        import json
+
+        data = json.loads(captured.out)
+        assert "mcpServers" in data
+        assert "cellarbrain" in data["mcpServers"]
+
+    def test_info_paths(self, data_dir, capsys, monkeypatch):
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "info", "--paths"])
+        captured = capsys.readouterr()
+        assert "Data directory:" in captured.out
+        assert "Parquet files:" in captured.out
+
+    def test_info_modules(self, data_dir, capsys, monkeypatch):
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "info", "--modules"])
+        captured = capsys.readouterr()
+        assert "Core:" in captured.out

@@ -364,8 +364,6 @@ class TestRenderPriceTrackerSection:
                     "output_date": None,
                     "output_type": None,
                     "output_comment": None,
-                    "is_onsite": True,
-                    "is_in_transit": False,
                     "etl_run_id": rid,
                     "updated_at": now,
                 },
@@ -375,7 +373,14 @@ class TestRenderPriceTrackerSection:
         writer.write_parquet(
             "cellar",
             [
-                {"cellar_id": 1, "name": "Main", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+                {
+                    "cellar_id": 1,
+                    "name": "Main",
+                    "location_type": "onsite",
+                    "sort_order": 1,
+                    "etl_run_id": rid,
+                    "updated_at": now,
+                },
             ],
             tmp_path,
         )

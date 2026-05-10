@@ -197,13 +197,13 @@ _VIEW_REQUIRED_TABLES = [
 ]
 
 # Tables used by the tracked-wines view (optional — may not exist yet).
-_TRACKED_VIEW_TABLES = ["tracked_wine", "wine", "bottle", "winery", "appellation"]
+_TRACKED_VIEW_TABLES = ["tracked_wine", "wine", "bottle", "cellar", "winery", "appellation"]
 
 
 def _wines_full_view_sql(data_dir: pathlib.Path) -> str:
     """Return the ``wines_full`` view SQL with inline ``read_parquet()`` paths."""
     sql = WINES_FULL_VIEW_SQL
-    for table in ("wine", "winery", "appellation", "bottle", "tasting", "pro_rating"):
+    for table in ("wine", "winery", "appellation", "bottle", "cellar", "tasting", "pro_rating"):
         path = _parquet_path(data_dir, table)
         sql = sql.replace(f"FROM {table}\n", f"FROM read_parquet('{path}')\n")
         sql = sql.replace(f"FROM {table} ", f"FROM read_parquet('{path}') ")

@@ -205,14 +205,19 @@ def _build_entities(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Main Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+        {
+            "cellar_id": 1,
+            "name": "Main Cellar",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     providers = [
         {"provider_id": 1, "name": "Wine Shop", "etl_run_id": rid, "updated_at": now},
