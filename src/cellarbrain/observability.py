@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
 import signal
 import threading
 import time
@@ -18,8 +19,12 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .settings import LoggingConfig
+
+if TYPE_CHECKING:
+    import duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,9 @@ class IngestEvent:
 _FLUSH_THRESHOLD = 5
 _FLUSH_INTERVAL_SECONDS = 5.0
 
+# Regex to extract the conflicting PID from DuckDB's IOException message.
+_LOCK_PID_RE = re.compile(r"PID\s+(\d+)")
+
 _CREATE_TABLE_SQL = """\
 CREATE TABLE IF NOT EXISTS tool_events (
     event_id        VARCHAR PRIMARY KEY,
@@ -130,7 +138,13 @@ INSERT INTO ingest_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 class EventCollector:
     """Collect MCP invocation events with session/turn tracking."""
 
-    def __init__(self, config: LoggingConfig, data_dir: str) -> None:
+    def __init__(
+        self,
+        config: LoggingConfig,
+        data_dir: str,
+        *,
+        subsystem: str = "mcp",
+    ) -> None:
         self.session_id: str = uuid.uuid4().hex
         self._config = config
         self._buffer: deque[ToolEvent] = deque()
@@ -140,6 +154,7 @@ class EventCollector:
         self._db = None
         self._flush_timer: threading.Timer | None = None
         self._closed = False
+        self.lock_conflict_pid: int | None = None
 
         if config.log_db is not None:
             db_path = config.log_db
@@ -147,8 +162,8 @@ class EventCollector:
             db_path = None
 
         if db_path is None:
-            # Derive default path from data_dir
-            db_path = str(Path(data_dir) / "logs" / "cellarbrain-logs.duckdb")
+            # Derive default path from data_dir, using subsystem suffix
+            db_path = str(Path(data_dir) / "logs" / f"cellarbrain-{subsystem}-logs.duckdb")
 
         self._db_path = db_path
         self._init_db()
@@ -178,8 +193,24 @@ class EventCollector:
             self._db.execute(_CREATE_TABLE_SQL)
             self._db.execute(_CREATE_INGEST_TABLE_SQL)
             logger.debug("Observability log store opened: %s", self._db_path)
-        except Exception:
-            logger.warning("Failed to open log store at %s", self._db_path, exc_info=True)
+        except Exception as exc:
+            # Parse PID from DuckDB lock errors for actionable diagnostics
+            pid_match = _LOCK_PID_RE.search(str(exc))
+            if pid_match:
+                self.lock_conflict_pid = int(pid_match.group(1))
+                logger.warning(
+                    "Log store locked by another process (PID %d): %s  "
+                    "— observability disabled for this session. "
+                    "Stop the other process or set a separate [logging] log_db in cellarbrain.toml.",
+                    self.lock_conflict_pid,
+                    self._db_path,
+                )
+            else:
+                logger.warning(
+                    "Failed to open log store at %s",
+                    self._db_path,
+                    exc_info=True,
+                )
             self._db = None
 
     # -- Periodic flush -----------------------------------------------------
@@ -384,11 +415,14 @@ def init_observability(
     config: LoggingConfig,
     data_dir: str,
     *,
+    subsystem: str = "mcp",
     register_signals: bool = True,
 ) -> EventCollector:
     """Initialise the global EventCollector.  Idempotent — returns existing if set.
 
     Args:
+        subsystem: Writer identity (``"mcp"`` or ``"ingest"``).  Controls the
+            default log-store filename when ``config.log_db`` is not set.
         register_signals: If False, skip SIGTERM/SIGINT handler registration.
             The ingest daemon passes False here because it manages its own
             signal handlers for graceful shutdown.
@@ -396,7 +430,7 @@ def init_observability(
     global _collector
     if _collector is not None:
         return _collector
-    _collector = EventCollector(config, data_dir)
+    _collector = EventCollector(config, data_dir, subsystem=subsystem)
     atexit.register(_collector.close)
 
     # Register signal handlers for graceful flush on SIGTERM/SIGINT
@@ -421,3 +455,90 @@ def init_observability(
 def get_collector() -> EventCollector | None:
     """Return the current EventCollector, or None if not initialised."""
     return _collector
+
+
+# ---------------------------------------------------------------------------
+# Multi-file log reader
+# ---------------------------------------------------------------------------
+
+
+def _discover_log_files(data_dir: str) -> list[Path]:
+    """Return all log-store DuckDB files under ``<data_dir>/logs/``.
+
+    Finds subsystem-specific files (``cellarbrain-*-logs.duckdb``) and the
+    legacy single-file format (``cellarbrain-logs.duckdb``).
+    """
+    logs_dir = Path(data_dir) / "logs"
+    if not logs_dir.is_dir():
+        return []
+    # Subsystem files: cellarbrain-mcp-logs.duckdb, cellarbrain-ingest-logs.duckdb, …
+    files = sorted(logs_dir.glob("cellarbrain-*-logs.duckdb"))
+    # Legacy single file (no subsystem suffix)
+    legacy = logs_dir / "cellarbrain-logs.duckdb"
+    if legacy.exists() and legacy not in files:
+        files.append(legacy)
+    return files
+
+
+def open_log_reader(
+    data_dir: str,
+    log_db: str | None = None,
+) -> duckdb.DuckDBPyConnection:
+    """Open a read-only connection that merges all log-store files.
+
+    When *log_db* is set (explicit ``[logging] log_db`` in config), opens that
+    single file directly.  Otherwise discovers all ``cellarbrain-*-logs.duckdb``
+    files (plus the legacy ``cellarbrain-logs.duckdb``) and creates in-memory
+    UNION ALL views over ``tool_events`` and ``ingest_events``.
+
+    Raises ``FileNotFoundError`` when no log-store files exist.
+    """
+    import duckdb
+
+    if log_db is not None:
+        path = Path(log_db)
+        if not path.exists():
+            raise FileNotFoundError(f"Log store not found: {log_db}")
+        return duckdb.connect(str(path), read_only=True)
+
+    files = _discover_log_files(data_dir)
+    if not files:
+        raise FileNotFoundError(
+            f"No log-store files found in {Path(data_dir) / 'logs'}. "
+            "The MCP server or ingest daemon creates them on first run."
+        )
+
+    if len(files) == 1:
+        return duckdb.connect(str(files[0]), read_only=True)
+
+    # Multiple files — merge via ATTACH + UNION ALL views
+    con = duckdb.connect(":memory:")
+    aliases: list[str] = []
+    for i, f in enumerate(files):
+        alias = f"logdb{i}"
+        con.execute(f"ATTACH '{f}' AS {alias} (READ_ONLY)")
+        aliases.append(alias)
+
+    # Build UNION ALL view for tool_events
+    tool_parts = []
+    for alias in aliases:
+        tool_parts.append(f"SELECT * FROM {alias}.tool_events")
+    con.execute("CREATE VIEW tool_events AS " + " UNION ALL ".join(tool_parts))
+
+    # Build UNION ALL view for ingest_events (table may not exist in all files)
+    ingest_parts = []
+    for alias in aliases:
+        try:
+            con.execute(f"SELECT 1 FROM {alias}.ingest_events LIMIT 0")
+            ingest_parts.append(f"SELECT * FROM {alias}.ingest_events")
+        except Exception:
+            pass
+    if ingest_parts:
+        con.execute("CREATE VIEW ingest_events AS " + " UNION ALL ".join(ingest_parts))
+    else:
+        # Create an empty view so callers don't need to check
+        con.execute(f"CREATE VIEW ingest_events AS SELECT * FROM {aliases[0]}.tool_events WHERE 1=0")
+
+    return con
+
+    return con

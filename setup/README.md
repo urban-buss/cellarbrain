@@ -59,6 +59,7 @@ See [Quick Start](getting-started/quick-start.md) for the full walkthrough.
 | [Observability](operations/observability.md) | EventCollector, DuckDB log store, CLI queries |
 | [Health Monitoring](operations/health-monitoring.md) | Daily checks for production |
 | [VS Code Debugging](operations/vscode-debugging.md) | Debug configurations and tips |
+| [MCP Testing](operations/mcp-testing.md) | Verify and test the MCP server |
 
 ## Publishing
 

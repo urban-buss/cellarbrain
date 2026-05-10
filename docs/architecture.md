@@ -40,7 +40,7 @@ raw/*.csv → vinocell_reader → parsers / vinocell_parsers → classify_wines 
 | `mcp_server` | 15 thin data tools + 8 resources + prompts via FastMCP. No LLM reasoning in server code. |
 | `cli` | Subcommand router: `etl`, `validate`, `query`, `stats`, `dossier`, `mcp`, `recalc`, `wishlist`, `logs`. Legacy compat for flat args. |
 | `log` | Configure stdlib logging: stderr handler + optional `RotatingFileHandler`. `JsonFormatter` for structured JSON log lines. Suppress noisy third-party loggers. |
-| `observability` | Structured event capture for MCP tool/resource/prompt invocations. `ToolEvent` dataclass, `EventCollector` with session/turn tracking, buffered DuckDB log store, auto-pruning. |
+| `observability` | Structured event capture for MCP tool/resource/prompt invocations. `ToolEvent` dataclass, `EventCollector` with session/turn tracking, buffered DuckDB log store (per-subsystem files), auto-pruning. Multi-file reader (`open_log_reader`) merges all log stores for queries and the dashboard. |
 | `dashboard` | Starlette web app for browsing observability data, cellar contents, SQL playground, and MCP tool workbench. Sub-modules: `app` (routes), `queries` (obs query functions), `cellar_queries` (cellar view queries), `workbench` (tool introspection + execution), `dossier_render` (Markdown→HTML). Templates use HTMX + Pico CSS + Chart.js. |
 | `email_poll` | IMAP polling daemon for automated Vinocell CSV ingestion. Sub-modules: `grouping` (batch detection, pure functions), `placement` (snapshot + flush), `imap` (IMAP client wrapper), `credentials` (keyring + env var resolution), `etl_runner` (subprocess ETL invocation). Optional dependency: `imapclient`, `keyring`. |
 

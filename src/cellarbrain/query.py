@@ -43,6 +43,7 @@ from .flat import (
     WINES_VIEW_SQL,
     WINES_WISHLIST_VIEW_SQL,
 )
+from .writer import SCHEMAS, schema_version_is_current
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,39 @@ def _parquet_path(data_dir: pathlib.Path, table: str) -> str:
     return str(data_dir / f"{table}.parquet").replace("\\", "/")
 
 
+def _check_schema_compatibility(data_dir: pathlib.Path) -> None:
+    """Raise :class:`DataStaleError` when on-disk Parquet schemas are stale.
+
+    Fast path: if the schema-version sidecar matches the current fingerprint,
+    skip the per-Parquet metadata reads.
+
+    Slow path: read the schema of each required Parquet file and verify that
+    every column declared in :data:`writer.SCHEMAS` is present.  Missing
+    columns indicate the user upgraded cellarbrain without re-running ETL —
+    DuckDB would otherwise emit a misleading ``BinderException`` referencing
+    a "missing table".
+    """
+    if schema_version_is_current(data_dir):
+        return
+
+    import pyarrow.parquet as pq
+
+    for table in _VIEW_REQUIRED_TABLES:
+        path = data_dir / f"{table}.parquet"
+        if not path.exists():
+            continue  # handled by the missing-files check
+        actual = {field.name for field in pq.read_schema(path)}
+        expected = {field.name for field in SCHEMAS[table]}
+        missing = expected - actual
+        if missing:
+            cols = ", ".join(sorted(missing))
+            raise DataStaleError(
+                f"{table}.parquet is missing columns: {cols}. "
+                f"The schema changed in a newer cellarbrain release — "
+                f"re-run 'cellarbrain etl' to rebuild the Parquet files."
+            )
+
+
 # Tables whose Parquet files are required for the wines/bottles views.
 _VIEW_REQUIRED_TABLES = [
     "wine",
@@ -298,6 +332,7 @@ def get_agent_connection(
         raise DataStaleError(
             f"Missing Parquet files: {', '.join(missing)}. Run 'cellarbrain etl' first to generate the data."
         )
+    _check_schema_compatibility(d)
 
     logger.debug("DuckDB agent connection opened — data_dir=%s", d)
     con = duckdb.connect(":memory:")

@@ -173,11 +173,32 @@ Synonyms are merged from three layers (highest priority wins):
 | `date_format` | `str` | `"%Y-%m-%d %H:%M:%S"` | Timestamp format |
 | `turn_gap_seconds` | `float` | `2.0` | Idle gap (seconds) before minting a new turn ID in MCP observability |
 | `slow_threshold_ms` | `float` | `2000.0` | Warn when a tool invocation exceeds this duration |
-| `log_db` | `str \| None` | `None` | Explicit path to DuckDB log store. Default: `<data_dir>/logs/cellarbrain-logs.duckdb` |
+| `log_db` | `str \| None` | `None` | Explicit path to DuckDB log store. Default: `<data_dir>/logs/cellarbrain-<subsystem>-logs.duckdb` |
 | `retention_days` | `int` | `90` | Auto-prune events older than this when `cellarbrain logs --prune` is run |
 
 CLI flags override TOML: `-v` sets INFO, `-vv` sets DEBUG, `-q` sets ERROR, `--log-file` overrides `log_file`.
 When running `cellarbrain mcp`, stderr is locked to WARNING to protect the JSON-RPC transport; use `log_file` for debug output.
+
+#### Concurrent processes
+
+When `log_db` is **not** set (the default), each long-lived process writes to its own log store:
+
+- MCP server → `<data_dir>/logs/cellarbrain-mcp-logs.duckdb`
+- Ingest daemon → `<data_dir>/logs/cellarbrain-ingest-logs.duckdb`
+
+Read commands (`cellarbrain logs`, the dashboard) automatically discover and merge all files. The legacy single-file name (`cellarbrain-logs.duckdb`) is also auto-discovered for backward compatibility.
+
+When `log_db` **is** set, both processes share the same file. Since DuckDB enforces a single-writer lock, the second process will log a warning and disable observability for that session. If you need both processes to record events while using explicit paths, set a different `log_db` per subsystem:
+
+```toml
+# On the MCP host (e.g. in the IDE config)
+[logging]
+log_db = "/path/to/logs/cellarbrain-mcp-logs.duckdb"
+
+# In the ingest daemon config
+[logging]
+log_db = "/path/to/logs/cellarbrain-ingest-logs.duckdb"
+```
 
 ### `DashboardConfig`
 

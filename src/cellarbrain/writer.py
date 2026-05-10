@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import pathlib
+from datetime import UTC, datetime
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
+
+#: Filename of the schema-version sidecar written next to the Parquet files.
+SCHEMA_VERSION_SIDECAR = ".schema_version.json"
 
 
 # ---------------------------------------------------------------------------
@@ -426,3 +432,63 @@ def append_partitioned_parquet(
         pq.write_table(table, path)
         paths.append(path)
     return paths
+
+
+# ---------------------------------------------------------------------------
+# Schema-version sidecar
+# ---------------------------------------------------------------------------
+
+
+def current_schema_fingerprint() -> str:
+    """Return a stable SHA-256 fingerprint of :data:`SCHEMAS`.
+
+    The fingerprint depends only on table names and column names (sorted),
+    not on column order or Arrow types — tolerant to harmless reorderings
+    while still catching every column rename / removal / addition.
+
+    Examples:
+        >>> fp = current_schema_fingerprint()
+        >>> isinstance(fp, str) and len(fp) == 64
+        True
+    """
+    canonical = {table: sorted(field.name for field in schema) for table, schema in SCHEMAS.items()}
+    payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def write_schema_version_sidecar(data_dir: str | pathlib.Path) -> pathlib.Path:
+    """Write the schema-version sidecar to *data_dir* and return its path."""
+    # Lazy import to avoid circular dependency at module load.
+    from . import __version__ as _cellarbrain_version
+
+    d = pathlib.Path(data_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / SCHEMA_VERSION_SIDECAR
+    payload = {
+        "cellarbrain_version": _cellarbrain_version,
+        "schema_fingerprint": current_schema_fingerprint(),
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    logger.debug("Wrote schema-version sidecar: %s", path)
+    return path
+
+
+def read_schema_version_sidecar(data_dir: str | pathlib.Path) -> dict | None:
+    """Return the parsed sidecar contents, or ``None`` if absent/unreadable."""
+    path = pathlib.Path(data_dir) / SCHEMA_VERSION_SIDECAR
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Sidecar unreadable (%s): %s", path, exc)
+        return None
+
+
+def schema_version_is_current(data_dir: str | pathlib.Path) -> bool:
+    """Return True if the on-disk sidecar matches the current fingerprint."""
+    payload = read_schema_version_sidecar(data_dir)
+    if not payload:
+        return False
+    return payload.get("schema_fingerprint") == current_schema_fingerprint()

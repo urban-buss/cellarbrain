@@ -329,6 +329,10 @@ def run(
     print(f"  etl_run: {out / 'etl_run.parquet'}")
     print(f"  change_log: {out / 'change_log.parquet'}")
 
+    # --- Write schema-version sidecar (used by query layer for fast staleness check) ---
+    sidecar_path = writer.write_schema_version_sidecar(out)
+    print(f"  schema version: {sidecar_path}")
+
     # --- Generate wine markdown dossiers ---
     current_year = now.year
     if sync_mode:
@@ -437,6 +441,11 @@ def _run_handler(fn):
             ),
         ):
             print(f"Error: {exc}", file=sys.stderr)
+            if isinstance(exc, DataStaleError):
+                print(
+                    "Hint: run 'cellarbrain doctor' for a full health check.",
+                    file=sys.stderr,
+                )
             sys.exit(1)
         raise
 
@@ -1108,36 +1117,58 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
     """Query the MCP observability log store."""
     import duckdb
 
-    db_path = settings.logging.log_db
-    if db_path is None:
-        db_path = str(pathlib.Path(settings.paths.data_dir) / "logs" / "cellarbrain-logs.duckdb")
-
-    if not pathlib.Path(db_path).exists():
-        print(f"Log store not found: {db_path}", file=sys.stderr)
-        print("The MCP server creates this automatically on first run.", file=sys.stderr)
-        sys.exit(1)
-
-    con = duckdb.connect(db_path, read_only=True)
-    hours = args.since
-    cutoff = f"now() - INTERVAL '{hours} HOUR'"
+    from .observability import _discover_log_files, open_log_reader
 
     if args.prune:
-        con.close()
-        con = duckdb.connect(db_path, read_only=False)
-        from .observability import EventCollector
+        # Prune mode: iterate every discovered log-store file (read-write)
+        if settings.logging.log_db is not None:
+            files = [pathlib.Path(settings.logging.log_db)]
+        else:
+            files = _discover_log_files(settings.paths.data_dir)
+        if not files:
+            print("No log-store files found.", file=sys.stderr)
+            sys.exit(1)
 
-        collector = EventCollector.__new__(EventCollector)
-        collector._db = con
-        collector._config = settings.logging
-        collector._buffer = __import__("collections").deque()
-        collector._ingest_buffer = __import__("collections").deque()
-        deleted = collector.prune()
-        ingest_deleted = collector.prune_ingest()
-        print(f"Pruned {deleted} tool events older than {settings.logging.retention_days} days.")
-        if ingest_deleted:
-            print(f"Pruned {ingest_deleted} ingest events.")
-        con.close()
+        from .observability import _LOCK_PID_RE, EventCollector
+
+        total_deleted = 0
+        total_ingest_deleted = 0
+        for db_file in files:
+            try:
+                rw_con = duckdb.connect(str(db_file), read_only=False)
+            except Exception as exc:
+                pid_match = _LOCK_PID_RE.search(str(exc))
+                if pid_match:
+                    print(f"Skipped {db_file.name} — locked by PID {pid_match.group(1)}")
+                else:
+                    print(f"Skipped {db_file.name} — {exc}")
+                continue
+            collector = EventCollector.__new__(EventCollector)
+            collector._db = rw_con
+            collector._config = settings.logging
+            collector._buffer = __import__("collections").deque()
+            collector._ingest_buffer = __import__("collections").deque()
+            deleted = collector.prune()
+            ingest_deleted = collector.prune_ingest()
+            total_deleted += deleted
+            total_ingest_deleted += ingest_deleted
+            if deleted or ingest_deleted:
+                print(f"  {db_file.name}: pruned {deleted} tool + {ingest_deleted} ingest events")
+            rw_con.close()
+
+        print(f"Pruned {total_deleted} tool events older than {settings.logging.retention_days} days.")
+        if total_ingest_deleted:
+            print(f"Pruned {total_ingest_deleted} ingest events.")
         return
+
+    try:
+        con = open_log_reader(settings.paths.data_dir, settings.logging.log_db)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    hours = args.since
+    cutoff = f"now() - INTERVAL '{hours} HOUR'"
 
     if args.errors:
         rows = con.execute(f"""
@@ -1252,24 +1283,39 @@ def _cmd_dashboard(args: argparse.Namespace, settings: Settings) -> None:
 
     import uvicorn
 
+    from .observability import _discover_log_files
+
+    # Ensure at least one log-store file exists so the dashboard can start
+    # without prior MCP/ingest usage.
     db_path = settings.logging.log_db
-    if db_path is None:
-        db_path = str(pathlib.Path(settings.paths.data_dir) / "logs" / "cellarbrain-logs.duckdb")
+    if db_path is not None:
+        if not pathlib.Path(db_path).exists():
+            pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            import duckdb
 
-    if not pathlib.Path(db_path).exists():
-        # Create an empty log store so the dashboard can start without prior MCP usage
-        pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        import duckdb
+            _con = duckdb.connect(db_path)
+            from .observability import _CREATE_TABLE_SQL
 
-        _con = duckdb.connect(db_path)
-        from .observability import _CREATE_TABLE_SQL
+            _con.execute(_CREATE_TABLE_SQL)
+            _con.close()
+    else:
+        files = _discover_log_files(settings.paths.data_dir)
+        if not files:
+            # Create an empty MCP log store as seed
+            logs_dir = pathlib.Path(settings.paths.data_dir) / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            db_path = str(logs_dir / "cellarbrain-mcp-logs.duckdb")
+            import duckdb
 
-        _con.execute(_CREATE_TABLE_SQL)
-        _con.close()
+            _con = duckdb.connect(db_path)
+            from .observability import _CREATE_TABLE_SQL
+
+            _con.execute(_CREATE_TABLE_SQL)
+            _con.close()
 
     data_dir = settings.paths.data_dir
     app = create_app(
-        log_db_path=db_path,
+        log_db_path=settings.logging.log_db,
         data_dir=data_dir,
         dashboard_config=settings.dashboard,
     )
@@ -1449,19 +1495,15 @@ def _ingest_setup() -> None:
 
 def _ingest_status(settings: Settings) -> None:
     """Print ingest daemon status from the DuckDB log database."""
-    import duckdb
-
     from .dashboard.ingest_queries import get_ingest_status, has_ingest_table
+    from .observability import open_log_reader
 
-    log_db = settings.logging.log_db
-    if log_db is None:
-        log_db = str(pathlib.Path(settings.paths.data_dir) / "logs" / "cellarbrain-logs.duckdb")
-
-    if not pathlib.Path(log_db).exists():
+    try:
+        con = open_log_reader(settings.paths.data_dir, settings.logging.log_db)
+    except FileNotFoundError:
         print("No log database found. Has the ingest daemon ever run?")
         sys.exit(0)
 
-    con = duckdb.connect(log_db, read_only=True)
     try:
         if not has_ingest_table(con):
             print("No ingest events recorded yet.")

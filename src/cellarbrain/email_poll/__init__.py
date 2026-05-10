@@ -1041,11 +1041,18 @@ class IngestDaemon:
         # Pass register_signals=False so daemon's own handlers aren't overwritten.
         from ..observability import get_collector, init_observability
 
-        init_observability(
+        collector = init_observability(
             self.settings.logging,
             self.settings.paths.data_dir,
+            subsystem="ingest",
             register_signals=False,
         )
+        if collector.lock_conflict_pid is not None:
+            print(
+                f"WARNING: Observability disabled — log store locked by PID {collector.lock_conflict_pid}. "
+                f"Set a separate [logging] log_db in cellarbrain.toml to fix.",
+                flush=True,
+            )
         _emit_ingest_event("daemon_start", "info")
 
         # Register signal handlers for clean shutdown AFTER observability init

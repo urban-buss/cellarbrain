@@ -1231,6 +1231,16 @@ class TestImapTimeout:
 class TestDaemonShutdown:
     """Tests for daemon signal handling and graceful shutdown."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        """Prevent stale _collector globals from leaking across tests."""
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
     def test_shutdown_event_stops_loop(self):
         """Daemon exits when _shutdown_event is set before first poll."""
         from cellarbrain.email_poll import IngestDaemon
@@ -2145,6 +2155,15 @@ class TestInterruptibleSleep:
 class TestDaemonContinuesAfterETL:
     """Regression test: daemon must continue polling after successful ETL."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
     def test_multiple_poll_cycles_after_success(self):
         """Daemon executes multiple poll cycles without hanging (issue #001)."""
         from cellarbrain.email_poll import IngestDaemon
@@ -2806,6 +2825,15 @@ class TestIngestState:
 
 
 class TestDaemonLogElevation:
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
     """Tests that daemon mode auto-elevates to INFO unless --quiet."""
 
     def test_daemon_elevates_to_info(self):
@@ -2894,6 +2922,15 @@ class TestDaemonLogElevation:
 
 
 class TestDaemonHeartbeat:
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
     """Tests for the periodic heartbeat print."""
 
     def test_heartbeat_prints_at_interval(self, capsys):
@@ -2954,6 +2991,16 @@ class TestDaemonHeartbeat:
 
 class TestDaemonSignalHandlerOrder:
     """Tests that daemon signal handlers are registered AFTER observability."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        """Prevent stale _collector globals from leaking across tests."""
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
 
     def test_init_observability_called_without_signal_registration(self):
         """Daemon passes register_signals=False to init_observability."""
