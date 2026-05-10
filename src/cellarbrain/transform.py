@@ -6,6 +6,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import parsers, vinocell_parsers
+from .computed import classify_cellar
+from .settings import CellarRule
 from .slugify import make_slug
 
 if TYPE_CHECKING:
@@ -236,8 +238,11 @@ def build_grapes(wines_rows: list[dict]) -> tuple[list[dict], Lookup]:
     return entities, lookup
 
 
-def build_cellars(bottles_rows: list[dict]) -> tuple[list[dict], Lookup]:
-    """Deduplicate cellar names, extract sort_order.
+def build_cellars(
+    bottles_rows: list[dict],
+    rules: tuple[CellarRule, ...] = (),
+) -> tuple[list[dict], Lookup]:
+    """Deduplicate cellar names, extract sort_order and location_type.
 
     Returns (entity_rows, name→id lookup).
     """
@@ -254,6 +259,7 @@ def build_cellars(bottles_rows: list[dict]) -> tuple[list[dict], Lookup]:
             {
                 "cellar_id": i,
                 "name": name,
+                "location_type": classify_cellar(name, rules),
                 "sort_order": vinocell_parsers.parse_cellar_sort_order(name),
             }
         )

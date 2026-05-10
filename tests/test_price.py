@@ -104,13 +104,12 @@ def _make_dataset(tmp_path):
         make_bottle(
             4,
             2,
+            cellar_id=2,
             shelf="B1",
             provider_id=2,
             purchase_date=date(2025, 3, 10),
             original_purchase_price=Decimal("20.00"),
             purchase_price=Decimal("20.00"),
-            is_onsite=False,
-            is_in_transit=True,
         ),
         # Bottles for churn testing (span 2024-2025)
         make_bottle(
@@ -177,7 +176,7 @@ def _make_dataset(tmp_path):
                 make_wine_grape(3, 1),
             ],
             "bottle": bottles,
-            "cellar": [make_cellar(name="Main Cellar")],
+            "cellar": [make_cellar(name="Main Cellar"), make_cellar(2, name="Transit", location_type="in_transit")],
             "provider": [
                 make_provider(1, name="Wine Shop A"),
                 make_provider(2, name="Bodega Direct"),

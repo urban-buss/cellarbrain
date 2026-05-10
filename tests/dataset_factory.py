@@ -180,8 +180,6 @@ def make_bottle(bottle_id: int = 1, wine_id: int = 1, **overrides) -> dict:
         "output_date": None,
         "output_type": None,
         "output_comment": None,
-        "is_onsite": True,
-        "is_in_transit": False,
         "etl_run_id": 1,
         "updated_at": _now(),
     }
@@ -194,6 +192,7 @@ def make_cellar(cellar_id: int = 1, **overrides) -> dict:
     row = {
         "cellar_id": cellar_id,
         "name": "Cave",
+        "location_type": "onsite",
         "sort_order": 1,
         "etl_run_id": 1,
         "updated_at": _now(),

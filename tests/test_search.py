@@ -106,13 +106,12 @@ def _make_dataset(tmp_path):
         make_bottle(
             4,
             2,
+            cellar_id=2,
             shelf="B1",
             provider_id=2,
             purchase_date=date(2025, 3, 10),
             original_purchase_price=Decimal("20.00"),
             purchase_price=Decimal("20.00"),
-            is_onsite=False,
-            is_in_transit=True,
         ),
         # Bottles for churn testing (span 2024-2025)
         make_bottle(
@@ -179,7 +178,7 @@ def _make_dataset(tmp_path):
                 make_wine_grape(3, 1),
             ],
             "bottle": bottles,
-            "cellar": [make_cellar(name="Main Cellar")],
+            "cellar": [make_cellar(name="Main Cellar"), make_cellar(2, name="Transit", location_type="in_transit")],
             "provider": [
                 make_provider(1, name="Wine Shop A"),
                 make_provider(2, name="Bodega Direct"),
@@ -955,8 +954,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -978,8 +975,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1002,8 +997,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1026,8 +1019,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1049,8 +1040,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1072,8 +1061,6 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1096,14 +1083,19 @@ def _make_intent_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Main Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+        {
+            "cellar_id": 1,
+            "name": "Main Cellar",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     providers = [
         {"provider_id": 1, "name": "Wine Shop", "etl_run_id": rid, "updated_at": now},
@@ -1664,8 +1656,6 @@ def _make_concept_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1687,8 +1677,6 @@ def _make_concept_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1710,8 +1698,6 @@ def _make_concept_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1733,8 +1719,6 @@ def _make_concept_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
@@ -1756,14 +1740,19 @@ def _make_concept_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Main Cellar", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+        {
+            "cellar_id": 1,
+            "name": "Main Cellar",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     providers = [
         {"provider_id": 1, "name": "Wine Shop", "etl_run_id": rid, "updated_at": now},
@@ -2058,14 +2047,21 @@ def _make_grape_synonym_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         }
         for i in range(1, 5)
     ]
-    cellars = [{"cellar_id": 1, "name": "Main", "sort_order": 1, "etl_run_id": rid, "updated_at": now}]
+    cellars = [
+        {
+            "cellar_id": 1,
+            "name": "Main",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        }
+    ]
     providers = [{"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now}]
     etl_runs = [
         {
@@ -2384,14 +2380,21 @@ def _make_style_dataset(tmp_path):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         }
         for i in range(1, 7)
     ]
-    cellars = [{"cellar_id": 1, "name": "Main", "sort_order": 1, "etl_run_id": rid, "updated_at": now}]
+    cellars = [
+        {
+            "cellar_id": 1,
+            "name": "Main",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        }
+    ]
     providers = [{"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now}]
     etl_runs = [
         {
@@ -2751,8 +2754,6 @@ class TestFormatSiblings:
                     "output_date": None,
                     "output_type": None,
                     "output_comment": None,
-                    "is_onsite": True,
-                    "is_in_transit": False,
                     "etl_run_id": rid,
                     "updated_at": now,
                 },
@@ -2762,7 +2763,14 @@ class TestFormatSiblings:
         writer.write_parquet(
             "cellar",
             [
-                {"cellar_id": 1, "name": "Cave", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+                {
+                    "cellar_id": 1,
+                    "name": "Cave",
+                    "location_type": "onsite",
+                    "sort_order": 1,
+                    "etl_run_id": rid,
+                    "updated_at": now,
+                },
             ],
             tmp_path,
         )

@@ -2,6 +2,18 @@
 
 Daily health check for a production Mac Mini setup.
 
+## Installation Diagnostics
+
+Before running health checks, verify the installation is correct:
+
+```bash
+# Full installation diagnostic (version, paths, modules, MCP config)
+cellarbrain info
+
+# Quick MCP client config snippet (paste into claude_desktop_config.json)
+cellarbrain info --mcp-config
+```
+
 ## Quick Check
 
 ```bash

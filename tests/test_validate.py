@@ -25,7 +25,16 @@ def _make_minimal_dataset():
             }
         ],
         "grape": [{"grape_id": 1, "name": "Merlot", "etl_run_id": 1, "updated_at": _NOW}],
-        "cellar": [{"cellar_id": 1, "name": "Main", "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW}],
+        "cellar": [
+            {
+                "cellar_id": 1,
+                "name": "Main",
+                "location_type": "onsite",
+                "sort_order": 1,
+                "etl_run_id": 1,
+                "updated_at": _NOW,
+            }
+        ],
         "provider": [{"provider_id": 1, "name": "Shop", "etl_run_id": 1, "updated_at": _NOW}],
         "wine": [
             {
@@ -109,8 +118,6 @@ def _make_minimal_dataset():
                 "output_date": None,
                 "output_type": None,
                 "output_comment": None,
-                "is_onsite": True,
-                "is_in_transit": False,
                 "etl_run_id": 1,
                 "updated_at": _NOW,
             }

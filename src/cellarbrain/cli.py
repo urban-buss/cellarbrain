@@ -54,7 +54,7 @@ def _do_transforms(
     wineries, winery_lk = transform.build_wineries(wines_rows)
     appellations, appellation_lk = transform.build_appellations(wines_rows)
     grapes, grape_lk = transform.build_grapes(wines_rows)
-    cellars, cellar_lk = transform.build_cellars(bottles_rows)
+    cellars, cellar_lk = transform.build_cellars(bottles_rows, rules=settings.cellar_rules if settings else ())
     providers, provider_lk = transform.build_providers(bottles_rows, bottles_gone_rows)
 
     print(f"  Wineries:     {len(wineries)}")
@@ -137,14 +137,13 @@ def _do_transforms(
         )
         b["purchase_currency"] = currency.default
 
-    # --- Bottle-level computed property: is_onsite ---
-    rules = settings.cellar_rules if settings else ()
-    cellar_id_to_name = {c["cellar_id"]: c["name"] for c in cellars}
+    # --- Bottle-level computed property: is_in_transit (in-memory only) ---
+    # location_type is persisted on cellar.parquet; derive in-memory booleans
+    # for downstream markdown/dossier helpers that read bottle dicts directly.
+    cellar_id_to_loc = {c["cellar_id"]: c["location_type"] for c in cellars}
     for b in all_bottles:
-        cellar_name = cellar_id_to_name.get(b.get("cellar_id"))
-        cls = classify_cellar(cellar_name, rules)
-        b["is_onsite"] = cls == "onsite"
-        b["is_in_transit"] = cls == "in_transit"
+        loc = cellar_id_to_loc.get(b.get("cellar_id"), "onsite")
+        b["is_in_transit"] = loc == "in_transit"
 
     # --- Tracked wines (wishlist / favorites) ---
     appellation_by_wine = {w["wine_id"]: w.get("appellation_id") for w in wines}
@@ -643,6 +642,9 @@ def _subcommand_main(argv: list[str]) -> None:
         help="(deprecated — INFO logging is now the default for daemon mode)",
     )
     ingest.add_argument("--reap-orphans", action="store_true", help="One-shot cleanup of orphan/duplicate messages")
+    ingest.add_argument(
+        "--reap-stale", action="store_true", help="One-shot cleanup of tracked incomplete-batch messages"
+    )
     ingest.add_argument("--status", action="store_true", help="Show ingest daemon status from log database")
 
     # --- backup ---
@@ -667,6 +669,13 @@ def _subcommand_main(argv: list[str]) -> None:
         nargs="*",
         help="Run only specific checks (parquet, schema, dossier, sommelier, currency, etl, backup, disk, integrity)",
     )
+
+    # --- info ---
+    info_parser = sub.add_parser("info", help="Show installation and configuration diagnostics")
+    info_parser.add_argument("--json", action="store_true", help="Output as JSON (for scripting)")
+    info_parser.add_argument("--mcp-config", action="store_true", help="Print only the MCP client config snippet")
+    info_parser.add_argument("--paths", action="store_true", help="Print only resolved paths")
+    info_parser.add_argument("--modules", action="store_true", help="Print only installed modules")
 
     # --- install-skills ---
     skills_parser = sub.add_parser("install-skills", help="Install OpenClaw skills to a target directory")
@@ -739,6 +748,7 @@ def _subcommand_main(argv: list[str]) -> None:
         "backup": _cmd_backup,
         "restore": _cmd_restore,
         "doctor": _cmd_doctor,
+        "info": _cmd_info,
         "install-skills": _cmd_install_skills,
     }
     handler = handlers[args.command]
@@ -878,7 +888,6 @@ def _cmd_wishlist(args: argparse.Namespace, settings: Settings) -> None:
 def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
     """Recompute calculated fields from existing Parquet files."""
     from .computed import (
-        classify_cellar,
         compute_age_years,
         compute_drinking_status,
         compute_price_tier,
@@ -900,8 +909,14 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
         print("No wine data found — run etl first.", file=sys.stderr)
         sys.exit(1)
 
-    # Build cellar lookup for is_onsite
-    cellar_id_to_name = {c["cellar_id"]: c["name"] for c in cellars}
+    # Build cellar location lookup and recompute cellar location_type
+    cellar_changes = 0
+    for c in cellars:
+        old_loc = c.get("location_type")
+        c["location_type"] = classify_cellar(c["name"], rules)
+        if old_loc != c["location_type"]:
+            cellar_changes += 1
+    cellar_id_to_loc = {c["cellar_id"]: c["location_type"] for c in cellars}
 
     # Recompute wine-level fields
     wine_changes = 0
@@ -931,7 +946,7 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
     # Recompute bottle-level fields
     bottle_changes = 0
     for b in bottles:
-        old = (b.get("is_onsite"), b.get("is_in_transit"), b.get("purchase_price"))
+        old = (b.get("purchase_price"),)
         # Currency normalisation
         b["purchase_price"] = convert_to_default_currency(
             b.get("original_purchase_price"),
@@ -940,17 +955,18 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
             currency.rates,
         )
         b["purchase_currency"] = currency.default
-        cellar_name = cellar_id_to_name.get(b.get("cellar_id"))
-        cls = classify_cellar(cellar_name, rules)
-        b["is_onsite"] = cls == "onsite"
-        b["is_in_transit"] = cls == "in_transit"
-        new = (b["is_onsite"], b["is_in_transit"], b["purchase_price"])
+        # In-memory classification for markdown/dossier helpers
+        loc = cellar_id_to_loc.get(b.get("cellar_id"), "onsite")
+        b["is_in_transit"] = loc == "in_transit"
+        new = (b["purchase_price"],)
         if old != new:
             bottle_changes += 1
 
     # Write updated Parquet
     writer.write_parquet("wine", wines, out)
     writer.write_parquet("bottle", bottles, out)
+    if cellar_changes:
+        writer.write_parquet("cellar", cellars, out)
 
     # Regenerate dossiers for changed wines
     if wine_changes:
@@ -979,7 +995,7 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
             if comp_paths:
                 print(f"Regenerated {len(comp_paths)} companion dossier(s)")
 
-    print(f"Recalc complete: {wine_changes} wine(s), {bottle_changes} bottle(s) updated")
+    print(f"Recalc complete: {wine_changes} wine(s), {bottle_changes} bottle(s), {cellar_changes} cellar(s) updated")
 
 
 # ---------------------------------------------------------------------------
@@ -1355,7 +1371,7 @@ def _cmd_restore(args: argparse.Namespace, settings: Settings) -> None:
 def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
     """Start the email ingestion daemon or run a single poll cycle."""
     try:
-        from .email_poll import IngestDaemon, poll_once, reap_orphans
+        from .email_poll import IngestDaemon, poll_once, reap_orphans, reap_stale
     except ImportError:
         print("Ingest dependencies not installed.", file=sys.stderr)
         print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
@@ -1374,6 +1390,11 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
     if getattr(args, "reap_orphans", False):
         count = reap_orphans(config, settings, dry_run=args.dry_run)
         print(f"Reaped {count} orphan message(s).")
+        sys.exit(0)
+
+    if getattr(args, "reap_stale", False):
+        count = reap_stale(config, settings, dry_run=args.dry_run)
+        print(f"Reaped {count} stale incomplete-batch message(s).")
         sys.exit(0)
 
     if args.once:
@@ -1465,6 +1486,59 @@ def _ingest_status(settings: Settings) -> None:
         print(f"  Pending batches:  {status['pending_batches']}")
     finally:
         con.close()
+
+
+# ---------------------------------------------------------------------------
+# Info
+# ---------------------------------------------------------------------------
+
+
+def _cmd_info(args: argparse.Namespace, settings: Settings) -> None:
+    """Show installation and configuration diagnostics."""
+    from .info import collect_info, format_json, format_mcp_config, format_text
+
+    report = collect_info(settings)
+
+    if args.mcp_config:
+        print(format_mcp_config(report))
+        return
+
+    if args.json:
+        print(format_json(report))
+        return
+
+    if args.paths:
+        # Print only the paths section
+        lines = [
+            f"{'Data directory:':<18}{report.data_dir}",
+            f"  {'Parquet files:':<18}{report.parquet_file_count} files",
+            f"{'Raw directory:':<18}{report.raw_dir}",
+            f"{'Dossier directory:':<18}{report.wines_dir}",
+            f"{'Backup directory:':<18}{report.backup_dir}",
+            f"{'Log database:':<18}{report.log_db or '(not found)'}",
+            f"{'Sommelier model:':<18}{report.sommelier_model_dir}",
+        ]
+        print("\n".join(lines))
+        return
+
+    if args.modules:
+        # Print only the modules section
+
+        core_parts = [f"{k} {v}" for k, v in report.core_packages.items()]
+        lines = [f"{'Core:':<18}\u2713 {', '.join(core_parts)}"]
+        for group, status in report.extras.items():
+            if status.installed:
+                pkg_str = ", ".join(f"{k} {v}" for k, v in status.packages.items())
+                lines.append(f"[{group}]:{' ' * max(1, 17 - len(group) - 3)}\u2713 {pkg_str}")
+            else:
+                lines.append(
+                    f"[{group}]:{' ' * max(1, 17 - len(group) - 3)}"
+                    f"\u2717 not installed  \u2192  pip install cellarbrain[{group}]"
+                )
+        print("\n".join(lines))
+        return
+
+    print(format_text(report))
 
 
 # ---------------------------------------------------------------------------

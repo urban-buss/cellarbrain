@@ -253,14 +253,19 @@ def wine_dataset(tmp_path_factory):
             "output_date": None,
             "output_type": None,
             "output_comment": None,
-            "is_onsite": True,
-            "is_in_transit": False,
             "etl_run_id": rid,
             "updated_at": now,
         },
     ]
     cellars = [
-        {"cellar_id": 1, "name": "Cave", "sort_order": 1, "etl_run_id": rid, "updated_at": now},
+        {
+            "cellar_id": 1,
+            "name": "Cave",
+            "location_type": "onsite",
+            "sort_order": 1,
+            "etl_run_id": rid,
+            "updated_at": now,
+        },
     ]
     providers = [
         {"provider_id": 1, "name": "Shop", "etl_run_id": rid, "updated_at": now},

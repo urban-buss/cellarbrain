@@ -89,14 +89,15 @@ LEFT JOIN winery wy ON w.winery_id = wy.winery_id
 LEFT JOIN appellation a ON w.appellation_id = a.appellation_id
 LEFT JOIN (
     SELECT
-        wine_id,
-        count(*) FILTER (WHERE status = 'stored' AND NOT is_in_transit)  AS bottles_stored,
-        count(*) FILTER (WHERE status != 'stored') AS bottles_consumed,
-        count(*) FILTER (WHERE status = 'stored' AND is_in_transit) AS bottles_on_order,
-        CAST(sum(purchase_price) FILTER (WHERE status = 'stored' AND NOT is_in_transit) AS DOUBLE) AS cellar_value,
-        CAST(sum(purchase_price) FILTER (WHERE status = 'stored' AND is_in_transit) AS DOUBLE) AS on_order_value
-    FROM bottle
-    GROUP BY wine_id
+        b.wine_id,
+        count(*) FILTER (WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') != 'in_transit')  AS bottles_stored,
+        count(*) FILTER (WHERE b.status != 'stored') AS bottles_consumed,
+        count(*) FILTER (WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') = 'in_transit') AS bottles_on_order,
+        CAST(sum(b.purchase_price) FILTER (WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') != 'in_transit') AS DOUBLE) AS cellar_value,
+        CAST(sum(b.purchase_price) FILTER (WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') = 'in_transit') AS DOUBLE) AS on_order_value
+    FROM bottle b
+    LEFT JOIN cellar c ON b.cellar_id = c.cellar_id
+    GROUP BY b.wine_id
 ) bs ON w.wine_id = bs.wine_id
 LEFT JOIN (
     SELECT
@@ -183,8 +184,9 @@ SELECT
     b.output_date,
     b.output_type,
     b.output_comment,
-    b.is_onsite,
-    b.is_in_transit
+    COALESCE(c.location_type, 'onsite') AS location_type,
+    COALESCE(c.location_type, 'onsite') = 'onsite' AS is_onsite,
+    COALESCE(c.location_type, 'onsite') = 'in_transit' AS is_in_transit
 FROM bottle b
 JOIN wine w ON b.wine_id = w.wine_id
 LEFT JOIN winery wy ON w.winery_id = wy.winery_id
@@ -232,12 +234,13 @@ LEFT JOIN (
         COALESCE(sum(bs.bottles_on_order), 0) AS bottles_on_order
     FROM wine w2
     LEFT JOIN (
-        SELECT wine_id,
-               count(*) FILTER (WHERE NOT is_in_transit) AS bottles_stored,
-               count(*) FILTER (WHERE is_in_transit) AS bottles_on_order
-        FROM bottle
-        WHERE status = 'stored'
-        GROUP BY wine_id
+        SELECT b2.wine_id,
+               count(*) FILTER (WHERE COALESCE(c2.location_type, 'onsite') != 'in_transit') AS bottles_stored,
+               count(*) FILTER (WHERE COALESCE(c2.location_type, 'onsite') = 'in_transit') AS bottles_on_order
+        FROM bottle b2
+        LEFT JOIN cellar c2 ON b2.cellar_id = c2.cellar_id
+        WHERE b2.status = 'stored'
+        GROUP BY b2.wine_id
     ) bs ON w2.wine_id = bs.wine_id
     WHERE NOT w2.is_deleted AND w2.tracked_wine_id IS NOT NULL
     GROUP BY tracked_wine_id

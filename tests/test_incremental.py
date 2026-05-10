@@ -170,8 +170,6 @@ def _minimal_bottle(
         "output_date": output_date,
         "output_type": output_type,
         "output_comment": output_comment,
-        "is_onsite": True,
-        "is_in_transit": False,
         "etl_run_id": run_id,
         "updated_at": ts,
     }
@@ -268,7 +266,14 @@ def _seed_full(tmp_path: Path) -> None:
         tmp_path,
         "cellar",
         [
-            {"cellar_id": 1, "name": "01 Main", "sort_order": 1, "etl_run_id": 1, "updated_at": _NOW},
+            {
+                "cellar_id": 1,
+                "name": "01 Main",
+                "location_type": "onsite",
+                "sort_order": 1,
+                "etl_run_id": 1,
+                "updated_at": _NOW,
+            },
         ],
     )
     _write_entity(
@@ -337,7 +342,7 @@ def _build_new_entities(**overrides: list[dict]) -> dict[str, list[dict]]:
             {"grape_id": 2, "name": "Nebbiolo"},
         ],
         "cellar": [
-            {"cellar_id": 1, "name": "01 Main", "sort_order": 1},
+            {"cellar_id": 1, "name": "01 Main", "location_type": "onsite", "sort_order": 1},
         ],
         "provider": [
             {"provider_id": 1, "name": "Wine Shop"},
@@ -1053,8 +1058,8 @@ class TestSyncLookupEntities:
         _seed_full(tmp_path)
         ents = _build_new_entities(
             cellar=[
-                {"cellar_id": 1, "name": "01 Main", "sort_order": 1},
-                {"cellar_id": 2, "name": "02 Backup", "sort_order": 2},
+                {"cellar_id": 1, "name": "01 Main", "location_type": "onsite", "sort_order": 1},
+                {"cellar_id": 2, "name": "02 Backup", "location_type": "onsite", "sort_order": 2},
             ],
         )
         _, changes, _ = sync(ents, tmp_path, 2, _LATER)

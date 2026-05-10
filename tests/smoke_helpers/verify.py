@@ -516,7 +516,9 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
         # Wines with at least one stored bottle (for routing check)
         wines_with_stored = set()
         stored_rows = con.execute(
-            "SELECT DISTINCT wine_id FROM bottle WHERE status = 'stored' AND NOT is_in_transit"
+            "SELECT DISTINCT b.wine_id FROM bottle b"
+            " LEFT JOIN cellar c ON b.cellar_id = c.cellar_id"
+            " WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') != 'in_transit'"
         ).fetchall()
         for r in stored_rows:
             wines_with_stored.add(r[0])

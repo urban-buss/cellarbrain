@@ -221,7 +221,7 @@ Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Creden
 | `heartbeat_interval` | `int` | `10` | Print a heartbeat to stdout every N polls. 0 = disabled |
 | `imap_timeout` | `int` | `60` | Socket timeout (seconds) for IMAP operations. Prevents indefinite hangs on stale connections |
 | `reaper_enabled` | `bool` | `True` | Enable automatic cleanup of orphan/stale messages |
-| `stale_threshold` | `int` | `0` | Seconds after which incomplete-batch messages are reaped. `0` = auto (`batch_window + poll_interval`) |
+| `stale_threshold` | `int` | `0` | Seconds after which incomplete-batch messages are reaped. `0` = auto (`batch_window * 2`) |
 | `dedup_strategy` | `str` | `"latest"` | How to handle duplicate filenames: `"latest"` (keep newest) or `"none"` (disabled) |
 | `dead_letter_folder` | `str` | `""` | IMAP folder to move reaped messages into. Empty = mark as read instead |
 
@@ -251,7 +251,7 @@ etl_timeout = 600
 max_backoff_interval = 300
 max_attachment_bytes = 10485760
 reaper_enabled = true
-stale_threshold = 0          # auto = batch_window + poll_interval (360s with defaults)
+stale_threshold = 0          # auto = batch_window * 2 (600s with defaults)
 dedup_strategy = "latest"
 dead_letter_folder = ""      # empty = mark as read; set a folder to preserve orphans
 ```
