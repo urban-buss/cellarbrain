@@ -6,14 +6,19 @@ import pyarrow.parquet as pq
 import pytest
 
 from cellarbrain.writer import (
+    SCHEMA_VERSION_SIDECAR,
     SCHEMAS,
     append_parquet,
     append_partitioned_parquet,
+    current_schema_fingerprint,
     read_parquet_rows,
     read_partitioned_parquet_rows,
+    read_schema_version_sidecar,
+    schema_version_is_current,
     write_all,
     write_parquet,
     write_partitioned_parquet,
+    write_schema_version_sidecar,
 )
 
 _NOW = datetime(2025, 1, 1, 0, 0, 0)
@@ -332,3 +337,65 @@ class TestWriterSchemaErrors:
         ]
         with pytest.raises(ValueError, match=r"row 1.*winery_id"):
             write_parquet("winery", rows, tmp_path)
+
+
+class TestSchemaVersionSidecar:
+    def test_current_fingerprint_is_stable(self):
+        assert current_schema_fingerprint() == current_schema_fingerprint()
+
+    def test_fingerprint_is_64_char_hex(self):
+        fp = current_schema_fingerprint()
+        assert len(fp) == 64
+        int(fp, 16)  # raises if not hex
+
+    def test_fingerprint_changes_when_schema_changes(self, monkeypatch):
+        import pyarrow as pa
+
+        from cellarbrain import writer as w
+
+        original_fp = current_schema_fingerprint()
+        modified = dict(SCHEMAS)
+        modified["winery"] = pa.schema(
+            [
+                ("winery_id", pa.int32(), False),
+                ("name", pa.string(), False),
+                ("new_column", pa.string(), True),
+                ("etl_run_id", pa.int32(), False),
+                ("updated_at", pa.timestamp("us"), False),
+            ]
+        )
+        monkeypatch.setattr(w, "SCHEMAS", modified)
+        assert current_schema_fingerprint() != original_fp
+
+    def test_write_and_read_sidecar_roundtrip(self, tmp_path):
+        path = write_schema_version_sidecar(tmp_path)
+        assert path == tmp_path / SCHEMA_VERSION_SIDECAR
+        assert path.exists()
+        payload = read_schema_version_sidecar(tmp_path)
+        assert payload is not None
+        assert payload["schema_fingerprint"] == current_schema_fingerprint()
+        assert "cellarbrain_version" in payload
+        assert "generated_at" in payload
+
+    def test_read_sidecar_returns_none_when_absent(self, tmp_path):
+        assert read_schema_version_sidecar(tmp_path) is None
+
+    def test_read_sidecar_returns_none_when_corrupt(self, tmp_path):
+        (tmp_path / SCHEMA_VERSION_SIDECAR).write_text("not json {{", encoding="utf-8")
+        assert read_schema_version_sidecar(tmp_path) is None
+
+    def test_schema_version_is_current_true_after_write(self, tmp_path):
+        write_schema_version_sidecar(tmp_path)
+        assert schema_version_is_current(tmp_path) is True
+
+    def test_schema_version_is_current_false_when_missing(self, tmp_path):
+        assert schema_version_is_current(tmp_path) is False
+
+    def test_schema_version_is_current_false_when_fingerprint_mismatch(self, tmp_path):
+        import json
+
+        (tmp_path / SCHEMA_VERSION_SIDECAR).write_text(
+            json.dumps({"schema_fingerprint": "deadbeef" * 8}),
+            encoding="utf-8",
+        )
+        assert schema_version_is_current(tmp_path) is False

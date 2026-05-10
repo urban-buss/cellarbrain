@@ -310,8 +310,13 @@ cellarbrain dashboard --port 9000
 ```
 
 Prerequisites:
-- **Observability pages** require a DuckDB log store (created on first `cellarbrain mcp` run)
+- **Observability pages** require a DuckDB log store (created on first `cellarbrain mcp` or `cellarbrain ingest` run)
 - **Cellar pages** require Parquet output from `cellarbrain etl`
+
+> **Running MCP + ingest daemon simultaneously:** Each process writes to its
+> own log file (`cellarbrain-mcp-logs.duckdb` / `cellarbrain-ingest-logs.duckdb`).
+> The dashboard and `cellarbrain logs` merge all files automatically.
+> See [settings-reference.md](settings-reference.md#loggingconfig) for details.
 
 The dashboard is read-only by default. Write tools in the workbench can be enabled via `[dashboard]` config:
 

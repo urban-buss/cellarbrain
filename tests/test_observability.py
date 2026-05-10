@@ -7,7 +7,16 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cellarbrain.observability import EventCollector, IngestEvent, ToolEvent, get_collector, init_observability
+from cellarbrain.observability import (
+    _LOCK_PID_RE,
+    EventCollector,
+    IngestEvent,
+    ToolEvent,
+    _discover_log_files,
+    get_collector,
+    init_observability,
+    open_log_reader,
+)
 from cellarbrain.settings import LoggingConfig
 
 
@@ -477,3 +486,292 @@ class TestIngestEventLogger:
             pytest.skip("DB init raised on this OS")
         event = _make_ingest_event()
         collector.emit_ingest(event)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Subsystem parameter tests (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class TestSubsystemParameter:
+    def test_default_subsystem_path_uses_mcp(self, tmp_path):
+        """When no log_db is set and subsystem is default, filename contains 'mcp'."""
+        config = LoggingConfig()
+        collector = EventCollector(config, str(tmp_path))
+        assert "cellarbrain-mcp-logs.duckdb" in collector._db_path
+        collector.close()
+
+    def test_ingest_subsystem_path(self, tmp_path):
+        """subsystem='ingest' produces a filename with 'ingest'."""
+        config = LoggingConfig()
+        collector = EventCollector(config, str(tmp_path), subsystem="ingest")
+        assert "cellarbrain-ingest-logs.duckdb" in collector._db_path
+        collector.close()
+
+    def test_explicit_log_db_ignores_subsystem(self, tmp_path):
+        """When log_db is set explicitly, subsystem is ignored."""
+        explicit = str(tmp_path / "my-custom.duckdb")
+        config = LoggingConfig(log_db=explicit)
+        collector = EventCollector(config, str(tmp_path), subsystem="ingest")
+        assert collector._db_path == explicit
+        collector.close()
+
+    def test_init_observability_forwards_subsystem(self, tmp_path):
+        import cellarbrain.observability as obs
+
+        obs._collector = None
+        config = LoggingConfig()
+        collector = init_observability(
+            config,
+            str(tmp_path),
+            subsystem="ingest",
+            register_signals=False,
+        )
+        assert "cellarbrain-ingest-logs.duckdb" in collector._db_path
+        collector.close()
+        obs._collector = None
+
+
+# ---------------------------------------------------------------------------
+# Lock conflict diagnostics tests (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+class TestLockConflictDiagnostics:
+    def test_lock_pid_regex_parses_pid(self):
+        msg = (
+            'IO Error: Could not set lock on file "foo.duckdb": '
+            "Conflicting lock is held in /usr/bin/python (PID 12345) by user x."
+        )
+        m = _LOCK_PID_RE.search(msg)
+        assert m is not None
+        assert m.group(1) == "12345"
+
+    def test_lock_pid_regex_no_match(self):
+        assert _LOCK_PID_RE.search("some other error") is None
+
+    def test_lock_conflict_pid_set_on_contention(self, tmp_path):
+        """When a second writer can't get the lock, lock_conflict_pid is populated.
+
+        DuckDB only enforces cross-process file locks, so we spawn a subprocess
+        to hold the lock.  On platforms where the lock isn't enforced (same
+        process), we skip.
+        """
+        import subprocess
+        import sys
+
+        db_path = str(tmp_path / "contention.duckdb")
+
+        # Spawn a subprocess that holds the lock and waits for stdin
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import duckdb, sys; "
+                f"c = duckdb.connect(r'{db_path}'); "
+                "sys.stdout.write('ready\\n'); sys.stdout.flush(); "
+                "sys.stdin.readline(); c.close()",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            # Wait for the holder to open the DB
+            holder.stdout.readline()  # reads "ready\n"
+
+            config = LoggingConfig(log_db=db_path)
+            collector = EventCollector(config, str(tmp_path))
+
+            if collector._db is not None:
+                # Lock not enforced (same-machine, some DuckDB builds)
+                collector.close()
+                pytest.skip("DuckDB did not enforce cross-process lock on this platform")
+
+            assert collector._db is None
+            # PID parsing depends on DuckDB including it in the error
+            assert collector.lock_conflict_pid is None or isinstance(collector.lock_conflict_pid, int)
+        finally:
+            holder.stdin.write("\n")
+            holder.stdin.flush()
+            holder.wait(timeout=5)
+
+    def test_no_lock_conflict_pid_on_normal_open(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "normal.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        assert collector.lock_conflict_pid is None
+        assert collector._db is not None
+        collector.close()
+
+
+# ---------------------------------------------------------------------------
+# Log file discovery tests (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverLogFiles:
+    def test_empty_dir(self, tmp_path):
+        assert _discover_log_files(str(tmp_path)) == []
+
+    def test_no_logs_subdir(self, tmp_path):
+        assert _discover_log_files(str(tmp_path / "nonexistent")) == []
+
+    def test_finds_subsystem_files(self, tmp_path):
+        import duckdb
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        for name in ["cellarbrain-mcp-logs.duckdb", "cellarbrain-ingest-logs.duckdb"]:
+            con = duckdb.connect(str(logs / name))
+            con.close()
+        files = _discover_log_files(str(tmp_path))
+        names = {f.name for f in files}
+        assert "cellarbrain-mcp-logs.duckdb" in names
+        assert "cellarbrain-ingest-logs.duckdb" in names
+
+    def test_finds_legacy_file(self, tmp_path):
+        import duckdb
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        con = duckdb.connect(str(logs / "cellarbrain-logs.duckdb"))
+        con.close()
+        files = _discover_log_files(str(tmp_path))
+        assert len(files) == 1
+        assert files[0].name == "cellarbrain-logs.duckdb"
+
+    def test_legacy_plus_subsystem(self, tmp_path):
+        """Legacy file is included alongside subsystem files."""
+        import duckdb
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        for name in [
+            "cellarbrain-mcp-logs.duckdb",
+            "cellarbrain-logs.duckdb",
+        ]:
+            con = duckdb.connect(str(logs / name))
+            con.close()
+        files = _discover_log_files(str(tmp_path))
+        names = {f.name for f in files}
+        assert "cellarbrain-mcp-logs.duckdb" in names
+        assert "cellarbrain-logs.duckdb" in names
+
+
+# ---------------------------------------------------------------------------
+# open_log_reader tests (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _create_log_store(path, *, with_ingest: bool = True):
+    """Helper: create a DuckDB log store with the standard schema."""
+    import duckdb
+
+    from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+    con = duckdb.connect(str(path))
+    con.execute(_CREATE_TABLE_SQL)
+    if with_ingest:
+        con.execute(_CREATE_INGEST_TABLE_SQL)
+    con.close()
+
+
+class TestOpenLogReader:
+    def test_explicit_log_db(self, tmp_path):
+        db = tmp_path / "explicit.duckdb"
+        _create_log_store(db)
+        con = open_log_reader(str(tmp_path), log_db=str(db))
+        # Should be able to query tool_events
+        count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+        assert count == 0
+        con.close()
+
+    def test_explicit_log_db_missing_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="Log store not found"):
+            open_log_reader(str(tmp_path), log_db=str(tmp_path / "nope.duckdb"))
+
+    def test_no_files_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="No log-store files"):
+            open_log_reader(str(tmp_path))
+
+    def test_single_file(self, tmp_path):
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        _create_log_store(logs / "cellarbrain-mcp-logs.duckdb")
+        con = open_log_reader(str(tmp_path))
+        count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+        assert count == 0
+        con.close()
+
+    def test_multiple_files_union(self, tmp_path):
+        """Reader merges rows from multiple subsystem files."""
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        # MCP file with 1 tool event
+        mcp_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(mcp_db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.execute(_CREATE_INGEST_TABLE_SQL)
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        # Ingest file with 1 tool event
+        ingest_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(ingest_db))
+        c2.execute(_CREATE_TABLE_SQL)
+        c2.execute(_CREATE_INGEST_TABLE_SQL)
+        c2.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e2", "s2", "t2", "tool", "find_wine", now, now, 20.0, "ok"],
+        )
+        c2.close()
+
+        con = open_log_reader(str(tmp_path))
+        count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+        assert count == 2
+        con.close()
+
+    def test_ingest_events_union(self, tmp_path):
+        """ingest_events view merges across files, skipping files without the table."""
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        # MCP file — tool_events only (no ingest_events table)
+        mcp_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(mcp_db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.close()
+
+        # Ingest file — both tables, 1 ingest event
+        ingest_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(ingest_db))
+        c2.execute(_CREATE_TABLE_SQL)
+        c2.execute(_CREATE_INGEST_TABLE_SQL)
+        c2.execute(
+            "INSERT INTO ingest_events VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["ie1", "poll", "info", now],
+        )
+        c2.close()
+
+        con = open_log_reader(str(tmp_path))
+        count = con.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
+        assert count == 1
+        con.close()

@@ -383,6 +383,14 @@ class TestErrorHandling:
         captured = capsys.readouterr()
         assert "Error:" in captured.err
 
+    def test_data_stale_error_shows_doctor_hint(self, tmp_path, capsys):
+        """DataStaleError on stderr should be followed by a doctor hint."""
+        with pytest.raises(SystemExit):
+            main(["-d", str(tmp_path), "stats"])
+        captured = capsys.readouterr()
+        assert "Error:" in captured.err
+        assert "cellarbrain doctor" in captured.err
+
     def test_dossier_missing_wine_reports_clean_error(self, data_dir, capsys):
         """WineNotFoundError for a nonexistent wine_id is caught cleanly."""
         with pytest.raises(SystemExit) as exc_info:

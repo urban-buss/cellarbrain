@@ -113,11 +113,23 @@ def _set_data_dir_env(data_dir, monkeypatch):
 # Use importlib to avoid module-level import issues.
 @pytest.fixture()
 def server():
+    import cellarbrain.observability as obs
     from cellarbrain import mcp_server
+
+    # Reset the global collector to prevent stale MagicMock-based collectors
+    # leaking from daemon tests (which use MagicMock settings).
+    if obs._collector is not None:
+        obs._collector.close()
+        obs._collector = None
 
     mcp_server._mcp_settings = None  # force re-read from env
     mcp_server.invalidate_connections()
-    return mcp_server
+    yield mcp_server
+
+    # Cleanup: close and reset collector to avoid cross-test pollution
+    if obs._collector is not None:
+        obs._collector.close()
+        obs._collector = None
 
 
 # ---------------------------------------------------------------------------

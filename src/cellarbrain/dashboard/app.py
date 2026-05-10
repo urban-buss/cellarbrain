@@ -59,8 +59,25 @@ def _wants_partial(request: Request) -> bool:
 
 @asynccontextmanager
 async def _lifespan(app: Starlette):
-    # Observability log store
-    app.state.log_db = duckdb.connect(app.state.log_db_path, read_only=True)
+    # Observability log store — use open_log_reader for multi-file support
+    from cellarbrain.observability import open_log_reader
+
+    try:
+        app.state.log_db = open_log_reader(
+            app.state.data_dir or ".",
+            app.state.log_db_path,
+        )
+    except FileNotFoundError:
+        # No log files yet — open an empty in-memory DB so pages don't crash
+        app.state.log_db = duckdb.connect(":memory:")
+        app.state.log_db.execute(
+            "CREATE TABLE tool_events (event_id VARCHAR, session_id VARCHAR, "
+            "turn_id VARCHAR, event_type VARCHAR, name VARCHAR, "
+            "started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ, duration_ms DOUBLE, "
+            "status VARCHAR, request_id VARCHAR, parameters VARCHAR, "
+            "error_type VARCHAR, error_message VARCHAR, result_size INTEGER, "
+            "agent_name VARCHAR, trace_id VARCHAR, client_id VARCHAR)"
+        )
 
     # Cellar data (Parquet-backed agent connection)
     cellar_con = None
@@ -812,13 +829,21 @@ async def api_top_tools(request: Request) -> JSONResponse:
 
 async def api_refresh(request: Request) -> JSONResponse:
     """Reopen the DuckDB log connection as a manual refresh fallback."""
+    from cellarbrain.observability import open_log_reader
+
     app = request.app
     async with app.state.db_lock:
         try:
             app.state.log_db.close()
         except Exception:
             pass
-        app.state.log_db = duckdb.connect(app.state.log_db_path, read_only=True)
+        try:
+            app.state.log_db = open_log_reader(
+                app.state.data_dir or ".",
+                app.state.log_db_path,
+            )
+        except FileNotFoundError:
+            app.state.log_db = duckdb.connect(":memory:")
     return JSONResponse({"status": "ok"})
 
 
@@ -1034,7 +1059,7 @@ async def workbench_batch(request: Request) -> HTMLResponse:
 
 
 def build_app(
-    log_db_path: str,
+    log_db_path: str | None,
     data_dir: str | None = None,
     dashboard_config: DashboardConfig | None = None,
 ) -> Starlette:

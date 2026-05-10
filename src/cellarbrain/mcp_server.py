@@ -84,7 +84,19 @@ def _load_mcp_settings() -> Settings:
         )
         from .observability import init_observability
 
-        init_observability(_mcp_settings.logging, _mcp_settings.paths.data_dir)
+        collector = init_observability(
+            _mcp_settings.logging,
+            _mcp_settings.paths.data_dir,
+            subsystem="mcp",
+        )
+        if collector.lock_conflict_pid is not None:
+            import sys
+
+            print(
+                f"WARNING: Observability disabled — log store locked by PID {collector.lock_conflict_pid}. "
+                f"Set a separate [logging] log_db in cellarbrain.toml to fix.",
+                file=sys.stderr,
+            )
     return _mcp_settings
 
 

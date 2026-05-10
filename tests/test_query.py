@@ -233,6 +233,74 @@ class TestGetConnection:
 
 
 # ---------------------------------------------------------------------------
+# TestSchemaCompatibility — guards against stale Parquet after upgrade
+# ---------------------------------------------------------------------------
+
+
+def _rewrite_cellar_with_old_schema(data_dir) -> None:
+    """Rewrite cellar.parquet without the ``location_type`` column (v0.2.9 schema)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.table(
+        {
+            "cellar_id": pa.array([1], type=pa.int32()),
+            "name": pa.array(["Main"], type=pa.string()),
+            "sort_order": pa.array([0], type=pa.int8()),
+            "etl_run_id": pa.array([1], type=pa.int32()),
+            "updated_at": pa.array([datetime(2025, 1, 1)], type=pa.timestamp("us")),
+        }
+    )
+    pq.write_table(table, data_dir / "cellar.parquet")
+    # Sidecar (if any) is now stale — remove so the slow path runs.
+    sidecar = data_dir / writer.SCHEMA_VERSION_SIDECAR
+    if sidecar.exists():
+        sidecar.unlink()
+
+
+class TestSchemaCompatibility:
+    def test_missing_column_raises_data_stale_error(self, data_dir):
+        _rewrite_cellar_with_old_schema(data_dir)
+        with pytest.raises(DataStaleError) as exc_info:
+            get_agent_connection(data_dir)
+        msg = str(exc_info.value)
+        assert "cellar.parquet" in msg
+        assert "location_type" in msg
+        assert "cellarbrain etl" in msg
+
+    def test_missing_column_raises_via_get_connection(self, data_dir):
+        _rewrite_cellar_with_old_schema(data_dir)
+        with pytest.raises(DataStaleError, match="location_type"):
+            get_connection(data_dir)
+
+    def test_fast_path_skips_parquet_reads_when_sidecar_current(self, data_dir, monkeypatch):
+        # Write a current sidecar so the fast path applies.
+        writer.write_schema_version_sidecar(data_dir)
+
+        # Track whether pq.read_schema is called.
+        import pyarrow.parquet as pq
+
+        calls = {"n": 0}
+        original = pq.read_schema
+
+        def _spy(path, *a, **kw):
+            calls["n"] += 1
+            return original(path, *a, **kw)
+
+        monkeypatch.setattr(pq, "read_schema", _spy)
+        get_agent_connection(data_dir)
+        assert calls["n"] == 0  # fast path hit — no schema reads
+
+    def test_slow_path_runs_when_sidecar_missing(self, data_dir):
+        # Sanity — without a sidecar, the slow path must succeed for valid data.
+        sidecar = data_dir / writer.SCHEMA_VERSION_SIDECAR
+        if sidecar.exists():
+            sidecar.unlink()
+        con = get_agent_connection(data_dir)
+        assert con is not None
+
+
+# ---------------------------------------------------------------------------
 # TestAgentConnection
 # ---------------------------------------------------------------------------
 

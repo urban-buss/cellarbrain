@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def create_app(
-    log_db_path: str,
+    log_db_path: str | None,
     data_dir: str | None = None,
     dashboard_config: DashboardConfig | None = None,
 ) -> Starlette:
@@ -20,7 +20,8 @@ def create_app(
     Parameters
     ----------
     log_db_path:
-        Absolute path to the DuckDB observability log store.
+        Explicit path to a single DuckDB log store, or ``None`` to
+        auto-discover all subsystem log files under ``data_dir/logs/``.
     data_dir:
         Path to the cellarbrain data directory (Parquet files, dossiers).
         Required for cellar browser pages (Phase 2). If ``None``, cellar
