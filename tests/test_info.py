@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -173,8 +174,12 @@ class TestBuildMcpConfigSnippet:
         assert "mcpServers" in snippet
         server = snippet["mcpServers"]["cellarbrain"]
         assert server["command"] == "/usr/bin/cellarbrain"
+        assert "-d" in server["args"]
         assert "-c" in server["args"]
         assert "mcp" in server["args"]
+        # -d value must be an absolute path
+        d_idx = server["args"].index("-d")
+        assert pathlib.Path(server["args"][d_idx + 1]).is_absolute()
 
     def test_without_config_source(self, tmp_path):
         settings = Settings(
@@ -184,7 +189,12 @@ class TestBuildMcpConfigSnippet:
         snippet = _build_mcp_config_snippet(settings, None)
         server = snippet["mcpServers"]["cellarbrain"]
         assert server["command"] == "cellarbrain"
-        assert server["args"] == ["mcp"]
+        assert "-d" in server["args"]
+        assert "mcp" in server["args"]
+        # Should include absolute data_dir then mcp
+        d_idx = server["args"].index("-d")
+        assert server["args"][d_idx + 1] == str(tmp_path.resolve())
+        assert server["args"][-1] == "mcp"
 
 
 # ---------------------------------------------------------------------------

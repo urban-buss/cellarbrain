@@ -18,7 +18,7 @@ cellarbrain info --mcp-config
 
 ```bash
 # Services running?
-launchctl list | grep com.cellarbrain
+cellarbrain service status
 
 # Recent errors?
 cellarbrain logs --errors --since 24
@@ -34,7 +34,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8017/
 
 ```bash
 # 1. Check services are running
-launchctl list | grep com.cellarbrain
+cellarbrain service status
 
 # 2. Check for recent errors
 cellarbrain logs --errors --since 24
@@ -69,7 +69,7 @@ echo ""
 
 # Services
 echo "--- Services ---"
-launchctl list 2>/dev/null | grep com.cellarbrain || echo "No launchd services found"
+cellarbrain service status 2>/dev/null || echo "Service check unavailable"
 echo ""
 
 # Recent errors

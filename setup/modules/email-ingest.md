@@ -99,19 +99,20 @@ Stop with Ctrl+C.
 ### launchd Service (Background, Always-On)
 
 ```bash
-cp setup/reference/launchd-template.md ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
-# Edit paths in the plist, then:
-launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
+cellarbrain service install
 ```
+
+This auto-generates a correct plist from your current environment and loads it via `launchctl`. The service starts at login and restarts on exit.
 
 Manage:
 
 ```bash
-launchctl list | grep cellarbrain          # check status
-launchctl unload ~/Library/LaunchAgents/com.cellarbrain.ingest.plist  # stop
+cellarbrain service status      # check if running
+cellarbrain service logs -f     # tail stdout logs
+cellarbrain service uninstall   # stop and remove
 ```
 
-See [launchd template](../reference/launchd-template.md) for the full plist.
+> **Manual alternative:** See [launchd template](../reference/launchd-template.md) for the raw plist if you prefer manual setup.
 
 ## Next Steps
 

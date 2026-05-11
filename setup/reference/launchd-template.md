@@ -1,6 +1,9 @@
 # launchd Template
 
-macOS launchd plist for running the email ingestion daemon as a persistent background service.
+> **Recommended:** Use `cellarbrain service install` instead of manual plist setup.
+> It auto-generates a correct plist from your environment. See [CLI reference](../../docs/cli-reference.md#cellarbrain-service).
+
+macOS launchd plist for running the email ingestion daemon as a persistent background service (manual alternative).
 
 ## Template
 

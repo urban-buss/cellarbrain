@@ -411,16 +411,80 @@ cellarbrain ingest --reap-orphans --dry-run
 
 ### macOS Deployment
 
-For always-on operation, deploy as a `launchd` user agent. A template plist is provided — see `setup/reference/launchd-template.md`. To install:
+For always-on operation, deploy as a `launchd` user agent:
 
 ```bash
-# Copy and edit the template (see setup/reference/launchd-template.md for the full plist)
-cp com.cellarbrain.ingest.plist ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
-# Edit paths in the plist, then load:
-launchctl load ~/Library/LaunchAgents/com.cellarbrain.ingest.plist
+cellarbrain service install
 ```
 
+This auto-generates a correct plist from your current environment (entry point, config path, data directory) and loads it via `launchctl`. See [`cellarbrain service`](#cellarbrain-service) below for full details.
+
+<details>
+<summary>Manual alternative (advanced)</summary>
+
+A template plist is provided in `setup/reference/launchd-template.md`. Copy it to `~/Library/LaunchAgents/`, edit the three placeholder paths, then `launchctl load` it manually.
+
+</details>
+
 See also the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for background.
+
+---
+
+## `cellarbrain service`
+
+Manage macOS `launchd` services for cellarbrain daemons (ingest, dashboard). Automatically generates plist files from the running environment — no manual path editing required.
+
+> **macOS only.** Exits with an error on other platforms.
+
+### `cellarbrain service install`
+
+```bash
+cellarbrain service install              # generate plist, load service
+cellarbrain service install --dry-run    # print generated plist to stdout
+cellarbrain service install --force      # overwrite existing plist
+cellarbrain service install --no-start   # write plist without loading
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the generated plist XML to stdout without writing or loading |
+| `--force` | Overwrite an existing plist file (unloads first) |
+| `--no-start` | Write the plist but skip `launchctl load` |
+
+The generated plist uses:
+- **Entry point**: resolved from `shutil.which("cellarbrain")`
+- **Config**: from the currently resolved `cellarbrain.toml`
+- **Working directory**: parent of the resolved data directory
+- **Logs**: `~/Library/Logs/cellarbrain/ingest-{stdout,stderr}.log`
+
+### `cellarbrain service uninstall`
+
+```bash
+cellarbrain service uninstall
+```
+
+Unloads the service via `launchctl unload` and removes the plist file from `~/Library/LaunchAgents/`.
+
+### `cellarbrain service status`
+
+```bash
+cellarbrain service status
+```
+
+Shows whether the service plist is installed, loaded, running (with PID), and warns if the entry point has changed since install (e.g. after a `pip install --upgrade`).
+
+### `cellarbrain service logs`
+
+```bash
+cellarbrain service logs              # last 50 lines of stdout
+cellarbrain service logs --follow     # tail -f stdout
+cellarbrain service logs --stderr     # show stderr log instead
+```
+
+| Flag | Description |
+|------|-------------|
+| `--follow`, `-f` | Follow log output (like `tail -f`) |
+| `--stderr` | Show the stderr log instead of stdout |
 
 ---
 

@@ -693,6 +693,19 @@ def _subcommand_main(argv: list[str]) -> None:
     )
     skills_parser.add_argument("--force", action="store_true", default=False, help="Overwrite existing skill files")
 
+    # --- service ---
+    svc = sub.add_parser("service", help="Manage macOS launchd services (ingest, dashboard)")
+    svc_sub = svc.add_subparsers(dest="service_command")
+    svc_install = svc_sub.add_parser("install", help="Install and start launchd services")
+    svc_install.add_argument("--force", action="store_true", help="Overwrite existing plist files")
+    svc_install.add_argument("--no-start", action="store_true", help="Write plist without loading")
+    svc_install.add_argument("--dry-run", action="store_true", help="Print generated plist to stdout")
+    svc_sub.add_parser("uninstall", help="Stop and remove launchd services")
+    svc_sub.add_parser("status", help="Show service status")
+    svc_logs = svc_sub.add_parser("logs", help="Tail service log files")
+    svc_logs.add_argument("--follow", "-f", action="store_true", help="Follow log output")
+    svc_logs.add_argument("--stderr", action="store_true", help="Show stderr instead of stdout")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -759,6 +772,7 @@ def _subcommand_main(argv: list[str]) -> None:
         "doctor": _cmd_doctor,
         "info": _cmd_info,
         "install-skills": _cmd_install_skills,
+        "service": _cmd_service,
     }
     handler = handlers[args.command]
     _run_handler(lambda: handler(args, settings))
@@ -837,9 +851,9 @@ def _cmd_dossier(args: argparse.Namespace, settings: Settings) -> None:
 def _cmd_mcp(args: argparse.Namespace, settings: Settings) -> None:
     import os
 
-    os.environ["CELLARBRAIN_DATA_DIR"] = settings.paths.data_dir
+    os.environ["CELLARBRAIN_DATA_DIR"] = str(pathlib.Path(settings.paths.data_dir).resolve())
     if args.config:
-        os.environ["CELLARBRAIN_CONFIG"] = str(args.config)
+        os.environ["CELLARBRAIN_CONFIG"] = str(pathlib.Path(args.config).resolve())
     from .mcp_server import mcp, warm_sommelier
 
     warm_sommelier()
@@ -1600,6 +1614,102 @@ def _cmd_install_skills(args: argparse.Namespace, settings: Settings) -> None:
             print(f"  {name}")
     else:
         print(f"All skills already present in {target} (use --force to overwrite)")
+
+
+# ---------------------------------------------------------------------------
+# Service management
+# ---------------------------------------------------------------------------
+
+
+def _cmd_service(args: argparse.Namespace, settings: Settings) -> None:
+    """Manage macOS launchd services."""
+    from .service import (
+        ALL_SERVICES,
+        DEFAULT_SERVICES,
+        _resolve_entry_point,
+        generate_plist,
+        get_log_paths,
+        get_status,
+        install_service,
+        plist_to_xml,
+        require_macos,
+        uninstall_service,
+    )
+
+    require_macos()
+
+    cmd = args.service_command
+    if cmd is None:
+        print("Usage: cellarbrain service {install,uninstall,status,logs}")
+        sys.exit(1)
+
+    if cmd == "install":
+        entry_point = _resolve_entry_point()
+        config_path = settings.config_source
+        working_dir = str(pathlib.Path(settings.paths.data_dir).resolve().parent)
+
+        for name in DEFAULT_SERVICES:
+            svc_def = ALL_SERVICES[name]
+            plist = generate_plist(
+                entry_point=entry_point,
+                config_path=config_path,
+                working_dir=working_dir,
+                service=svc_def,
+            )
+
+            if args.dry_run:
+                print(f"# --- {svc_def.label} ---")
+                sys.stdout.buffer.write(plist_to_xml(plist))
+                print()
+                continue
+
+            try:
+                msg = install_service(
+                    plist,
+                    service=svc_def,
+                    force=args.force,
+                    start=not args.no_start,
+                )
+                print(msg)
+            except FileExistsError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+    elif cmd == "uninstall":
+        for name in DEFAULT_SERVICES:
+            svc_def = ALL_SERVICES[name]
+            msg = uninstall_service(service=svc_def)
+            print(msg)
+
+    elif cmd == "status":
+        for i, name in enumerate(DEFAULT_SERVICES):
+            if i > 0:
+                print()
+            svc_def = ALL_SERVICES[name]
+            print(get_status(service=svc_def))
+
+    elif cmd == "logs":
+        svc_def = ALL_SERVICES[DEFAULT_SERVICES[0]]
+        stdout_path, stderr_path = get_log_paths(service=svc_def)
+        log_path = stderr_path if args.stderr else stdout_path
+
+        if not log_path.exists():
+            print(f"Log file not found: {log_path}")
+            sys.exit(1)
+
+        import subprocess
+
+        tail_args = ["tail"]
+        if args.follow:
+            tail_args.append("-f")
+        else:
+            tail_args.extend(["-n", "50"])
+        tail_args.append(str(log_path))
+
+        try:
+            subprocess.run(tail_args)
+        except KeyboardInterrupt:
+            pass
 
 
 # ---------------------------------------------------------------------------
