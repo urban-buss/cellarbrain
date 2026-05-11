@@ -21,6 +21,7 @@ from cellarbrain.doctor import (
     _check_parquet_existence,
     _check_referential_integrity,
     _check_schema_conformance,
+    _check_service_health,
     _check_sommelier_status,
     run_doctor,
 )
@@ -565,6 +566,39 @@ class TestCheckBackupRecency:
 
         assert report.checks[0].severity == Severity.WARN
         assert "No backups" in report.checks[0].message
+
+
+# ---------------------------------------------------------------------------
+# Service health check
+# ---------------------------------------------------------------------------
+
+
+class TestCheckServiceHealth:
+    def test_skipped_on_non_macos(self, monkeypatch):
+        import platform as _platform
+
+        monkeypatch.setattr(_platform, "system", lambda: "Windows")
+        report = DoctorReport()
+        _check_service_health(report)
+        assert report.checks[0].severity == Severity.OK
+        assert "skipped" in report.checks[0].message.lower()
+
+    def test_not_installed(self, monkeypatch, tmp_path):
+        import platform as _platform
+
+        monkeypatch.setattr(_platform, "system", lambda: "Darwin")
+        # Patch plist_path to a non-existent path
+        from cellarbrain import service as _service_mod
+
+        monkeypatch.setattr(
+            _service_mod,
+            "LAUNCH_AGENTS_DIR",
+            tmp_path / "LaunchAgents",
+        )
+        report = DoctorReport()
+        _check_service_health(report)
+        assert report.checks[0].severity == Severity.INFO
+        assert "not installed" in report.checks[0].message.lower()
 
     def test_recent_backup_ok(self, tmp_path):
         settings = _minimal_settings(tmp_path)

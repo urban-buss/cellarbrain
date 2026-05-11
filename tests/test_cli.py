@@ -813,3 +813,37 @@ class TestInfoSubcommand:
         main(["-d", str(data_dir), "info", "--modules"])
         captured = capsys.readouterr()
         assert "Core:" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
+
+class TestServiceCLI:
+    def test_service_help(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["service", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "install" in captured.out
+        assert "uninstall" in captured.out
+        assert "status" in captured.out
+
+    def test_service_install_dry_run_on_macos(self, data_dir, capsys, monkeypatch):
+        monkeypatch.setattr("cellarbrain.service.platform.system", lambda: "Darwin")
+        monkeypatch.setattr("cellarbrain.service.shutil.which", lambda _: "/venv/bin/cellarbrain")
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        main(["-d", str(data_dir), "service", "install", "--dry-run"])
+        captured = capsys.readouterr()
+        assert "com.cellarbrain.ingest" in captured.out
+        assert "<plist" in captured.out
+        assert "cellarbrain" in captured.out
+
+    def test_service_rejects_non_macos(self, data_dir, monkeypatch):
+        monkeypatch.setattr("cellarbrain.service.platform.system", lambda: "Windows")
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        with pytest.raises(SystemExit, match="only supported on macOS"):
+            main(["-d", str(data_dir), "service", "status"])

@@ -212,8 +212,13 @@ def _build_mcp_config_snippet(
     """Build a Claude Desktop / OpenClaw MCP config JSON snippet."""
     command = entry_point or "cellarbrain"
     args: list[str] = []
+    # Always include -d with absolute data_dir so the config works
+    # regardless of the MCP client's working directory.
+    data_dir = str(pathlib.Path(settings.paths.data_dir).resolve())
+    args.extend(["-d", data_dir])
     if settings.config_source:
-        args.extend(["-c", settings.config_source])
+        config_abs = str(pathlib.Path(settings.config_source).resolve())
+        args.extend(["-c", config_abs])
     args.append("mcp")
 
     return {

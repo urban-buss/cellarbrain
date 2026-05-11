@@ -98,6 +98,7 @@ def run_doctor(settings: Settings, *, checks: list[str] | None = None) -> Doctor
         "backup": (_check_backup_recency, (settings, report)),
         "disk": (_check_disk_usage, (data_dir, settings, report)),
         "integrity": (_check_referential_integrity, (data_dir, report)),
+        "service": (_check_service_health, (report,)),
     }
 
     selected = checks if checks else list(all_checks.keys())
@@ -425,6 +426,97 @@ def _check_disk_usage(
             f"Logs: {logs_size / 1024 / 1024:.1f} MB"
         ),
     )
+
+
+def _check_service_health(report: DoctorReport) -> None:
+    """Check macOS launchd service status (skipped on non-macOS)."""
+    import platform
+
+    if platform.system() != "Darwin":
+        report.add(
+            "service",
+            Severity.OK,
+            "Service check skipped (not macOS)",
+        )
+        return
+
+    from .service import ALL_SERVICES, DEFAULT_SERVICES, _resolve_entry_point
+
+    for name in DEFAULT_SERVICES:
+        svc = ALL_SERVICES[name]
+        plist_path = svc.plist_path
+
+        if not plist_path.exists():
+            report.add(
+                f"service_{name}",
+                Severity.INFO,
+                f"{svc.label}: plist not installed",
+                remedy=f"Run `cellarbrain service install` to set up the {name} service.",
+            )
+            continue
+
+        import plistlib
+        import subprocess
+
+        # Check if loaded
+        result = subprocess.run(
+            ["launchctl", "list"],
+            capture_output=True,
+            text=True,
+        )
+        loaded = False
+        running = False
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 3 and parts[2] == svc.label:
+                    loaded = True
+                    running = parts[0] != "-"
+                    break
+
+        if not loaded:
+            report.add(
+                f"service_{name}",
+                Severity.WARN,
+                f"{svc.label}: plist exists but service not loaded",
+                remedy="Run `cellarbrain service install --force` to reload.",
+            )
+            continue
+
+        if not running:
+            report.add(
+                f"service_{name}",
+                Severity.WARN,
+                f"{svc.label}: loaded but not running",
+                remedy="Check logs with `cellarbrain service logs --stderr`.",
+            )
+            continue
+
+        # Stale entry-point check
+        stale = False
+        try:
+            with open(plist_path, "rb") as f:
+                plist_data = plistlib.load(f)
+            plist_ep = plist_data.get("ProgramArguments", [None])[0]
+            current_ep = _resolve_entry_point()
+            if plist_ep and plist_ep != current_ep:
+                stale = True
+        except Exception:
+            pass
+
+        if stale:
+            report.add(
+                f"service_{name}",
+                Severity.WARN,
+                f"{svc.label}: running but entry point is stale",
+                remedy="Run `cellarbrain service install --force` to update.",
+            )
+        else:
+            report.add(
+                f"service_{name}",
+                Severity.OK,
+                f"{svc.label}: running",
+            )
 
 
 def _check_referential_integrity(data_dir: pathlib.Path, report: DoctorReport) -> None:

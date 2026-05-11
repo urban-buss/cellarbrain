@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 import textwrap
 
 import pytest
@@ -149,14 +150,86 @@ class TestLoadNoFile:
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings()
-        assert s == Settings()
+        # Relative paths are resolved against CWD when no config file exists
+        assert s.paths.data_dir == str(tmp_path / "output")
+        assert s.paths.raw_dir == str(tmp_path / "raw")
+        assert s.config_source is None
 
     def test_explicit_none_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings(None)
-        assert s == Settings()
+        assert s.paths.data_dir == str(tmp_path / "output")
+        assert s.config_source is None
+
+
+# ---------------------------------------------------------------------------
+# TestPathAnchoring — relative paths resolved against config file location
+# ---------------------------------------------------------------------------
+
+
+class TestPathAnchoring:
+    def test_data_dir_anchored_to_config_parent(self, tmp_path):
+        """Relative data_dir in TOML resolves against the config file's directory."""
+        subdir = tmp_path / "conf"
+        subdir.mkdir()
+        cfg = subdir / "cellarbrain.toml"
+        cfg.write_text('[paths]\ndata_dir = "data"\n', encoding="utf-8")
+        s = load_settings(cfg)
+        assert s.paths.data_dir == str(subdir / "data")
+
+    def test_absolute_data_dir_unchanged(self, tmp_path):
+        """Absolute data_dir in TOML passes through without modification."""
+        cfg = tmp_path / "cellarbrain.toml"
+        abs_dir = (tmp_path / "abs_data").as_posix()
+        cfg.write_text(f'[paths]\ndata_dir = "{abs_dir}"\n', encoding="utf-8")
+        s = load_settings(cfg)
+        assert pathlib.Path(s.paths.data_dir) == pathlib.Path(abs_dir)
+
+    def test_raw_dir_anchored_to_config_parent(self, tmp_path):
+        """Relative raw_dir resolves against config file location."""
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text('[paths]\nraw_dir = "csv_files"\n', encoding="utf-8")
+        s = load_settings(cfg)
+        assert s.paths.raw_dir == str(tmp_path / "csv_files")
+
+    def test_sommelier_paths_anchored(self, tmp_path):
+        """Sommelier model paths are anchored to config file location."""
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text(
+            textwrap.dedent("""\
+            [sommelier]
+            model_dir = "my_models/sommelier"
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(cfg)
+        assert s.sommelier.model_dir == str(tmp_path / "my_models" / "sommelier")
+
+    def test_backup_dir_anchored(self, tmp_path):
+        """Backup dir is anchored to config file location."""
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text('[backup]\nbackup_dir = "backups"\n', encoding="utf-8")
+        s = load_settings(cfg)
+        assert s.backup.backup_dir == str(tmp_path / "backups")
+
+    def test_no_config_anchors_to_cwd(self, tmp_path, monkeypatch):
+        """Without a config file, relative paths anchor to CWD."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        s = load_settings()
+        assert s.paths.data_dir == str(tmp_path / "output")
+        assert s.sommelier.model_dir == str(tmp_path / "models" / "sommelier" / "model")
+
+    def test_env_data_dir_resolved_to_absolute(self, tmp_path, monkeypatch):
+        """CELLARBRAIN_DATA_DIR env var is also resolved to absolute."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "env_output")
+        s = load_settings()
+        assert s.paths.data_dir == str(tmp_path / "env_output")
 
 
 # ---------------------------------------------------------------------------
@@ -177,10 +250,11 @@ class TestLoadToml:
             encoding="utf-8",
         )
         s = load_settings(cfg)
-        assert s.paths.data_dir == "my_output"
+        # Relative data_dir is resolved against config file's parent directory
+        assert s.paths.data_dir == str(tmp_path / "my_output")
         assert s.query.row_limit == 500
-        # Non-overridden defaults preserved
-        assert s.paths.raw_dir == "raw"
+        # Non-overridden defaults resolved too
+        assert s.paths.raw_dir == str(tmp_path / "raw")
         assert s.query.search_limit == 10
 
     def test_reads_drinking_window(self, tmp_path):
@@ -329,9 +403,10 @@ class TestEnvOverride:
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/custom/data")
         s = load_settings()
-        assert s.paths.data_dir == "/custom/data"
-        # Other path fields untouched
-        assert s.paths.raw_dir == "raw"
+        # Env var path is resolved to absolute
+        assert s.paths.data_dir == str(pathlib.Path("/custom/data").resolve())
+        # Other path fields anchored against CWD (no config file)
+        assert s.paths.raw_dir == str(tmp_path / "raw")
 
     def test_env_overrides_toml_data_dir(self, tmp_path, monkeypatch):
         cfg = tmp_path / "cellarbrain.toml"
@@ -344,7 +419,7 @@ class TestEnvOverride:
         )
         monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/env/output")
         s = load_settings(cfg)
-        assert s.paths.data_dir == "/env/output"
+        assert s.paths.data_dir == str(pathlib.Path("/env/output").resolve())
 
 
 # ---------------------------------------------------------------------------

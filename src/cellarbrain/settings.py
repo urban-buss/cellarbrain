@@ -14,11 +14,14 @@ Precedence (highest → lowest):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import tomllib
 from dataclasses import dataclass, field
 from dataclasses import fields as dataclass_fields
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Sub-config dataclasses
@@ -669,6 +672,60 @@ def _validate_keys(
         )
 
 
+def _anchor(path_str: str, root: pathlib.Path) -> str:
+    """Resolve *path_str* against *root* if it is relative; absolute paths pass through."""
+    p = pathlib.Path(path_str)
+    if p.is_absolute():
+        return path_str
+    return str((root / p).resolve())
+
+
+def _resolve_relative_paths(paths: PathsConfig, config_root: pathlib.Path) -> PathsConfig:
+    """Return a new PathsConfig with data_dir and raw_dir anchored to *config_root*."""
+    return PathsConfig(
+        data_dir=_anchor(paths.data_dir, config_root),
+        raw_dir=_anchor(paths.raw_dir, config_root),
+        wines_subdir=paths.wines_subdir,
+        cellar_subdir=paths.cellar_subdir,
+        archive_subdir=paths.archive_subdir,
+        wines_filename=paths.wines_filename,
+        bottles_filename=paths.bottles_filename,
+        bottles_gone_filename=paths.bottles_gone_filename,
+    )
+
+
+def _resolve_sommelier_paths(cfg: SommelierConfig, config_root: pathlib.Path) -> SommelierConfig:
+    """Return a new SommelierConfig with filesystem paths anchored to *config_root*."""
+    return SommelierConfig(
+        enabled=cfg.enabled,
+        model_dir=_anchor(cfg.model_dir, config_root),
+        base_model=_anchor(cfg.base_model, config_root),
+        food_catalogue=_anchor(cfg.food_catalogue, config_root),
+        pairing_dataset=_anchor(cfg.pairing_dataset, config_root),
+        food_index=_anchor(cfg.food_index, config_root),
+        food_ids=_anchor(cfg.food_ids, config_root),
+        wine_index_dir=cfg.wine_index_dir,
+        default_limit=cfg.default_limit,
+        min_score=cfg.min_score,
+        training_epochs=cfg.training_epochs,
+        training_batch_size=cfg.training_batch_size,
+        warmup_ratio=cfg.warmup_ratio,
+        eval_split=cfg.eval_split,
+        auto_retrain_threshold=cfg.auto_retrain_threshold,
+        auto_food_tags=cfg.auto_food_tags,
+    )
+
+
+def _resolve_backup_paths(cfg: BackupConfig, config_root: pathlib.Path) -> BackupConfig:
+    """Return a new BackupConfig with backup_dir anchored to *config_root*."""
+    return BackupConfig(
+        backup_dir=_anchor(cfg.backup_dir, config_root),
+        max_backups=cfg.max_backups,
+        include_sommelier=cfg.include_sommelier,
+        include_logs=cfg.include_logs,
+    )
+
+
 def _resolve_config_path(
     config_path: str | pathlib.Path | None,
 ) -> pathlib.Path | None:
@@ -697,6 +754,11 @@ def _resolve_config_path(
     if default.exists():
         return default
 
+    logger.warning(
+        "No cellarbrain.toml found in CWD (%s) — using built-in defaults. "
+        "Set CELLARBRAIN_CONFIG or use -c to specify a config file.",
+        pathlib.Path.cwd(),
+    )
     return None
 
 
@@ -959,8 +1021,17 @@ def load_settings(
     if "rates" in currency_raw:
         currency_rates.update(currency_raw["rates"])
 
+    # -- Anchor relative paths to config file location ---------------------
+    # Relative paths in the TOML (e.g. data_dir = "output") are resolved
+    # against the config file's parent directory so that the config is
+    # self-contained regardless of the process CWD.
+    config_root = resolved.parent.resolve() if resolved is not None else pathlib.Path.cwd().resolve()
+    paths = _resolve_relative_paths(paths, config_root)
+    sommelier = _resolve_sommelier_paths(sommelier, config_root)
+    backup = _resolve_backup_paths(backup, config_root)
+
     # Merge agent-managed sidecar rates (highest priority)
-    data_dir_for_sidecar = os.environ.get("CELLARBRAIN_DATA_DIR") or paths_raw.get("data_dir", PathsConfig().data_dir)
+    data_dir_for_sidecar = os.environ.get("CELLARBRAIN_DATA_DIR") or paths.data_dir
     sidecar = _load_currency_sidecar(data_dir_for_sidecar)
     currency_rates.update(sidecar)
 
@@ -970,7 +1041,7 @@ def load_settings(
     env_data_dir = os.environ.get("CELLARBRAIN_DATA_DIR")
     if env_data_dir:
         paths = PathsConfig(
-            data_dir=env_data_dir,
+            data_dir=str(pathlib.Path(env_data_dir).resolve()),
             raw_dir=paths.raw_dir,
             wines_subdir=paths.wines_subdir,
             cellar_subdir=paths.cellar_subdir,
