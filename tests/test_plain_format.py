@@ -7,6 +7,8 @@ from decimal import Decimal
 
 import pandas as pd
 import pytest
+
+from cellarbrain._query_base import _format_df, _to_plain
 from dataset_factory import (
     make_appellation,
     make_bottle,
@@ -22,8 +24,6 @@ from dataset_factory import (
     make_winery,
     write_dataset,
 )
-
-from cellarbrain._query_base import _format_df, _to_plain
 
 
 def _make_dataset(tmp_path):
