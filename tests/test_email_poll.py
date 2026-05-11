@@ -3488,3 +3488,258 @@ class TestReapStale:
         # Tracking still cleared
         state_after = json.loads((raw_dir / ".ingest-state.json").read_text())
         assert state_after.get("incomplete_batch_uids", {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonVersionRestart
+# ---------------------------------------------------------------------------
+
+
+def _mock_obs_init(*args, **kwargs):
+    """Stub for init_observability — returns a mock collector without DuckDB."""
+    m = MagicMock()
+    m.lock_conflict_pid = None
+    return m
+
+
+class TestDaemonVersionRestart:
+    """Tests for automatic daemon restart on package version change."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
+    def test_version_mismatch_exits_loop(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        cb_call_count = 0
+
+        def _fake_version(name):
+            nonlocal cb_call_count
+            if name != "cellarbrain":
+                return "1.0.0"
+            cb_call_count += 1
+            # First cellarbrain call captures running version; second detects upgrade
+            return "0.2.12" if cb_call_count == 1 else "0.2.13"
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", return_value=0) as mock_poll,
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", side_effect=_fake_version),
+        ):
+            daemon.run()
+
+        # poll_once should NOT have been called — version mismatch detected before poll
+        mock_poll.assert_not_called()
+        captured = capsys.readouterr()
+        assert "0.2.12" in captured.out
+        assert "0.2.13" in captured.out
+        assert "restarting" in captured.out.lower()
+
+    def test_same_version_continues(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        poll_count = 0
+
+        def _poll_and_stop(*args, **kwargs):
+            nonlocal poll_count
+            poll_count += 1
+            daemon._shutdown_event.set()
+            return 0
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_stop),
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", return_value="0.2.12"),
+        ):
+            daemon.run()
+
+        assert poll_count == 1
+        captured = capsys.readouterr()
+        assert "restarting" not in captured.out.lower()
+
+    def test_version_check_error_non_fatal(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        poll_count = 0
+
+        def _poll_and_stop(*args, **kwargs):
+            nonlocal poll_count
+            poll_count += 1
+            daemon._shutdown_event.set()
+            return 0
+
+        cb_call_count = 0
+
+        def _failing_version(name):
+            nonlocal cb_call_count
+            if name != "cellarbrain":
+                return "1.0.0"
+            cb_call_count += 1
+            if cb_call_count == 1:
+                return "0.2.12"  # initial capture succeeds
+            raise Exception("dist-info corrupted")
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_stop),
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", side_effect=_failing_version),
+        ):
+            daemon.run()
+
+        # Daemon should continue despite metadata error
+        assert poll_count == 1
+
+    def test_initial_version_capture_failure_disables_check(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        poll_count = 0
+
+        def _poll_and_stop(*args, **kwargs):
+            nonlocal poll_count
+            poll_count += 1
+            daemon._shutdown_event.set()
+            return 0
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_stop),
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", side_effect=Exception("no dist-info")),
+        ):
+            daemon.run()
+
+        # Should still run normally — version check disabled
+        assert poll_count == 1
+        captured = capsys.readouterr()
+        assert "restarting" not in captured.out.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestDaemonMaxUptime
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonMaxUptime:
+    """Tests for automatic daemon restart on max uptime threshold."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_collector(self):
+        import cellarbrain.observability as obs
+
+        yield
+        if obs._collector is not None:
+            obs._collector.close()
+            obs._collector = None
+
+    def test_max_uptime_exits_loop(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=100)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        # Use a function-based mock: first call sets _start_time,
+        # second call (in max_uptime check) returns a time past threshold.
+        mono_calls = [0]
+
+        def _fake_monotonic():
+            mono_calls[0] += 1
+            if mono_calls[0] == 1:
+                return 1000.0  # _start_time
+            return 1200.0  # always past threshold
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", return_value=0) as mock_poll,
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("time.monotonic", side_effect=_fake_monotonic),
+            patch("importlib.metadata.version", return_value="0.2.12"),
+        ):
+            daemon.run()
+
+        # poll_once should NOT have been called — uptime exceeded before poll
+        mock_poll.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Max uptime" in captured.out
+        assert "recycling" in captured.out
+
+    def test_max_uptime_zero_disables(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=0)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        poll_count = 0
+
+        def _poll_and_stop(*args, **kwargs):
+            nonlocal poll_count
+            poll_count += 1
+            daemon._shutdown_event.set()
+            return 0
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_stop),
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", return_value="0.2.12"),
+        ):
+            daemon.run()
+
+        # Should run normally — max_uptime=0 means disabled
+        assert poll_count == 1
+        captured = capsys.readouterr()
+        assert "Max uptime" not in captured.out
+
+    def test_max_uptime_not_reached_continues(self, capsys):
+        from cellarbrain.email_poll import IngestDaemon
+        from cellarbrain.settings import IngestConfig
+
+        config = IngestConfig(poll_interval=1, max_uptime=86400)
+        settings = MagicMock()
+        daemon = IngestDaemon(config, settings)
+
+        poll_count = 0
+
+        def _poll_and_stop(*args, **kwargs):
+            nonlocal poll_count
+            poll_count += 1
+            daemon._shutdown_event.set()
+            return 0
+
+        with (
+            patch("cellarbrain.email_poll.poll_once", side_effect=_poll_and_stop),
+            patch("cellarbrain.observability.init_observability", side_effect=_mock_obs_init),
+            patch("importlib.metadata.version", return_value="0.2.12"),
+        ):
+            daemon.run()
+
+        # Should run normally — uptime not exceeded
+        assert poll_count == 1
+        captured = capsys.readouterr()
+        assert "Max uptime" not in captured.out

@@ -277,14 +277,17 @@ RON = 0.19
 
 # --- Sommelier (AI Food-Wine Pairing) --------------------------------------
 # Requires optional dependencies: pip install cellarbrain[sommelier]
+# Relative paths for model_dir, pairing_dataset, food_index, food_ids are
+# anchored to data_dir at load time. Absolute paths pass through unchanged.
+# base_model and food_catalogue are NOT anchored (install-time artefacts).
 # [sommelier]
 # enabled = false                          # enable sommelier features
-# model_dir = "models/sommelier/model"     # trained model weights directory
-# base_model = "models/sommelier/base-model"  # local path to base model
-# food_catalogue = "models/sommelier/food_catalogue.parquet"
-# pairing_dataset = "models/sommelier/pairing_dataset.parquet"
-# food_index = "models/sommelier/food.index"
-# food_ids = "models/sommelier/food_ids.json"
+# model_dir = "models/sommelier/model"     # trained model weights (relative to data_dir)
+# base_model = "sentence-transformers/all-MiniLM-L6-v2"  # HuggingFace ID or local path
+# food_catalogue = "models/sommelier/food_catalogue.parquet"  # install-time seed
+# pairing_dataset = "models/sommelier/pairing_dataset.parquet"  # relative to data_dir
+# food_index = "models/sommelier/food.index"   # relative to data_dir
+# food_ids = "models/sommelier/food_ids.json"  # relative to data_dir
 # wine_index_dir = "sommelier"             # subdir under data_dir for wine index
 # default_limit = 10                       # default result count
 # min_score = 0.0                          # minimum similarity threshold
@@ -326,3 +329,4 @@ RON = 0.19
 # max_backoff_interval = 600     # max seconds between retries on transient errors
 # max_attachment_bytes = 10485760  # reject attachments larger than 10 MB
 # imap_timeout = 60               # socket timeout (seconds) for IMAP operations
+# max_uptime = 86400              # seconds before daemon self-restarts (0 = disabled)

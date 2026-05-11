@@ -155,11 +155,13 @@ Synonyms are merged from three layers (highest priority wins):
 | `wine_index_dir` | `str` | `"sommelier"` | Sub-directory under data_dir for wine FAISS index |
 | `default_limit` | `int` | `10` | Default number of results returned |
 | `min_score` | `float` | `0.0` | Minimum similarity score threshold |
-| `base_model` | `str` | `"models/sommelier/base-model"` | Path to base sentence-transformer model (local or HuggingFace name) |
+| `base_model` | `str` | `"sentence-transformers/all-MiniLM-L6-v2"` | Base sentence-transformer (HuggingFace ID or local path) |
 | `training_epochs` | `int` | `10` | Number of fine-tuning epochs |
 | `training_batch_size` | `int` | `32` | Training batch size |
 | `warmup_ratio` | `float` | `0.1` | Fraction of steps used for learning-rate warm-up |
 | `eval_split` | `float` | `0.1` | Fraction of data held out for evaluation |
+
+> **Path resolution:** At load time, `model_dir`, `pairing_dataset`, `food_index`, and `food_ids` are anchored to `data_dir` if they are relative paths. Absolute paths pass through unchanged. `base_model` and `food_catalogue` are intentionally *not* anchored — they reference install-time artefacts.
 
 ### `LoggingConfig`
 

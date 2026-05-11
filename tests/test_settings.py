@@ -15,10 +15,13 @@ from cellarbrain.settings import (
     PriceTier,
     SearchConfig,
     Settings,
+    SommelierConfig,
+    _anchor,
     _default_search_synonyms,
     _legacy_to_rules,
     _load_currency_sidecar,
     _parse_cellar_rules,
+    _resolve_sommelier_paths,
     _validate_cellar_rules,
     load_settings,
 )
@@ -195,7 +198,7 @@ class TestPathAnchoring:
         assert s.paths.raw_dir == str(tmp_path / "csv_files")
 
     def test_sommelier_paths_anchored(self, tmp_path):
-        """Sommelier model paths are anchored to config file location."""
+        """Sommelier model paths are anchored to data_dir."""
         cfg = tmp_path / "cellarbrain.toml"
         cfg.write_text(
             textwrap.dedent("""\
@@ -205,7 +208,7 @@ class TestPathAnchoring:
             encoding="utf-8",
         )
         s = load_settings(cfg)
-        assert s.sommelier.model_dir == str(tmp_path / "my_models" / "sommelier")
+        assert s.sommelier.model_dir == str(tmp_path / "output" / "my_models" / "sommelier")
 
     def test_backup_dir_anchored(self, tmp_path):
         """Backup dir is anchored to config file location."""
@@ -221,7 +224,7 @@ class TestPathAnchoring:
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings()
         assert s.paths.data_dir == str(tmp_path / "output")
-        assert s.sommelier.model_dir == str(tmp_path / "models" / "sommelier" / "model")
+        assert s.sommelier.model_dir == str(tmp_path / "output" / "models" / "sommelier" / "model")
 
     def test_env_data_dir_resolved_to_absolute(self, tmp_path, monkeypatch):
         """CELLARBRAIN_DATA_DIR env var is also resolved to absolute."""
@@ -1260,3 +1263,68 @@ class TestIngestConfig:
         assert s.ingest.etl_timeout == 600
         assert s.ingest.max_backoff_interval == 120
         assert s.ingest.max_attachment_bytes == 5_242_880
+
+
+# ---------------------------------------------------------------------------
+# TestSommelierPathAnchoring
+# ---------------------------------------------------------------------------
+
+
+class TestSommelierPathAnchoring:
+    def test_anchor_relative_path(self):
+        result = _anchor("models/sommelier/model", pathlib.Path("/data"))
+        assert result == str(pathlib.Path("/data/models/sommelier/model"))
+
+    def test_anchor_absolute_path_passthrough(self):
+        abs_path = str(pathlib.Path("/custom/absolute/model"))
+        assert _anchor(abs_path, pathlib.Path("/data")) == abs_path
+
+    def test_resolve_anchors_mutable_paths(self):
+        cfg = SommelierConfig()
+        data_dir = pathlib.Path("/users/ruedi/cellarbrain-data")
+        resolved = _resolve_sommelier_paths(cfg, data_dir)
+
+        assert resolved.model_dir == str(data_dir / "models/sommelier/model")
+        assert resolved.pairing_dataset == str(data_dir / "models/sommelier/pairing_dataset.parquet")
+        assert resolved.food_index == str(data_dir / "models/sommelier/food.index")
+        assert resolved.food_ids == str(data_dir / "models/sommelier/food_ids.json")
+
+    def test_resolve_leaves_base_model_unchanged(self):
+        cfg = SommelierConfig()
+        resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
+        assert resolved.base_model == "sentence-transformers/all-MiniLM-L6-v2"
+
+    def test_resolve_leaves_food_catalogue_unchanged(self):
+        cfg = SommelierConfig()
+        resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
+        assert resolved.food_catalogue == "models/sommelier/food_catalogue.parquet"
+
+    def test_absolute_override_not_modified(self):
+        abs_model = str(pathlib.Path("/abs/model"))
+        abs_dataset = str(pathlib.Path("/abs/data.parquet"))
+        cfg = SommelierConfig(model_dir=abs_model, pairing_dataset=abs_dataset)
+        resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
+        assert resolved.model_dir == abs_model
+        assert resolved.pairing_dataset == abs_dataset
+
+    def test_load_settings_anchors_sommelier_to_data_dir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
+        data = tmp_path / "my" / "data"
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text(
+            f'[paths]\ndata_dir = "{data.as_posix()}"\n\n[sommelier]\nenabled = true\n',
+            encoding="utf-8",
+        )
+        s = load_settings(str(cfg))
+        assert s.sommelier.model_dir == str(data / "models" / "sommelier" / "model")
+        assert s.sommelier.pairing_dataset == str(data / "models" / "sommelier" / "pairing_dataset.parquet")
+
+    def test_env_data_dir_anchors_sommelier(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
+        env_dir = tmp_path / "env" / "data"
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(env_dir))
+        s = load_settings()
+        assert s.sommelier.model_dir == str(env_dir / "models" / "sommelier" / "model")

@@ -31,15 +31,17 @@ If `ingest_status()` shows STOPPED but user expects it running:
 
 ## Workflow: Upgrade Cellarbrain
 
-1. **Stop ingest daemon** (if running): `ingest_stop()`
-2. **Upgrade package:**
+1. **Upgrade package:**
    ```bash
    pip install --upgrade cellarbrain
    ```
-3. **Verify version:**
+2. **Verify version:**
    `cellar_info(verbose=True)` — confirm new version number
-4. **Restart ingest daemon:** `ingest_start()`
-5. **Run quick health check** (see below)
+3. **Run quick health check** (see below)
+
+> **Note:** The ingest daemon auto-detects version changes and restarts itself
+> within ~90 seconds. No manual stop/start is needed. If immediate restart is
+> required, use `ingest_stop(restart=True)`.
 
 ## Workflow: Refresh Data
 
@@ -77,3 +79,7 @@ Check for: stale ETL (>24h old), missing data directory, version mismatch.
 | `cellar_info` | Version, freshness, diagnostics |
 | `reload_data` | Re-run ETL pipeline |
 | `currency_rates` | Manage exchange rates |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

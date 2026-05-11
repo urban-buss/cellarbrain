@@ -68,3 +68,7 @@ If any field does not match → skip. Never log a "close enough" wine.
 | `price_history` | Monthly price trends |
 | `wishlist_alerts` | Price drops, new listings, back in stock |
 | `find_wine` | Resolve wine identity |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

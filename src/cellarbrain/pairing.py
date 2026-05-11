@@ -808,8 +808,19 @@ def _best_reason(candidate: PairingCandidate, protein: str | None) -> str:
     return "Matches the dish profile"
 
 
-def format_table(results: list[PairingCandidate]) -> str:
-    """Format candidates as a Markdown table (default/compact output)."""
+def format_table(results: list[PairingCandidate], fmt: str = "markdown") -> str:
+    """Format candidates as a table (Markdown) or compact list (plain)."""
+    if fmt == "plain":
+        lines = []
+        for i, c in enumerate(results, 1):
+            signals_str = ", ".join(c.match_signals[:3])
+            score = f"{c.best_pro_score:.0f}pts" if c.best_pro_score else "unrated"
+            lines.append(
+                f"{i}. {c.wine_name} {c.vintage or ''} · {c.primary_grape or '?'}"
+                f" · {c.region or '?'} · {score} · {c.bottles_stored}btl · [{signals_str}]"
+            )
+        return "\n".join(lines)
+
     lines = [
         "| Rank | Wine | Vintage | Category | Region | Grape | Bottles | Score | Signals |",
         "|------|------|---------|----------|--------|-------|---------|-------|---------|",
@@ -852,6 +863,7 @@ def format_explained(
     dish: str,
     classification: DishClassification | None = None,
     limit: int = 5,
+    fmt: str = "markdown",
 ) -> str:
     """Format candidates as pre-ranked recommendations with rationale.
 
@@ -861,24 +873,43 @@ def format_explained(
     protein = classification.protein if classification else None
     top = results[:limit]
 
-    lines = [f'## Top Pairing Recommendations for "{dish}"\n']
+    if fmt == "plain":
+        lines = [f'Top Pairing Recommendations for "{dish}"\n']
+    else:
+        lines = [f'## Top Pairing Recommendations for "{dish}"\n']
     for i, c in enumerate(top, 1):
         score_str = f" | {c.best_pro_score:.0f} pts" if c.best_pro_score else ""
         location = ", ".join(filter(None, [c.region, c.country]))
         signals_str = ", ".join(c.match_signals[:4])
         reason = _best_reason(c, protein)
 
-        lines.append(f"{i}. **{c.wine_name} {c.vintage or ''}** (wine_id: {c.wine_id}) — {c.primary_grape or 'blend'}")
-        lines.append(f"   {location}{score_str} | {c.bottles_stored} bottle(s)")
-        lines.append(f"   Why: {reason}")
-        lines.append(f"   Matched on: {signals_str}")
+        if fmt == "plain":
+            lines.append(f"{i}. {c.wine_name} {c.vintage or ''} (wine_id: {c.wine_id}) — {c.primary_grape or 'blend'}")
+            lines.append(f"   {location}{score_str} | {c.bottles_stored} bottle(s)")
+            lines.append(f"   Why: {reason}")
+            lines.append(f"   Matched on: {signals_str}")
+        else:
+            lines.append(
+                f"{i}. **{c.wine_name} {c.vintage or ''}** (wine_id: {c.wine_id}) — {c.primary_grape or 'blend'}"
+            )
+            lines.append(f"   {location}{score_str} | {c.bottles_stored} bottle(s)")
+            lines.append(f"   Why: {reason}")
+            lines.append(f"   Matched on: {signals_str}")
         lines.append("")
 
     if classification and classification.protein:
-        lines.append(
-            f"_Classification: {classification.protein}, "
-            f"{classification.weight}, "
-            f"{classification.category or 'auto'}"
-            f"{', ' + classification.cuisine if classification.cuisine else ''}_"
-        )
+        if fmt == "plain":
+            lines.append(
+                f"Classification: {classification.protein}, "
+                f"{classification.weight}, "
+                f"{classification.category or 'auto'}"
+                f"{', ' + classification.cuisine if classification.cuisine else ''}"
+            )
+        else:
+            lines.append(
+                f"_Classification: {classification.protein}, "
+                f"{classification.weight}, "
+                f"{classification.category or 'auto'}"
+                f"{', ' + classification.cuisine if classification.cuisine else ''}_"
+            )
     return "\n".join(lines)

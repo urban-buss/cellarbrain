@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import duckdb
 import pandas as pd
 
-from ._query_base import QueryError, _to_md
+from ._query_base import QueryError, _format_df, _to_md
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +366,7 @@ def find_wine(
     limit: int = 10,
     fuzzy: bool = False,
     synonyms: dict[str, str] | None = None,
+    fmt: str = "markdown",
 ) -> str:
     """Search wines by ILIKE matching across multiple columns.
 
@@ -481,12 +482,12 @@ def find_wine(
             )
             if not df.empty:
                 header = f"*Partial match for '{query}' (not all terms matched):*\n\n"
-                return header + _to_md(df)
+                return header + _format_df(df, fmt, style="list")
         if fuzzy and remaining_tokens:
             expanded_query = " ".join(remaining_tokens)
             return _find_wine_fuzzy(con, expanded_query, limit)
         return f"*No wines found matching '{query}'.*"
-    return _to_md(df)
+    return _format_df(df, fmt, style="list")
 
 
 def _find_wine_soft_and(

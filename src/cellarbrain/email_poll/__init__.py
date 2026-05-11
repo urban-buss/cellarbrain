@@ -1074,7 +1074,55 @@ class IngestDaemon:
         _start_time = time.monotonic()
         _heartbeat_interval = self.config.heartbeat_interval
 
+        # Capture running version for upgrade detection (reads dist-info on disk).
+        import importlib.metadata as _im_meta
+
+        try:
+            _running_version = _im_meta.version("cellarbrain")
+        except Exception:
+            _running_version = None
+        if _running_version:
+            logger.info("Ingest daemon version %s", _running_version)
+
         while not self._shutdown_event.is_set():
+            # --- Auto-restart: version upgrade detection ---
+            if _running_version:
+                try:
+                    _disk_version = _im_meta.version("cellarbrain")
+                    if _disk_version != _running_version:
+                        logger.info(
+                            "Package upgraded %s → %s — exiting for restart",
+                            _running_version,
+                            _disk_version,
+                        )
+                        print(
+                            f"Version upgrade detected ({_running_version} → {_disk_version}) — restarting...",
+                            flush=True,
+                        )
+                        _emit_ingest_event(
+                            "daemon_upgrade_restart",
+                            "info",
+                            error_message=f"{_running_version} → {_disk_version}",
+                        )
+                        break
+                except Exception:
+                    pass  # dist-info read failure is non-fatal
+
+            # --- Auto-restart: max uptime (defense-in-depth) ---
+            if self.config.max_uptime > 0:
+                _elapsed = time.monotonic() - _start_time
+                if _elapsed > self.config.max_uptime:
+                    logger.info(
+                        "Max uptime reached (%ds) — recycling daemon",
+                        int(_elapsed),
+                    )
+                    print(
+                        f"Max uptime reached ({int(_elapsed)}s) — recycling...",
+                        flush=True,
+                    )
+                    _emit_ingest_event("daemon_max_uptime_restart", "info")
+                    break
+
             try:
                 count = poll_once(self.config, self.settings, dry_run=dry_run)
                 if count < 0:

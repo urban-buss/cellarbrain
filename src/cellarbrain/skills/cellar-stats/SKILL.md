@@ -66,3 +66,7 @@ ORDER BY purchase_date DESC
 | `cellar_stats` | Summary or grouped breakdown (10 dimensions) |
 | `cellar_churn` | Monthly/yearly roll-forward (begin + purchased − consumed = end) |
 | `query_cellar` | Custom SQL for specific questions |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
