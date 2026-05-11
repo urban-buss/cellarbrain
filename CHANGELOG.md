@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.13] — 2026-05-11
+
 ### Added
 - **Web Explorer dashboard** (`cellarbrain dashboard`): local Starlette web app with observability
   overview, tool usage, error log, session drill-down, latency charts, live event tail (SSE),

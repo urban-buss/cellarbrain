@@ -56,6 +56,9 @@ wine-research-insights/
 # Issues tracking
 issues/
 
+# Personal prompts (root .prompt/ folder)
+.prompt/
+
 # Logs and backups
 bkp/
 logs/

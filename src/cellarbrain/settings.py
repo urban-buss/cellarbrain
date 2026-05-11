@@ -187,7 +187,7 @@ class SearchConfig:
 class SommelierConfig:
     enabled: bool = False
     model_dir: str = "models/sommelier/model"
-    base_model: str = "models/sommelier/base-model"
+    base_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     food_catalogue: str = "models/sommelier/food_catalogue.parquet"
     pairing_dataset: str = "models/sommelier/pairing_dataset.parquet"
     food_index: str = "models/sommelier/food.index"
@@ -226,6 +226,13 @@ class BackupConfig:
     max_backups: int = 5
     include_sommelier: bool = False
     include_logs: bool = False
+
+
+@dataclass(frozen=True)
+class OutputConfig:
+    """Output formatting configuration."""
+
+    default_format: str = "markdown"
 
 
 @dataclass(frozen=True)
@@ -268,6 +275,7 @@ class IngestConfig:
     stale_threshold: int = 0
     dedup_strategy: str = "latest"
     dead_letter_folder: str = ""
+    max_uptime: int = 86400
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +614,7 @@ class Settings:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
     companion_sections: tuple[AgentSection, ...] = field(
         default_factory=_default_companion_sections,
     )
@@ -694,28 +703,6 @@ def _resolve_relative_paths(paths: PathsConfig, config_root: pathlib.Path) -> Pa
     )
 
 
-def _resolve_sommelier_paths(cfg: SommelierConfig, config_root: pathlib.Path) -> SommelierConfig:
-    """Return a new SommelierConfig with filesystem paths anchored to *config_root*."""
-    return SommelierConfig(
-        enabled=cfg.enabled,
-        model_dir=_anchor(cfg.model_dir, config_root),
-        base_model=_anchor(cfg.base_model, config_root),
-        food_catalogue=_anchor(cfg.food_catalogue, config_root),
-        pairing_dataset=_anchor(cfg.pairing_dataset, config_root),
-        food_index=_anchor(cfg.food_index, config_root),
-        food_ids=_anchor(cfg.food_ids, config_root),
-        wine_index_dir=cfg.wine_index_dir,
-        default_limit=cfg.default_limit,
-        min_score=cfg.min_score,
-        training_epochs=cfg.training_epochs,
-        training_batch_size=cfg.training_batch_size,
-        warmup_ratio=cfg.warmup_ratio,
-        eval_split=cfg.eval_split,
-        auto_retrain_threshold=cfg.auto_retrain_threshold,
-        auto_food_tags=cfg.auto_food_tags,
-    )
-
-
 def _resolve_backup_paths(cfg: BackupConfig, config_root: pathlib.Path) -> BackupConfig:
     """Return a new BackupConfig with backup_dir anchored to *config_root*."""
     return BackupConfig(
@@ -760,6 +747,44 @@ def _resolve_config_path(
         pathlib.Path.cwd(),
     )
     return None
+
+
+def _anchor(path_str: str, base: pathlib.Path) -> str:
+    """Resolve *path_str* against *base* unless it is already absolute."""
+    p = pathlib.Path(path_str)
+    if p.is_absolute():
+        return path_str
+    return str(base / p)
+
+
+def _resolve_sommelier_paths(
+    cfg: SommelierConfig,
+    data_dir: pathlib.Path,
+) -> SommelierConfig:
+    """Anchor mutable sommelier paths to *data_dir*.
+
+    Paths that are already absolute pass through unchanged.
+    ``base_model`` and ``food_catalogue`` are intentionally left unanchored
+    because they are install-time / read-only artifacts.
+    """
+    return SommelierConfig(
+        enabled=cfg.enabled,
+        model_dir=_anchor(cfg.model_dir, data_dir),
+        base_model=cfg.base_model,
+        food_catalogue=cfg.food_catalogue,
+        pairing_dataset=_anchor(cfg.pairing_dataset, data_dir),
+        food_index=_anchor(cfg.food_index, data_dir),
+        food_ids=_anchor(cfg.food_ids, data_dir),
+        wine_index_dir=cfg.wine_index_dir,
+        default_limit=cfg.default_limit,
+        min_score=cfg.min_score,
+        training_epochs=cfg.training_epochs,
+        training_batch_size=cfg.training_batch_size,
+        warmup_ratio=cfg.warmup_ratio,
+        eval_split=cfg.eval_split,
+        auto_retrain_threshold=cfg.auto_retrain_threshold,
+        auto_food_tags=cfg.auto_food_tags,
+    )
 
 
 def _parse_price_tiers(raw: list[dict]) -> tuple[PriceTier, ...]:
@@ -1014,6 +1039,12 @@ def load_settings(
         _validate_keys("backup", backup_raw, BackupConfig)
     backup = BackupConfig(**backup_raw) if backup_raw else BackupConfig()
 
+    # Output — simple scalar config
+    output_raw = raw.get("output", {})
+    if output_raw:
+        _validate_keys("output", output_raw, OutputConfig)
+    output = OutputConfig(**output_raw) if output_raw else OutputConfig()
+
     # Currency — table merge for rates
     currency_raw = raw.get("currency", {})
     currency_default = currency_raw.get("default", "CHF")
@@ -1027,7 +1058,6 @@ def load_settings(
     # self-contained regardless of the process CWD.
     config_root = resolved.parent.resolve() if resolved is not None else pathlib.Path.cwd().resolve()
     paths = _resolve_relative_paths(paths, config_root)
-    sommelier = _resolve_sommelier_paths(sommelier, config_root)
     backup = _resolve_backup_paths(backup, config_root)
 
     # Merge agent-managed sidecar rates (highest priority)
@@ -1047,6 +1077,9 @@ def load_settings(
             cellar_subdir=paths.cellar_subdir,
             archive_subdir=paths.archive_subdir,
         )
+
+    # Anchor mutable sommelier paths to the final data_dir
+    sommelier = _resolve_sommelier_paths(sommelier, pathlib.Path(paths.data_dir))
 
     return Settings(
         paths=paths,
@@ -1071,6 +1104,7 @@ def load_settings(
         dashboard=dashboard,
         ingest=ingest,
         backup=backup,
+        output=output,
         companion_sections=companion_sections,
         config_source=str(resolved) if resolved else None,
     )

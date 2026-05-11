@@ -42,3 +42,7 @@ Translate any German owner notes or tasting comments.
 |------|---------|
 | `find_wine` | Text search across cellar |
 | `read_dossier` | Full wine dossier content |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

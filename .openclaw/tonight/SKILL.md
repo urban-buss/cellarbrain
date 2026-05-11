@@ -58,3 +58,7 @@ Flag wines past optimal as "drink soon — don't wait."
 | `find_wine` | Text search with intent detection |
 | `read_dossier` | Wine details and tasting notes |
 | `pair_wine` | Single-shot food+wine pairing |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

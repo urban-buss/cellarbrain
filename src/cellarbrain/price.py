@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
-from ._query_base import QueryError, _to_md
+from ._query_base import QueryError, _format_df
 
 if TYPE_CHECKING:
     from .settings import Settings
@@ -141,8 +141,9 @@ def get_tracked_wine_prices(
     data_dir: str | pathlib.Path,
     tracked_wine_id: int,
     vintage: int | None = None,
+    fmt: str = "markdown",
 ) -> str:
-    """Return latest prices for a tracked wine as a Markdown table."""
+    """Return latest prices for a tracked wine."""
     from . import writer
     from .dossier_ops import TrackedWineNotFoundError
 
@@ -179,7 +180,7 @@ def get_tracked_wine_prices(
 
     if df.empty:
         return f"*No current prices for tracked wine #{tracked_wine_id}.*"
-    return _to_md(df)
+    return _format_df(df, fmt, style="list")
 
 
 def get_price_history(
@@ -187,8 +188,9 @@ def get_price_history(
     tracked_wine_id: int,
     vintage: int | None = None,
     months: int = 12,
+    fmt: str = "markdown",
 ) -> str:
-    """Return monthly price history for a tracked wine as a Markdown table."""
+    """Return monthly price history for a tracked wine."""
     from . import writer
     from .dossier_ops import TrackedWineNotFoundError
 
@@ -227,13 +229,14 @@ def get_price_history(
 
     if df.empty:
         return f"*No price history for tracked wine #{tracked_wine_id}.*"
-    return _to_md(df)
+    return _format_df(df, fmt, style="list")
 
 
 def wishlist_alerts(
     data_dir: str | pathlib.Path,
     settings: Settings | None = None,
     days: int | None = None,
+    fmt: str = "markdown",
 ) -> str:
     """Detect and return wishlist alerts grouped by priority.
 
@@ -445,16 +448,29 @@ def wishlist_alerts(
     if not alerts["high"] and not alerts["medium"]:
         return "*No wishlist alerts.*"
 
-    lines = ["## Wishlist Alerts", ""]
-    if alerts["high"]:
-        lines.append("### \U0001f534 High Priority")
-        lines.append("")
-        lines.extend(alerts["high"])
-        lines.append("")
-    if alerts["medium"]:
-        lines.append("### \U0001f7e1 Medium Priority")
-        lines.append("")
-        lines.extend(alerts["medium"])
-        lines.append("")
+    if fmt == "plain":
+        lines = ["🔔 WISHLIST ALERTS", ""]
+        if alerts["high"]:
+            lines.append("🔴 HIGH PRIORITY")
+            for a in alerts["high"]:
+                lines.append(a.replace("- **", "").replace(":**", ":").replace("**", ""))
+            lines.append("")
+        if alerts["medium"]:
+            lines.append("🟡 MEDIUM PRIORITY")
+            for a in alerts["medium"]:
+                lines.append(a.replace("- **", "").replace(":**", ":").replace("**", ""))
+            lines.append("")
+    else:
+        lines = ["## Wishlist Alerts", ""]
+        if alerts["high"]:
+            lines.append("### \U0001f534 High Priority")
+            lines.append("")
+            lines.extend(alerts["high"])
+            lines.append("")
+        if alerts["medium"]:
+            lines.append("### \U0001f7e1 Medium Priority")
+            lines.append("")
+            lines.extend(alerts["medium"])
+            lines.append("")
 
     return "\n".join(lines)

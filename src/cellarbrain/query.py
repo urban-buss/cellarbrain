@@ -31,7 +31,7 @@ import re
 import duckdb
 import pandas as pd
 
-from ._query_base import DataStaleError, QueryError, _to_md
+from ._query_base import DataStaleError, QueryError, _format_df
 from .flat import (
     BOTTLES_FULL_VIEW_SQL,
     BOTTLES_VIEW_SQL,
@@ -438,8 +438,9 @@ def execute_query(
     con: duckdb.DuckDBPyConnection,
     sql: str,
     row_limit: int = 200,
+    fmt: str = "markdown",
 ) -> str:
-    """Execute a read-only SQL query and return a Markdown table.
+    """Execute a read-only SQL query and return formatted results.
 
     Raises QueryError on validation failure or DuckDB execution error.
     """
@@ -465,11 +466,15 @@ def execute_query(
         return "*No results.*"
 
     if total > row_limit:
-        result = _to_md(df.head(row_limit))
-        result += f"\n\n*({total} rows total, showing first {row_limit})*"
+        result = _format_df(df.head(row_limit), fmt)
+        result += (
+            f"\n\n*({total} rows total, showing first {row_limit})*"
+            if fmt == "markdown"
+            else f"\n\n({total} rows total, showing first {row_limit})"
+        )
         return result
 
-    return _to_md(df)
+    return _format_df(df, fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -483,8 +488,9 @@ def cellar_stats(
     currency: str = "CHF",
     limit: int = 20,
     sort_by: str | None = None,
+    fmt: str = "markdown",
 ) -> str:
-    """Return formatted cellar statistics as Markdown.
+    """Return formatted cellar statistics.
 
     Raises ValueError for an invalid group_by dimension, sort_by column,
     or negative limit.
@@ -507,13 +513,14 @@ def cellar_stats(
             currency=currency,
             limit=limit,
             sort_by=sort_by,
+            fmt=fmt,
         )
-    return _overall_stats(con, currency=currency)
+    return _overall_stats(con, currency=currency, fmt=fmt)
 
 
-def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF") -> str:
+def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF", fmt: str = "markdown") -> str:
     """Build the default cellar summary."""
-    lines: list[str] = ["## Cellar Summary\n"]
+    lines: list[str] = ["## Cellar Summary\n"] if fmt == "markdown" else ["📊 CELLAR SUMMARY\n"]
 
     # Single query for the 4×3 summary table
     row = con.execute("""
@@ -551,20 +558,30 @@ def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF") -> 
     curr = currency
 
     # Render summary table
-    lines.append("|             | in cellar | on order | total |")
-    lines.append("|:------------|----------:|---------:|------:|")
-    lines.append(f"| wines       | {wines_cellar} | {wines_on_order} | {wines_total} |")
-    lines.append(f"| bottles     | {bottles_cellar} | {bottles_on_order} | {bottles_total} |")
-    lines.append(
-        f"| value ({curr}) | {_fmt_chf(value_cellar)} | {_fmt_chf(value_on_order)} | {_fmt_chf(value_total)} |"
-    )
-    lines.append(
-        f"| volume (L)  | {_fmt_litres(volume_cellar)} | {_fmt_litres(volume_on_order)} | {_fmt_litres(volume_total)} |"
-    )
+    if fmt == "plain":
+        lines.append(f"🍷 Wines: {wines_cellar} stored, {wines_on_order} on order ({wines_total} total)")
+        lines.append(f"🍾 Bottles: {bottles_cellar} stored, {bottles_on_order} on order ({bottles_total} total)")
+        lines.append(
+            f"💰 Value: {curr} {_fmt_chf(value_cellar)} stored + {curr} {_fmt_chf(value_on_order)} on order = {curr} {_fmt_chf(value_total)}"
+        )
+        lines.append(
+            f"📏 Volume: {_fmt_litres(volume_cellar)}L stored + {_fmt_litres(volume_on_order)}L on order = {_fmt_litres(volume_total)}L"
+        )
+    else:
+        lines.append("|             | in cellar | on order | total |")
+        lines.append("|:------------|----------:|---------:|------:|")
+        lines.append(f"| wines       | {wines_cellar} | {wines_on_order} | {wines_total} |")
+        lines.append(f"| bottles     | {bottles_cellar} | {bottles_on_order} | {bottles_total} |")
+        lines.append(
+            f"| value ({curr}) | {_fmt_chf(value_cellar)} | {_fmt_chf(value_on_order)} | {_fmt_chf(value_total)} |"
+        )
+        lines.append(
+            f"| volume (L)  | {_fmt_litres(volume_cellar)} | {_fmt_litres(volume_on_order)} | {_fmt_litres(volume_total)} |"
+        )
     lines.append("")
 
     # --- In Cellar breakdowns ---
-    lines.append("### In Cellar\n")
+    lines.append("### In Cellar\n" if fmt == "markdown" else "IN CELLAR\n")
 
     # By category
     cat_df = con.execute("""
@@ -580,8 +597,8 @@ def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF") -> 
         cat_df[f"value ({curr})"] = cat_df["value"].apply(_fmt_chf)
         cat_df["volume (L)"] = cat_df["volume"].apply(_fmt_litres)
         cat_df = cat_df.drop(columns=["value", "volume"])
-        lines.append("#### By Category")
-        lines.append(_to_md(cat_df))
+        lines.append("#### By Category" if fmt == "markdown" else "By Category:")
+        lines.append(_format_df(cat_df, fmt, style="compact"))
         lines.append("")
 
     # Drinking window status
@@ -598,8 +615,8 @@ def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF") -> 
         dw_df[f"value ({curr})"] = dw_df["value"].apply(_fmt_chf)
         dw_df["volume (L)"] = dw_df["volume"].apply(_fmt_litres)
         dw_df = dw_df.drop(columns=["value", "volume"])
-        lines.append("#### Drinking Window Status")
-        lines.append(_to_md(dw_df))
+        lines.append("#### Drinking Window Status" if fmt == "markdown" else "Drinking Window:")
+        lines.append(_format_df(dw_df, fmt, style="compact"))
         lines.append("")
 
     # Data freshness
@@ -610,8 +627,11 @@ def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF") -> 
         """).fetchone()
         if etl_row:
             run_id, started, run_type = etl_row
-            lines.append("### Data Freshness")
-            lines.append(f"- **Last ETL run:** {started} (run #{run_id}, {run_type})")
+            if fmt == "plain":
+                lines.append(f"Last refresh: {started} ({run_type})")
+            else:
+                lines.append("### Data Freshness")
+                lines.append(f"- **Last ETL run:** {started} (run #{run_id}, {run_type})")
     except duckdb.Error:
         pass
 
@@ -625,6 +645,7 @@ def _grouped_stats(
     currency: str = "CHF",
     limit: int = 20,
     sort_by: str | None = None,
+    fmt: str = "markdown",
 ) -> str:
     """Return stats grouped by a single dimension."""
     # Wine-based dimensions query wines_full (in-cellar only)
@@ -761,17 +782,25 @@ def _grouped_stats(
     df = df.drop(columns=["value", "volume"])
 
     # Dynamic heading
-    if group_by == "status":
-        header = f"## Cellar Statistics — by {group_by.title()}\n"
-    elif group_by == "on_order":
-        header = f"## On Order Statistics — by {group_by.title()}\n"
+    if fmt == "plain":
+        if group_by == "status":
+            header = f"📊 STATS BY {group_by.upper()}\n"
+        elif group_by == "on_order":
+            header = f"📊 ON ORDER — BY {group_by.upper()}\n"
+        else:
+            header = f"📊 IN CELLAR — BY {group_by.upper()}\n"
     else:
-        header = f"## In Cellar Statistics — by {group_by.title()}\n"
+        if group_by == "status":
+            header = f"## Cellar Statistics — by {group_by.title()}\n"
+        elif group_by == "on_order":
+            header = f"## On Order Statistics — by {group_by.title()}\n"
+        else:
+            header = f"## In Cellar Statistics — by {group_by.title()}\n"
 
     # Rename group_val to the dimension name for display
     df = df.rename(columns={"group_val": _GROUP_LABEL[group_by]})
 
-    return header + "\n" + _to_md(df) + footnote
+    return header + "\n" + _format_df(df, fmt, style="compact") + footnote
 
 
 # ---------------------------------------------------------------------------
@@ -785,8 +814,9 @@ def cellar_churn(
     year: int | None = None,
     month: int | None = None,
     currency: str = "CHF",
+    fmt: str = "markdown",
 ) -> str:
-    """Return cellar churn (roll-forward) analysis as Markdown.
+    """Return cellar churn (roll-forward) analysis.
 
     Raises ValueError for invalid parameters.
     """
@@ -816,6 +846,7 @@ def cellar_churn(
             date_fmt="%Y",
             title="Year-by-Year",
             currency=currency,
+            fmt=fmt,
         )
 
     if period == "month":
@@ -834,6 +865,7 @@ def cellar_churn(
             date_fmt="%Y-%m",
             title=f"{y} Month-by-Month",
             currency=currency,
+            fmt=fmt,
         )
 
     # Single-period mode
@@ -856,7 +888,7 @@ def cellar_churn(
             end = _dt.date(today.year, today.month + 1, 1)
         title = f"{_MONTH_NAMES[today.month]} {today.year}"
 
-    return _single_period_churn(con, start, end, title, currency=currency)
+    return _single_period_churn(con, start, end, title, currency=currency, fmt=fmt)
 
 
 def _single_period_churn(
@@ -866,6 +898,7 @@ def _single_period_churn(
     title: str,
     *,
     currency: str = "CHF",
+    fmt: str = "markdown",
 ) -> str:
     """Render a single-period churn roll-forward."""
     row = con.execute(f"""
@@ -951,13 +984,22 @@ def _single_period_churn(
     # Currency label
     curr = currency
 
-    lines: list[str] = [f"## Cellar Churn \u2014 {title}\n"]
-    lines.append(f"|               |   wines |   bottles | value ({curr})   | volume (L)   |")
-    lines.append("|:--------------|--------:|----------:|:--------------|:-------------|")
-    lines.append(f"| Beginning     | {beg_w:7d} | {beg_b:9d} | {_fmt_chf(beg_v):13s} | {_fmt_litres(beg_l):12s} |")
-    lines.append(f"| + Purchased   | {pur_w:7d} | {pur_b:9d} | {_fmt_chf(pur_v):13s} | {_fmt_litres(pur_l):12s} |")
-    lines.append(f"| \u2212 Consumed    | {con_w:7d} | {con_b:9d} | {_fmt_chf(con_v):13s} | {_fmt_litres(con_l):12s} |")
-    lines.append(f"| **Ending**    | **{end_w}** | **{end_b}** | **{_fmt_chf(end_v)}** | **{_fmt_litres(end_l)}** |")
+    if fmt == "plain":
+        lines: list[str] = [f"📊 CELLAR CHURN — {title}\n"]
+        lines.append(f"Beginning: {beg_w} wines, {beg_b} bottles, {curr} {_fmt_chf(beg_v)}, {_fmt_litres(beg_l)}L")
+        lines.append(f"+ Purchased: {pur_w} wines, {pur_b} bottles, {curr} {_fmt_chf(pur_v)}, {_fmt_litres(pur_l)}L")
+        lines.append(f"− Consumed: {con_w} wines, {con_b} bottles, {curr} {_fmt_chf(con_v)}, {_fmt_litres(con_l)}L")
+        lines.append(f"= Ending: {end_w} wines, {end_b} bottles, {curr} {_fmt_chf(end_v)}, {_fmt_litres(end_l)}L")
+    else:
+        lines: list[str] = [f"## Cellar Churn — {title}\n"]
+        lines.append(f"|               |   wines |   bottles | value ({curr})   | volume (L)   |")
+        lines.append("|:--------------|--------:|----------:|:--------------|:-------------|")
+        lines.append(f"| Beginning     | {beg_w:7d} | {beg_b:9d} | {_fmt_chf(beg_v):13s} | {_fmt_litres(beg_l):12s} |")
+        lines.append(f"| + Purchased   | {pur_w:7d} | {pur_b:9d} | {_fmt_chf(pur_v):13s} | {_fmt_litres(pur_l):12s} |")
+        lines.append(f"| − Consumed    | {con_w:7d} | {con_b:9d} | {_fmt_chf(con_v):13s} | {_fmt_litres(con_l):12s} |")
+        lines.append(
+            f"| **Ending**    | **{end_w}** | **{end_b}** | **{_fmt_chf(end_v)}** | **{_fmt_litres(end_l)}** |"
+        )
     lines.append("")
 
     # Ending inventory split
@@ -980,8 +1022,8 @@ def _single_period_churn(
         inv_df[f"value ({curr})"] = inv_df["value"].apply(_fmt_chf)
         inv_df["volume (L)"] = inv_df["volume"].apply(_fmt_litres)
         inv_df = inv_df.drop(columns=["value", "volume"])
-        lines.append("### Ending Inventory\n")
-        lines.append(_to_md(inv_df))
+        lines.append("### Ending Inventory\n" if fmt == "markdown" else "Ending Inventory:\n")
+        lines.append(_format_df(inv_df, fmt, style="compact"))
 
     return "\n".join(lines)
 
@@ -995,6 +1037,7 @@ def _multi_period_churn(
     title: str,
     *,
     currency: str = "CHF",
+    fmt: str = "markdown",
 ) -> str:
     """Render a multi-period churn table (bottles + value)."""
     sql = f"""
@@ -1062,29 +1105,32 @@ def _multi_period_churn(
         return f"+{n}" if n >= 0 else str(n)
 
     bt = df[["label", "beg_bottles", "pur_bottles", "con_bottles", "end_bottles", "net_bottles"]].copy()
-    bt.columns = [col_name, "beg. bottles", "+ purchased", "\u2212 consumed", "end. bottles", "net"]
+    bt.columns = [col_name, "beg. bottles", "+ purchased", "− consumed", "end. bottles", "net"]
     bt["net"] = bt["net"].apply(_signed_int)
 
-    lines: list[str] = [f"## Cellar Churn \u2014 {title}\n"]
-    lines.append(_to_md(bt))
+    if fmt == "plain":
+        lines: list[str] = [f"📊 CELLAR CHURN — {title}\n"]
+    else:
+        lines: list[str] = [f"## Cellar Churn — {title}\n"]
+    lines.append(_format_df(bt, fmt, style="compact"))
     lines.append("")
 
     # --- Value table ---
     def _signed_chf(v: float) -> str:
         s = _fmt_chf(abs(v))
-        return f"+{s}" if v >= 0 else f"\u2212{s}"
+        return f"+{s}" if v >= 0 else f"−{s}"
 
     vt = df[["label"]].copy()
     vt[col_name] = vt["label"]
     vt["beg. value"] = df["beg_val"].apply(_fmt_chf)
     vt["+ purchased"] = df["pur_val"].apply(_fmt_chf)
-    vt["\u2212 consumed"] = df["con_val"].apply(_fmt_chf)
+    vt["− consumed"] = df["con_val"].apply(_fmt_chf)
     vt["end. value"] = df["end_val"].apply(_fmt_chf)
     vt["net"] = df["net_val"].apply(_signed_chf)
     vt = vt.drop(columns=["label"])
 
-    lines.append(f"### Value ({curr})\n")
-    lines.append(_to_md(vt))
+    lines.append(f"### Value ({curr})\n" if fmt == "markdown" else f"Value ({curr}):\n")
+    lines.append(_format_df(vt, fmt, style="compact"))
 
     return "\n".join(lines)
 

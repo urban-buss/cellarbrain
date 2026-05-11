@@ -70,3 +70,7 @@ Fact-only web research to populate dossier sections. Every claim must trace to a
 | `pending_research` | Priority queue of wines needing research |
 | `pending_companion_research` | Priority queue of tracked wines needing research |
 | `find_wine` | Resolve wine identity from text |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

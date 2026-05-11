@@ -28,7 +28,7 @@ class TestSommelierConfig:
         assert s.sommelier.model_dir == "models/sommelier/model"
         assert s.sommelier.default_limit == 10
         assert s.sommelier.min_score == 0.0
-        assert s.sommelier.base_model == "models/sommelier/base-model"
+        assert s.sommelier.base_model == "sentence-transformers/all-MiniLM-L6-v2"
         assert s.sommelier.training_epochs == 10
         assert s.sommelier.training_batch_size == 32
         assert s.sommelier.warmup_ratio == 0.1
@@ -50,8 +50,8 @@ class TestSommelierConfig:
         assert s.sommelier.enabled is True
         assert s.sommelier.default_limit == 20
         assert s.sommelier.min_score == 0.3
-        # Unset fields keep defaults (anchored to config file's parent dir)
-        assert s.sommelier.model_dir == str(tmp_path / "models" / "sommelier" / "model")
+        # Unset fields keep defaults (anchored to data_dir)
+        assert s.sommelier.model_dir == str(tmp_path / "output" / "models" / "sommelier" / "model")
 
     def test_unknown_key_rejected(self, tmp_path):
         cfg = tmp_path / "test.toml"

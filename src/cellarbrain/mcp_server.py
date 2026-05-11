@@ -73,6 +73,13 @@ def _data_dir() -> str:
     return _load_mcp_settings().paths.data_dir
 
 
+def _effective_fmt(format: str | None) -> str:
+    """Return effective output format: explicit param or settings default."""
+    if format is not None:
+        return format
+    return _load_mcp_settings().output.default_format
+
+
 def _load_mcp_settings() -> Settings:
     """Load settings once for the MCP server process."""
     global _mcp_settings
@@ -97,6 +104,21 @@ def _load_mcp_settings() -> Settings:
                 f"Set a separate [logging] log_db in cellarbrain.toml to fix.",
                 file=sys.stderr,
             )
+        # Warn about missing sommelier paths for early diagnosis
+        if _mcp_settings.sommelier.enabled:
+            import pathlib as _pl
+
+            _som = _mcp_settings.sommelier
+            for _label, _p in [
+                ("pairing_dataset", _som.pairing_dataset),
+                ("food_catalogue", _som.food_catalogue),
+            ]:
+                if not _pl.Path(_p).exists():
+                    logger.warning(
+                        "Sommelier %s not found: %s",
+                        _label,
+                        _p,
+                    )
     return _mcp_settings
 
 
@@ -423,7 +445,7 @@ def _log_prompt(fn):
 
 @mcp.tool()
 @_log_tool
-def query_cellar(sql: str, meta: dict | None = None) -> str:
+def query_cellar(sql: str, format: str | None = None, meta: dict | None = None) -> str:
     """Run a read-only SQL query against the wine cellar database.
 
     All views are pre-joined â€” no JOINs needed.
@@ -474,7 +496,7 @@ def query_cellar(sql: str, meta: dict | None = None) -> str:
     """
     try:
         con = _get_agent_connection()
-        return q.execute_query(con, sql, row_limit=_load_mcp_settings().query.row_limit)
+        return q.execute_query(con, sql, row_limit=_load_mcp_settings().query.row_limit, fmt=_effective_fmt(format))
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
 
@@ -485,6 +507,7 @@ def cellar_stats(
     group_by: str | None = None,
     limit: int = 20,
     sort_by: str | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Get summary statistics about the wine cellar.
@@ -502,6 +525,7 @@ def cellar_stats(
         sort_by:  Sort grouped results by column. One of: "bottles" (default),
                   "value", "wines", "volume". Default for vintage is chronological.
                   Ignored when group_by is omitted.
+        format:   Output format: "markdown" (default) or "plain" (no tables, iMessage-friendly).
     """
     try:
         con = _get_connection()
@@ -511,6 +535,7 @@ def cellar_stats(
             currency=_load_mcp_settings().currency.default,
             limit=limit,
             sort_by=sort_by,
+            fmt=_effective_fmt(format),
         )
     except (ValueError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -522,6 +547,7 @@ def cellar_churn(
     period: str | None = None,
     year: int | None = None,
     month: int | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Get cellar churn (roll-forward) analysis showing inventory movement.
@@ -549,7 +575,12 @@ def cellar_churn(
     try:
         con = _get_connection()
         return q.cellar_churn(
-            con, period=period, year=year, month=month, currency=_load_mcp_settings().currency.default
+            con,
+            period=period,
+            year=year,
+            month=month,
+            currency=_load_mcp_settings().currency.default,
+            fmt=_effective_fmt(format),
         )
     except (ValueError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -691,7 +722,9 @@ def cellar_info(verbose: bool = False, meta: dict | None = None) -> str:
 
 @mcp.tool()
 @_log_tool
-def find_wine(query: str, limit: int | None = None, fuzzy: bool = False, meta: dict | None = None) -> str:
+def find_wine(
+    query: str, limit: int | None = None, fuzzy: bool = False, format: str | None = None, meta: dict | None = None
+) -> str:
     """Search for wines in the cellar by name, winery, region, grape, style, or any attribute.
 
     Tokenises multi-word queries: each word must match at least one of 12
@@ -748,6 +781,7 @@ def find_wine(query: str, limit: int | None = None, fuzzy: bool = False, meta: d
             limit=effective_limit,
             fuzzy=fuzzy,
             synonyms=_effective_synonyms(),
+            fmt=_effective_fmt(format),
         )
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -1109,22 +1143,24 @@ def log_price(
 def tracked_wine_prices(
     tracked_wine_id: int,
     vintage: int | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Get the latest prices for a tracked wine from all retailers.
 
-    Returns a Markdown table of the most recent in-stock prices,
-    sorted by price (cheapest first).
+    Returns the most recent in-stock prices, sorted by price (cheapest first).
 
     Args:
         tracked_wine_id: The numeric tracked wine ID.
         vintage: Optional vintage to filter by.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     try:
         return q.get_tracked_wine_prices(
             _data_dir(),
             tracked_wine_id,
             vintage=vintage,
+            fmt=_effective_fmt(format),
         )
     except (TrackedWineNotFoundError, DataStaleError, QueryError) as exc:
         return f"Error: {exc}"
@@ -1136,17 +1172,19 @@ def price_history(
     tracked_wine_id: int,
     vintage: int | None = None,
     months: int = 12,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Get the monthly price history for a tracked wine.
 
-    Returns a Markdown table of monthly price statistics (min, max, avg)
-    over the specified number of months.
+    Returns monthly price statistics (min, max, avg) over the specified
+    number of months.
 
     Args:
         tracked_wine_id: The numeric tracked wine ID.
         vintage: Optional vintage to filter by.
         months: Number of months of history to include (default 12).
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     try:
         return q.get_price_history(
@@ -1154,6 +1192,7 @@ def price_history(
             tracked_wine_id,
             vintage=vintage,
             months=months,
+            fmt=_effective_fmt(format),
         )
     except (TrackedWineNotFoundError, DataStaleError, QueryError) as exc:
         return f"Error: {exc}"
@@ -1161,7 +1200,7 @@ def price_history(
 
 @mcp.tool()
 @_log_tool
-def wishlist_alerts(days: int | None = None, meta: dict | None = None) -> str:
+def wishlist_alerts(days: int | None = None, format: str | None = None, meta: dict | None = None) -> str:
     """Get current wishlist alerts â€” price drops, new listings, back in stock, etc.
 
     Scans recent price observations and returns prioritised alerts
@@ -1175,6 +1214,7 @@ def wishlist_alerts(days: int | None = None, meta: dict | None = None) -> str:
             _data_dir(),
             settings=_load_mcp_settings(),
             days=days,
+            fmt=_effective_fmt(format),
         )
     except (DataStaleError, QueryError) as exc:
         return f"Error: {exc}"
@@ -1540,6 +1580,7 @@ async def pairing_candidates(
     cuisine: str | None = None,
     grapes: str | None = None,
     limit: int = 15,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Find pairing-candidate wines using multi-strategy structured retrieval.
@@ -1570,7 +1611,9 @@ async def pairing_candidates(
         limit: Maximum candidates to return (default 15).
     """
     return await anyio.to_thread.run_sync(
-        lambda: _pairing_candidates_sync(dish_description, category, weight, protein, cuisine, grapes, limit),
+        lambda: _pairing_candidates_sync(
+            dish_description, category, weight, protein, cuisine, grapes, limit, _effective_fmt(format)
+        ),
     )
 
 
@@ -1582,6 +1625,7 @@ def _pairing_candidates_sync(
     cuisine: str | None,
     grapes: str | None,
     limit: int,
+    fmt: str = "markdown",
 ) -> str:
     """Blocking helper for pairing_candidates."""
     from . import pairing
@@ -1605,7 +1649,7 @@ def _pairing_candidates_sync(
     if not results:
         return "No pairing candidates found for this dish profile."
 
-    return pairing.format_table(results)
+    return pairing.format_table(results, fmt=fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -1619,6 +1663,7 @@ async def pair_wine(
     dish: str,
     occasion: str | None = None,
     limit: int = 5,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Find wines from your cellar that pair well with a dish.
@@ -1635,11 +1680,11 @@ async def pair_wine(
         limit: Number of recommendations to return (default 5).
     """
     return await anyio.to_thread.run_sync(
-        lambda: _pair_wine_sync(dish, occasion, limit),
+        lambda: _pair_wine_sync(dish, occasion, limit, _effective_fmt(format)),
     )
 
 
-def _pair_wine_sync(dish: str, occasion: str | None, limit: int) -> str:
+def _pair_wine_sync(dish: str, occasion: str | None, limit: int, fmt: str = "markdown") -> str:
     """Blocking helper for pair_wine."""
     from . import pairing
 
@@ -1661,7 +1706,7 @@ def _pair_wine_sync(dish: str, occasion: str | None, limit: int) -> str:
     if not results:
         return f'No wines found for "{dish}". Your cellar may not have suitable wines in stock.'
 
-    return pairing.format_explained(results, dish, classification, limit=limit)
+    return pairing.format_explained(results, dish, classification, limit=limit, fmt=fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -1743,6 +1788,7 @@ def add_pairing(
     try:
         settings = _load_mcp_settings()
         dataset_path = pathlib.Path(settings.sommelier.pairing_dataset)
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
         _append_pairing(
             dataset_path,
             food_text=food_text.strip(),

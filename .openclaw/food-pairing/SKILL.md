@@ -64,3 +64,7 @@ For each recommendation:
 | `suggest_wines` | Embedding-based food→wine (needs trained model) |
 | `suggest_foods` | Embedding-based wine→food (needs trained model) |
 | `read_dossier` | Wine details for final selection |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.

@@ -55,3 +55,7 @@ Offer to show dossier details for any wine: `read_dossier(wine_id)`.
 |------|---------|
 | `query_cellar` | SQL queries for drinking status |
 | `read_dossier` | Details on specific wines |
+
+## Output Format
+
+Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
