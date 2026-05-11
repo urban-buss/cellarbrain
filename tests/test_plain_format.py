@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pandas as pd
 import pytest
-from tests.dataset_factory import (
+from dataset_factory import (
     make_appellation,
     make_bottle,
     make_cellar,
