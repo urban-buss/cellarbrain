@@ -48,7 +48,10 @@ def train_model(
 
     pairing_path = Path(pairing_parquet)
     if not pairing_path.exists():
-        raise FileNotFoundError(f"Pairing dataset not found: {pairing_path}. Run build_pairings.py first.")
+        raise FileNotFoundError(
+            f"Pairing dataset not found: {pairing_path}. "
+            f"Ensure cellarbrain[sommelier] is installed and the seed file is bundled."
+        )
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)

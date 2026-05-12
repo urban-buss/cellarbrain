@@ -1925,6 +1925,13 @@ def train_sommelier(
     model_dir = pathlib.Path(cfg.model_dir)
     dataset_path = pathlib.Path(cfg.pairing_dataset)
 
+    try:
+        from .sommelier.seed import ensure_pairing_dataset
+
+        ensure_pairing_dataset(dataset_path)
+    except FileNotFoundError:
+        pass  # will be caught by the check below
+
     if not dataset_path.exists():
         return f"Error: pairing dataset not found at {dataset_path}"
 

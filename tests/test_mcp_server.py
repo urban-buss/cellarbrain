@@ -1241,10 +1241,13 @@ class TestBatchUpdateDossierTool:
 class TestTrainSommelierTool:
     """Tests for the train_sommelier MCP tool."""
 
-    def test_missing_dataset_returns_error(self, server):
-        """When pairing dataset doesn't exist, returns an error."""
+    def test_missing_dataset_returns_error(self, server, tmp_path):
+        """When pairing dataset doesn't exist and seed is unavailable, returns an error."""
+        import unittest.mock
+
         server._mcp_settings = None
         original = server._load_mcp_settings
+        missing = str(tmp_path / "no" / "such" / "pairings.parquet")
 
         def _patched():
             s = original()
@@ -1252,7 +1255,7 @@ class TestTrainSommelierTool:
                 s,
                 "sommelier",
                 type(s.sommelier)(
-                    pairing_dataset="nonexistent/pairings.parquet",
+                    pairing_dataset=missing,
                 ),
             )
             return s
@@ -1260,8 +1263,11 @@ class TestTrainSommelierTool:
         server._load_mcp_settings = _patched
         server._mcp_settings = None
         try:
-            result = server.train_sommelier()
-            assert "Error:" in result
+            with unittest.mock.patch(
+                "cellarbrain.sommelier.seed.ensure_pairing_dataset",
+            ):
+                result = server.train_sommelier()
+            assert "Error" in result
             assert "not found" in result
         finally:
             server._load_mcp_settings = original
