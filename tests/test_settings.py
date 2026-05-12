@@ -156,14 +156,27 @@ class TestLoadNoFile:
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings()
-        assert s == Settings()
+        # Paths are resolved against CWD when no config file is found
+        assert s.paths.data_dir == str(tmp_path / "output")
+        assert s.paths.raw_dir == str(tmp_path / "raw")
+        assert s.backup.backup_dir == str(tmp_path / "bkp")
+        # Non-path settings remain at defaults
+        assert s.query == Settings().query
+        assert s.display == Settings().display
+        assert s.csv == Settings().csv
 
     def test_explicit_none_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings(None)
-        assert s == Settings()
+        # Paths are resolved against CWD when no config file is found
+        assert s.paths.data_dir == str(tmp_path / "output")
+        assert s.paths.raw_dir == str(tmp_path / "raw")
+        assert s.backup.backup_dir == str(tmp_path / "bkp")
+        # Non-path settings remain at defaults
+        assert s.query == Settings().query
+        assert s.display == Settings().display
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +197,11 @@ class TestLoadToml:
             encoding="utf-8",
         )
         s = load_settings(cfg)
-        assert s.paths.data_dir == "my_output"
+        # Relative paths are resolved against the config file's parent dir
+        assert s.paths.data_dir == str(tmp_path / "my_output")
         assert s.query.row_limit == 500
-        # Non-overridden defaults preserved
-        assert s.paths.raw_dir == "raw"
+        # Non-overridden defaults preserved (also resolved)
+        assert s.paths.raw_dir == str(tmp_path / "raw")
         assert s.query.search_limit == 10
 
     def test_reads_drinking_window(self, tmp_path):
@@ -334,11 +348,11 @@ class TestEnvOverride:
     def test_CELLARBRAIN_DATA_DIR_overrides_paths(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
-        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/custom/data")
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(tmp_path / "custom" / "data"))
         s = load_settings()
-        assert s.paths.data_dir == "/custom/data"
-        # Other path fields untouched
-        assert s.paths.raw_dir == "raw"
+        assert s.paths.data_dir == str(tmp_path / "custom" / "data")
+        # Other path fields are resolved against CWD
+        assert s.paths.raw_dir == str(tmp_path / "raw")
 
     def test_env_overrides_toml_data_dir(self, tmp_path, monkeypatch):
         cfg = tmp_path / "cellarbrain.toml"
@@ -349,9 +363,9 @@ class TestEnvOverride:
         """),
             encoding="utf-8",
         )
-        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/env/output")
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(tmp_path / "env" / "output"))
         s = load_settings(cfg)
-        assert s.paths.data_dir == "/env/output"
+        assert s.paths.data_dir == str(tmp_path / "env" / "output")
 
 
 # ---------------------------------------------------------------------------
