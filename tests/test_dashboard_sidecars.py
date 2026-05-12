@@ -5,16 +5,15 @@ from __future__ import annotations
 import json
 import pathlib
 
-from tests.dataset_factory import (
+from cellarbrain import query as q
+from cellarbrain.dashboard import sidecars
+from dataset_factory import (
     make_bottle,
     make_cellar,
     make_wine,
     make_winery,
     write_dataset,
 )
-
-from cellarbrain import query as q
-from cellarbrain.dashboard import sidecars
 
 # ---------------------------------------------------------------------------
 # consumed-pending — basic CRUD
