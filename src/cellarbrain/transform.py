@@ -316,6 +316,7 @@ def build_wines(
     """
     entities = []
     wine_lookup: dict[tuple, int] = {}
+    volume_seen: set[tuple] = set()
 
     for i, row in enumerate(wines_rows, start=1):
         nk = _wine_natural_key(row)
@@ -381,14 +382,20 @@ def build_wines(
             raise ValueError(f"Wine row {i} ({nk[0]!r} / {nk[1]!r} / {nk[2]!r}): {exc}") from exc
         entities.append(wine)
         if nk in wine_lookup:
-            logger.info(
-                "Duplicate wine natural key %r at row %d "
-                "(first seen as wine_id=%d). "
-                "The later entry will take precedence.",
-                nk,
-                i,
-                wine_lookup[nk],
-            )
+            # Only log when the volume-aware key also collides — duplicates
+            # caused solely by different bottle formats are expected and not
+            # worth reporting.
+            vk = _wine_volume_key(row)
+            if vk in volume_seen:
+                logger.info(
+                    "Duplicate wine natural key %r at row %d "
+                    "(first seen as wine_id=%d). "
+                    "The later entry will take precedence.",
+                    nk,
+                    i,
+                    wine_lookup[nk],
+                )
+        volume_seen.add(_wine_volume_key(row))
         wine_lookup[nk] = wine_id
 
     return entities, wine_lookup

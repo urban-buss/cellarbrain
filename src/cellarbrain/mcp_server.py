@@ -543,6 +543,11 @@ def _tool(name: str | None = None, **tool_kwargs):
     Returns the *logged* function so that direct calls in tests get a
     ToolResponse/str.  FastMCP receives a wrapper that converts
     ToolResponse → CallToolResult on the wire.
+
+    Structured output validation is disabled (structured_output=False) because
+    our tools return CallToolResult with custom structuredContent that doesn't
+    match the auto-generated output model the MCP library would derive from
+    the ``-> str`` return annotation.
     """
 
     def decorator(fn):
@@ -563,7 +568,7 @@ def _tool(name: str | None = None, **tool_kwargs):
                 result = logged_fn(*args, **kwargs)
                 return to_call_tool_result(result)
 
-        mcp.add_tool(wire_wrapper, name=name, **tool_kwargs)
+        mcp.add_tool(wire_wrapper, name=name, structured_output=False, **tool_kwargs)
         return logged_fn
 
     return decorator

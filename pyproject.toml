@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellarbrain"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "AI sommelier for your wine cellar — ETL pipeline, DuckDB query layer, Markdown dossiers, and MCP server for wine cellar CSV exports"
 requires-python = ">=3.11"
 license = "MIT"
@@ -74,6 +74,7 @@ cellarbrain = "cellarbrain.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"cellarbrain" = ["data/*.toml"]
 "cellarbrain.dashboard" = [
     "static/**/*",
     "templates/**/*",

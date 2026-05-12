@@ -1,5 +1,5 @@
 ---
-mode: agent
+agent: agent
 description: "Consolidate agent memories into improved instructions and prompts. Run periodically to turn lessons learned into permanent workspace rules."
 ---
 
