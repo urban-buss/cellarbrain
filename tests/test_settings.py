@@ -1294,10 +1294,19 @@ class TestSommelierPathAnchoring:
         resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
         assert resolved.base_model == "sentence-transformers/all-MiniLM-L6-v2"
 
-    def test_resolve_leaves_food_catalogue_unchanged(self):
+    def test_resolve_anchors_food_catalogue_to_bundled(self):
         cfg = SommelierConfig()
         resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
-        assert resolved.food_catalogue == "models/sommelier/food_catalogue.parquet"
+        # Relative food_catalogue should resolve to the bundled package data path
+        assert resolved.food_catalogue != "models/sommelier/food_catalogue.parquet"
+        assert resolved.food_catalogue.endswith("food_catalogue.parquet")
+        assert pathlib.Path(resolved.food_catalogue).is_absolute()
+
+    def test_resolve_food_catalogue_absolute_passthrough(self):
+        abs_cat = str(pathlib.Path(__file__).parent / "custom_catalogue.parquet")
+        cfg = SommelierConfig(food_catalogue=abs_cat)
+        resolved = _resolve_sommelier_paths(cfg, pathlib.Path("/data"))
+        assert resolved.food_catalogue == abs_cat
 
     def test_absolute_override_not_modified(self):
         abs_model = str(pathlib.Path("/abs/model"))

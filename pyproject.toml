@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellarbrain"
-version = "0.2.14"
+version = "0.2.15"
 description = "AI sommelier for your wine cellar — ETL pipeline, DuckDB query layer, Markdown dossiers, and MCP server for wine cellar CSV exports"
 requires-python = ">=3.11"
 license = "MIT"
@@ -73,6 +73,9 @@ where = ["src"]
 "cellarbrain.skills" = [
     "README.md",
     "*/SKILL.md",
+]
+"cellarbrain.sommelier" = [
+    "data/*.parquet",
 ]
 
 [tool.pytest.ini_options]
