@@ -106,6 +106,7 @@ _META_FIELDS = frozenset(
         "food_groups",
         "format_group_id",
         "wine_slug",
+        "is_in_transit",
     }
 )
 
