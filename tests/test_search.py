@@ -342,6 +342,121 @@ class TestFindWine:
         assert straight == curly
 
 
+# ---------------------------------------------------------------------------
+# TestFindWineStatusMarkers — [consumed] / [on order] markers
+# ---------------------------------------------------------------------------
+
+
+def _make_status_marker_dataset(tmp_path):
+    """Dataset with stored, on-order, and consumed wines for marker tests."""
+    wines = [
+        make_wine(
+            wine_id=1,
+            winery_id=1,
+            winery_name="Domaine A",
+            name="Stored Wine",
+            vintage=2020,
+        ),
+        make_wine(
+            wine_id=2,
+            winery_id=2,
+            winery_name="Domaine B",
+            name="OnOrder Wine",
+            vintage=2021,
+        ),
+        make_wine(
+            wine_id=3,
+            winery_id=3,
+            winery_name="Domaine C",
+            name="Consumed Wine",
+            vintage=2019,
+        ),
+    ]
+    bottles = [
+        # Wine 1: stored onsite
+        make_bottle(1, wine_id=1, status="stored", cellar_id=1),
+        # Wine 2: stored but in-transit cellar → on order
+        make_bottle(2, wine_id=2, status="stored", cellar_id=2),
+        # Wine 3: consumed
+        make_bottle(
+            3,
+            wine_id=3,
+            status="consumed",
+            cellar_id=None,
+            shelf=None,
+            bottle_number=None,
+            output_date=date(2024, 6, 1),
+            output_type="consumed",
+        ),
+    ]
+    return write_dataset(
+        tmp_path,
+        {
+            "winery": [
+                make_winery(1, name="Domaine A"),
+                make_winery(2, name="Domaine B"),
+                make_winery(3, name="Domaine C"),
+            ],
+            "appellation": [make_appellation(1)],
+            "grape": [make_grape(1)],
+            "wine": wines,
+            "wine_grape": [],
+            "bottle": bottles,
+            "cellar": [
+                make_cellar(1, name="Cave", location_type="onsite"),
+                make_cellar(2, name="Transit", location_type="in_transit"),
+            ],
+            "provider": [make_provider(1)],
+            "tasting": [],
+            "pro_rating": [],
+        },
+    )
+
+
+@pytest.fixture()
+def status_marker_dir(tmp_path):
+    return _make_status_marker_dataset(tmp_path)
+
+
+class TestFindWineStatusMarkers:
+    """Verify [consumed] and [on order] markers on non-stored wines."""
+
+    def test_stored_wine_has_no_marker(self, status_marker_dir):
+        con = get_agent_connection(status_marker_dir)
+        result = find_wine(con, "Stored Wine")
+        assert "Stored Wine" in result
+        assert "[consumed]" not in result
+        assert "[on order]" not in result
+
+    def test_on_order_wine_shows_marker(self, status_marker_dir):
+        con = get_agent_connection(status_marker_dir)
+        result = find_wine(con, "OnOrder Wine")
+        assert "[on order]" in result
+
+    def test_consumed_wine_shows_marker(self, status_marker_dir):
+        con = get_agent_connection(status_marker_dir)
+        result = find_wine(con, "Consumed Wine")
+        assert "[consumed]" in result
+
+    def test_mixed_search_shows_both_markers(self, status_marker_dir):
+        con = get_agent_connection(status_marker_dir)
+        result = find_wine(con, "Domaine")
+        assert "[on order]" in result
+        assert "[consumed]" in result
+        # The stored wine should NOT have a marker
+        lines = result.split("\n")
+        for line in lines:
+            if "Stored Wine" in line and "[" not in line:
+                break
+        else:
+            if "Stored Wine" in result:
+                # Check that the stored wine line doesn't have markers
+                for line in lines:
+                    if "Stored Wine" in line:
+                        assert "[consumed]" not in line
+                        assert "[on order]" not in line
+
+
 class TestNormaliseQueryTokens:
     def test_synonym_expansion(self):
         result = _normalise_query_tokens(["rotwein"], {"rotwein": "red"})
