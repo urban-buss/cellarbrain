@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 
-from tests.dataset_factory import (
+from dataset_factory import (
     make_bottle,
     make_cellar,
     make_wine,
