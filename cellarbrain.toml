@@ -276,7 +276,7 @@ CAD = 0.62
 RON = 0.19
 
 # --- Sommelier (AI Food-Wine Pairing) --------------------------------------
-# Requires optional dependencies: pip install cellarbrain[sommelier]
+# Requires optional dependencies: pip install cellarbrain[ml]
 # Relative paths for model_dir, pairing_dataset, food_index, food_ids are
 # anchored to data_dir at load time. Absolute paths pass through unchanged.
 # base_model and food_catalogue are NOT anchored (install-time artefacts).
@@ -297,7 +297,6 @@ RON = 0.19
 # eval_split = 0.1                         # hold-out fraction for evaluation
 
 # --- Email Ingestion (IMAP Polling Daemon) ----------------------------------
-# Requires optional dependencies: pip install cellarbrain[ingest]
 # [ingest]
 # imap_host = "imap.mail.me.com"
 # imap_port = 993

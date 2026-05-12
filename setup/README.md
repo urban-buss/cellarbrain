@@ -7,7 +7,7 @@ Cellarbrain setup, development, deployment, and operations documentation.
 ```bash
 git clone https://github.com/urban-buss/cellarbrain.git && cd cellarbrain
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[research,sommelier,dashboard,ingest]"
+pip install -e "."
 cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output
 cellarbrain validate && cellarbrain stats
 ```

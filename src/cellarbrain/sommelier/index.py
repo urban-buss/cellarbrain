@@ -21,7 +21,7 @@ def _import_faiss():
         import faiss
     except ImportError:
         raise ImportError(
-            "faiss-cpu is required for the sommelier module. Install with: pip install cellarbrain[sommelier]"
+            "faiss-cpu is required for the sommelier module. Install with: pip install cellarbrain[ml]"
         ) from None
     return faiss
 

@@ -10,7 +10,7 @@ Semantic food-wine pairing using a fine-tuned sentence-transformer model and FAI
 ## Installation
 
 ```bash
-pip install "cellarbrain[sommelier]"
+pip install "cellarbrain[ml]"
 ```
 
 Installs: `sentence-transformers`, `faiss-cpu`, `datasets`, `accelerate`
@@ -112,7 +112,7 @@ print(f'Food IDs: {len(ids)} entries')
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `ModuleNotFoundError: sentence_transformers` | Extra not installed | `pip install "cellarbrain[sommelier]"` |
+| `ModuleNotFoundError: sentence_transformers` | Extra not installed | `pip install "cellarbrain[ml]"` |
 | `FileNotFoundError: model/` | Model not trained | Run `cellarbrain train-model` |
 | `FileNotFoundError: food.index` | Indexes not built | Run `cellarbrain rebuild-indexes` |
 | Empty results from `suggest_wines` | Wine index stale | Run `cellarbrain rebuild-indexes --wine-only` |

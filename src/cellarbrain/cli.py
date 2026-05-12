@@ -1566,15 +1566,9 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
 
 def _cmd_dashboard(args: argparse.Namespace, settings: Settings) -> None:
     """Start the web explorer dashboard."""
-    try:
-        from .dashboard import create_app
-    except ImportError:
-        print("Dashboard dependencies not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[dashboard]", file=sys.stderr)
-        sys.exit(1)
-
     import uvicorn
 
+    from .dashboard import create_app
     from .observability import _discover_log_files
 
     # Ensure at least one log-store file exists so the dashboard can start
@@ -1741,12 +1735,7 @@ def _cmd_restore(args: argparse.Namespace, settings: Settings) -> None:
 
 def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
     """Start the email ingestion daemon or run a single poll cycle."""
-    try:
-        from .email_poll import IngestDaemon, poll_once, reap_orphans, reap_stale
-    except ImportError:
-        print("Ingest dependencies not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
-        sys.exit(1)
+    from .email_poll import IngestDaemon, poll_once, reap_orphans, reap_stale
 
     config = settings.ingest
 
@@ -1795,13 +1784,8 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
 
 def _cmd_promotions(args: argparse.Namespace, settings: Settings) -> None:
     """Scan newsletters for wine promotions."""
-    try:
-        from .promotions import scan_once
-        from .promotions.report import format_report
-    except ImportError:
-        print("Promotions dependencies not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[promotions]", file=sys.stderr)
-        sys.exit(1)
+    from .promotions import scan_once
+    from .promotions.report import format_report
 
     result = scan_once(
         settings,
@@ -1827,14 +1811,9 @@ def _ingest_setup() -> None:
         print("Error: password is required.", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        store_credentials(user, password)
-        print(f"\nCredentials stored for '{user}'.")
-        print("You can now run: cellarbrain ingest")
-    except ImportError:
-        print("Error: 'keyring' package not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
-        sys.exit(1)
+    store_credentials(user, password)
+    print(f"\nCredentials stored for '{user}'.")
+    print("You can now run: cellarbrain ingest")
 
 
 def _ingest_status(settings: Settings) -> None:
@@ -2134,7 +2113,12 @@ def _rebuild_wine_index(model, data_dir: pathlib.Path, wine_dir: pathlib.Path, s
 
 
 def _cmd_train_model(args: argparse.Namespace, settings: Settings) -> None:
-    from .sommelier.training import train_model
+    try:
+        from .sommelier.training import train_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
     output = args.output or cfg.model_dir
@@ -2168,7 +2152,12 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
     training for a few epochs on the full pairing dataset.  Then rebuilds
     both FAISS indexes.
     """
-    from .sommelier.training import train_model
+    try:
+        from .sommelier.training import train_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
 
@@ -2218,8 +2207,13 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
 
 
 def _cmd_rebuild_indexes(args: argparse.Namespace, settings: Settings) -> None:
-    from .sommelier.index import build_index
-    from .sommelier.model import load_model
+    try:
+        from .sommelier.index import build_index
+        from .sommelier.model import load_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
     model = load_model(cfg.model_dir)

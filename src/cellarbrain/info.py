@@ -23,22 +23,31 @@ MCP_DEFAULT_PORT = 8080
 
 # Extras and the importable module names used to probe them.
 _EXTRAS: dict[str, list[str]] = {
-    "sommelier": ["sentence_transformers", "faiss"],
-    "dashboard": ["starlette", "uvicorn", "jinja2"],
-    "ingest": ["imapclient", "keyring"],
-    "research": ["httpx"],
+    "ml": ["sentence_transformers", "faiss"],
 }
 
 # Display-friendly package names used for version lookups via
 # importlib.metadata (distribution names, not module names).
 _EXTRA_DIST_NAMES: dict[str, list[str]] = {
-    "sommelier": ["sentence-transformers", "faiss-cpu"],
-    "dashboard": ["starlette", "uvicorn"],
-    "ingest": ["imapclient", "keyring"],
-    "research": ["httpx"],
+    "ml": ["sentence-transformers", "faiss-cpu"],
 }
 
-_CORE_PACKAGES = ["pyarrow", "duckdb", "pandas", "tabulate", "mcp"]
+_CORE_PACKAGES = [
+    "pyarrow",
+    "duckdb",
+    "pandas",
+    "tabulate",
+    "mcp",
+    "httpx",
+    "starlette",
+    "uvicorn",
+    "jinja2",
+    "imapclient",
+    "keyring",
+    "beautifulsoup4",
+    "lxml",
+    "jellyfish",
+]
 
 
 @dataclass(frozen=True)

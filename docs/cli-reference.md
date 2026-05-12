@@ -394,7 +394,6 @@ cellarbrain ingest --reap-orphans --dry-run
 
 ### Prerequisites
 
-- Install ingest dependencies: `pip install cellarbrain[ingest]`
 - Configure `[ingest]` section in `cellarbrain.toml` (see [Settings Reference](settings-reference.md#ingestconfig))
 - Store IMAP credentials via `cellarbrain ingest --setup` or set `CELLARBRAIN_IMAP_USER` and `CELLARBRAIN_IMAP_PASSWORD` environment variables
 

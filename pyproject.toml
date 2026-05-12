@@ -25,38 +25,38 @@ dependencies = [
     "pandas>=2.0",
     "tabulate>=0.9",
     "mcp[cli]>=1.2.0",
-]
-
-[project.optional-dependencies]
-research = [
+    # Previously optional — consolidated in 0.3.0 (lightweight, < 40 MB total)
     "httpx>=0.27",
-]
-sommelier = [
-    "sentence-transformers>=3.0",
-    "faiss-cpu>=1.7",
-    "datasets>=2.0",
-    "accelerate>=1.1.0",
-]
-dashboard = [
     "starlette>=0.36",
     "uvicorn[standard]>=0.27",
     "jinja2>=3.1",
     "markdown>=3.5",
     "pyyaml>=6.0",
     "pytz>=2024.1",
-]
-ingest = [
     "imapclient>=3.0",
     "keyring>=25.0",
-]
-promotions = [
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
-    "imapclient>=3.0",
-]
-search = [
     "jellyfish>=1.0",
 ]
+
+[project.optional-dependencies]
+ml = [
+    "sentence-transformers>=3.0",
+    "faiss-cpu>=1.7",
+    "datasets>=2.0",
+    "accelerate>=1.1.0",
+]
+all = [
+    "cellarbrain[ml]",
+]
+# Backward-compat aliases for v0.2.x extras (now included in core).
+sommelier = ["cellarbrain[ml]"]
+research = []
+dashboard = []
+ingest = []
+promotions = []
+search = []
 dev = [
     "pytest",
     "ruff>=0.8",

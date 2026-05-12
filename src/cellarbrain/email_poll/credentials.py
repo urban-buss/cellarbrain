@@ -96,11 +96,6 @@ def store_credentials(user: str, password: str, scope: str = "ingest") -> None:
     ----------
     scope
         Credential scope: ``"ingest"`` or ``"newsletter"``.
-
-    Raises
-    ------
-    ImportError
-        If the ``keyring`` package is not installed.
     """
     import keyring
 
@@ -113,12 +108,9 @@ def store_credentials(user: str, password: str, scope: str = "ingest") -> None:
 def _try_keyring(service: str = _KEYRING_SERVICE) -> tuple[str, str]:
     """Attempt to read credentials from the system keyring.
 
-    Returns ("", "") if keyring is unavailable or credentials are not stored.
+    Returns ("", "") if credentials are not stored.
     """
-    try:
-        import keyring
-    except ImportError:
-        return "", ""
+    import keyring
 
     try:
         user = keyring.get_password(service, "username") or ""

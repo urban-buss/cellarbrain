@@ -2656,7 +2656,7 @@ def train_sommelier(
     try:
         from .sommelier.training import train_model
     except ImportError:
-        return "Error: sentence-transformers not installed. Run: pip install cellarbrain[sommelier]"
+        return "Error: ML dependencies not installed. Run: pip install cellarbrain[ml]"
 
     settings = _load_mcp_settings()
     cfg = settings.sommelier
@@ -3489,11 +3489,8 @@ def scan_promotions(
         retailer: Only scan a specific retailer (e.g. "kapweine"). Empty = all.
         dry_run: If true, scan but do not archive emails or update state.
     """
-    try:
-        from .promotions import scan_once
-        from .promotions.report import format_scored_report
-    except ImportError:
-        return "Error: promotions dependencies not installed. Run: pip install cellarbrain[promotions]"
+    from .promotions import scan_once
+    from .promotions.report import format_scored_report
 
     try:
         settings = _load_mcp_settings()
@@ -3532,10 +3529,7 @@ def promotion_matches(
         retailer: Filter by retailer ID. Empty = all.
         min_score: Minimum value_score threshold (0.0–1.0). Default 0.0 = all.
     """
-    try:
-        from .promotions.persistence import load_matches
-    except ImportError:
-        return "Error: promotions dependencies not installed."
+    from .promotions.persistence import load_matches
 
     try:
         data_dir = _data_dir()
@@ -3591,10 +3585,7 @@ def promotion_history(
     Args:
         months: How many months of history to include (default 6).
     """
-    try:
-        from .promotions.persistence import load_matches
-    except ImportError:
-        return "Error: promotions dependencies not installed."
+    from .promotions.persistence import load_matches
 
     try:
         data_dir = _data_dir()

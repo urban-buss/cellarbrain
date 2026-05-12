@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-jellyfish = pytest.importorskip("jellyfish")
-
-from cellarbrain.phonetic import dmetaphone, is_available, register_udfs  # noqa: E402
+from cellarbrain.phonetic import dmetaphone, is_available, register_udfs
 
 
 class TestIsAvailable:

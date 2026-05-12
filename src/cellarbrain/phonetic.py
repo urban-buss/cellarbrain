@@ -1,11 +1,11 @@
 """Phonetic matching support for the wine search engine.
 
-Provides Double Metaphone phonetic codes via the ``jellyfish`` library
-(optional ``[search]`` extra). When available, registers a DuckDB scalar
-Python UDF ``dmetaphone(text)`` on connections for phonetic WHERE clauses.
+Provides Double Metaphone phonetic codes via the ``jellyfish`` library.
+Registers a DuckDB scalar Python UDF ``dmetaphone(text)`` on connections
+for phonetic WHERE clauses.
 
 Public API:
-- ``is_available()`` — True if jellyfish is importable
+- ``is_available()`` — always True (jellyfish is a core dependency)
 - ``dmetaphone(text)`` — primary Double Metaphone code (Python-side)
 - ``register_udfs(con)`` — register the UDF on a DuckDB connection
 """
@@ -14,49 +14,36 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger(__name__)
+import jellyfish
 
-_jellyfish = None
-_available: bool | None = None
+logger = logging.getLogger(__name__)
 
 
 def is_available() -> bool:
-    """Return True if the jellyfish library is importable."""
-    global _jellyfish, _available
-    if _available is not None:
-        return _available
-    try:
-        import jellyfish as _jf
+    """Return True if the jellyfish library is importable.
 
-        _jellyfish = _jf
-        _available = True
-    except ImportError:
-        _available = False
-    return _available
+    Always returns True since jellyfish is a core dependency as of v0.3.0.
+    Kept for backward compatibility with callers.
+    """
+    return True
 
 
 def dmetaphone(text: str | None) -> str:
     """Return the primary Double Metaphone code for *text*.
 
-    Returns empty string for None/empty input or if jellyfish unavailable.
+    Returns empty string for None/empty input.
     """
-    if not text or not is_available():
+    if not text:
         return ""
     try:
-        code = _jellyfish.metaphone(text)  # type: ignore[union-attr]
+        code = jellyfish.metaphone(text)
         return code or ""
     except Exception:
         return ""
 
 
 def register_udfs(con: object) -> None:
-    """Register phonetic UDFs on a DuckDB connection.
-
-    Non-fatal: logs a debug message if jellyfish is not installed.
-    """
-    if not is_available():
-        logger.debug("jellyfish not installed — phonetic UDFs not registered")
-        return
+    """Register phonetic UDFs on a DuckDB connection."""
     try:
         con.create_function("dmetaphone", dmetaphone, [str], str)  # type: ignore[attr-defined]
         logger.debug("Registered dmetaphone UDF on DuckDB connection")

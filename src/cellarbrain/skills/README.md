@@ -88,22 +88,12 @@ Skills are backward-compatible -- new versions may use new MCP tools but never r
 The `suggest_wines` and `suggest_foods` tools require a trained model:
 
 ```bash
-pip install cellarbrain[sommelier]
+pip install cellarbrain[ml]
 cellarbrain train-model
 cellarbrain rebuild-indexes
 ```
 
 All skills work without the model -- they fall back to SQL-based retrieval.
-
-## Optional: Phonetic Search
-
-For better fuzzy matching (Metaphone, Jaro-Winkler), install the search extra:
-
-```bash
-pip install cellarbrain[search]
-```
-
-Without it, search still works via standard fuzzy matching.
 
 ## Key New Tools (v2)
 

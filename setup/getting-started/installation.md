@@ -28,25 +28,24 @@ cd cellarbrain
 python3 -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows
-pip install -e ".[research,sommelier,dashboard,ingest]"
+pip install -e "."
 ```
 
 See [Local Setup](../development/local-setup.md) for the full development guide.
 
 ## Optional Extras
 
-Install individual extras or all at once:
+The only optional extra is `ml` for the AI food-wine pairing model:
 
 ```bash
-pip install "cellarbrain[research,sommelier,dashboard,ingest]"
+pip install "cellarbrain[ml]"
 ```
 
 | Extra | What it adds | Dependencies |
 |-------|-------------|--------------|
-| `research` | Web-based wine research | `httpx` |
-| `sommelier` | ML food-wine pairing | `sentence-transformers`, `faiss-cpu`, `datasets`, `accelerate` |
-| `dashboard` | Web UI explorer | `starlette`, `uvicorn[standard]`, `jinja2`, `markdown`, `pyyaml` |
-| `ingest` | IMAP email polling | `imapclient`, `keyring` |
+| `ml` | AI food-wine pairing | `sentence-transformers`, `faiss-cpu`, `datasets`, `accelerate` |
+
+All other features (web dashboard, email ingestion, web research, phonetic search) are included in the base install.
 
 Install individual extras:
 
