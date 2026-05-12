@@ -1,0 +1,51 @@
+{% if error %}
+<p style="color:var(--pico-del-color);">{{ error }}</p>
+{% elif results %}
+<h5>{{ count }} recommendation{{ 's' if count != 1 else '' }}</h5>
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Score</th>
+      <th>Wine</th>
+      <th>Vintage</th>
+      <th>Winery</th>
+      <th>Category</th>
+      <th>Status</th>
+      <th>Why</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for rec in results %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><strong>{{ "%.1f"|format(rec.total_score) }}</strong></td>
+      <td><a href="/cellar/{{ rec.wine_id }}">{{ rec.wine_name }}</a></td>
+      <td>{{ rec.vintage or '' }}</td>
+      <td>{{ rec.winery_name or '' }}</td>
+      <td><span class="badge badge-ok">{{ rec.category or '' }}</span></td>
+      <td>
+        {% if rec.drinking_status == 'Past optimal' %}
+          <span class="badge badge-warn">{{ rec.drinking_status }}</span>
+        {% elif rec.drinking_status == 'Optimal' %}
+          <span class="badge badge-ok">{{ rec.drinking_status }}</span>
+        {% elif rec.drinking_status == 'Ready' %}
+          <span class="badge badge-ok">{{ rec.drinking_status }}</span>
+        {% else %}
+          <span class="badge">{{ rec.drinking_status or 'Unknown' }}</span>
+        {% endif %}
+      </td>
+      <td style="font-size:0.8rem; max-width:20rem;">{{ rec.reason }}</td>
+      <td>
+        {% set wine_id = rec.wine_id %}
+        {% set in_list = rec.in_list %}
+        {% include "partials/drink_tonight_button.html" %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:var(--pico-muted-color);">Submit the form to get personalised recommendations.</p>
+{% endif %}

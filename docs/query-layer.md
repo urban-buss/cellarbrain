@@ -156,7 +156,17 @@ Note: plain `ILIKE` without `strip_accents`/`unaccent` is accent-sensitive — `
 
 ## Text Search
 
-`find_wine(con, query, limit, fuzzy, synonyms)` tokenises the query on whitespace, applies synonym normalisation, runs intent detection for attribute-based queries, and searches `wines_full` across: `wine_name`, `winery_name`, `country`, `region`, `subregion`, `classification`, `category`, `primary_grape`, and exact vintage match. Each text token must match at least one column (AND semantics). Uses `strip_accents()` for accent-insensitive matching and `normalize_quotes()` for typographic-quote-insensitive matching. When `fuzzy=True` and no ILIKE results are found, falls back to Jaro-Winkler similarity (threshold 0.85). Returns columns: `wine_id`, `winery_name`, `wine_name`, `vintage`, `category`, `country`, `region`, `primary_grape`, `bottles_stored`, `drinking_status`, `tracked_wine_id`. Default sort: `bottles_stored DESC, vintage DESC` (overridden by intent ORDER BY when applicable).
+`find_wine(con, query, limit, fuzzy, synonyms)` tokenises the query on whitespace, applies synonym normalisation, runs intent detection for attribute-based queries, and searches `wines_full` across: `wine_name`, `winery_name`, `country`, `region`, `subregion`, `classification`, `category`, `primary_grape`, and exact vintage match. Each text token must match at least one column (AND semantics). Uses `strip_accents()` for accent-insensitive matching and `normalize_quotes()` for typographic-quote-insensitive matching. Returns columns: `wine_id`, `winery_name`, `wine_name`, `vintage`, `category`, `country`, `region`, `primary_grape`, `bottles_stored`, `drinking_status`, `tracked_wine_id`. Default sort: `bottles_stored DESC, vintage DESC` (overridden by intent ORDER BY when applicable).
+
+When strict ILIKE returns zero results, a multi-stage fallback chain fires:
+
+1. **Soft-AND** — requires ≥1 ILIKE condition to match (≥2 text tokens required); ranks by match count.
+2. **Explicit fuzzy** (`fuzzy=True`) — per-token Jaro-Winkler similarity (threshold `search.fuzzy_threshold`, default 0.85) across 8 columns.
+3. **Auto-fuzzy** (implicit) — same as above but stricter threshold (`search.auto_fuzzy_threshold`, default 0.90), fires without `fuzzy=True`.
+4. **Phonetic** — Double Metaphone matching via `dmetaphone()` DuckDB UDF (requires `jellyfish` from `[search]` extra). Compares phonetic codes of query tokens against wine name, winery, grape, and region.
+5. **Suggestions** — appends a "Did you mean?" line with top-5 Jaro-Winkler suggestions (`search.suggest_threshold`, default 0.70).
+
+`find_wine_with_telemetry()` returns a `(result, SearchTelemetry)` tuple with structured metrics (result_count, intent_matched, used_soft_and, used_fuzzy, used_phonetic, used_suggestions) for observability tracking.
 
 ### Query Token Normalisation
 

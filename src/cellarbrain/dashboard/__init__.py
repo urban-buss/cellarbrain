@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from starlette.applications import Starlette
 
-    from cellarbrain.settings import DashboardConfig
+    from cellarbrain.settings import AnomalyConfig, DashboardConfig
 
 
 def create_app(
     log_db_path: str | None,
     data_dir: str | None = None,
     dashboard_config: DashboardConfig | None = None,
+    anomaly_config: AnomalyConfig | None = None,
 ) -> Starlette:
     """Build and return the Starlette application.
 
@@ -29,6 +30,9 @@ def create_app(
     dashboard_config:
         Dashboard settings (workbench safety rails, etc.).  Falls back to
         ``DashboardConfig()`` defaults when ``None``.
+    anomaly_config:
+        Anomaly detection settings.  Falls back to ``AnomalyConfig()``
+        defaults when ``None``.
     """
     from .app import build_app
 
@@ -36,4 +40,5 @@ def create_app(
         log_db_path=log_db_path,
         data_dir=data_dir,
         dashboard_config=dashboard_config,
+        anomaly_config=anomaly_config,
     )

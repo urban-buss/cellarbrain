@@ -725,6 +725,33 @@ class TestVersionFlag:
 
 
 # ---------------------------------------------------------------------------
+# TestDashboardPruneCommand (Phase A - sidecar maintenance CLI)
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardPruneCommand:
+    def test_prune_empty_sidecar(self, data_dir, capsys):
+        main(["-d", str(data_dir), "dashboard-prune"])
+        out = capsys.readouterr().out
+        assert "No stale" in out
+
+    def test_prune_resolved_entries(self, data_dir, capsys):
+        from cellarbrain.dashboard.sidecars import (
+            add_consumed_pending,
+            read_consumed_pending,
+        )
+
+        # Bottle 99999 does not exist in Parquet -> treated as resolved.
+        add_consumed_pending(str(data_dir), bottle_id=99999, wine_id=1)
+        assert len(read_consumed_pending(str(data_dir))) == 1
+
+        main(["-d", str(data_dir), "dashboard-prune"])
+        out = capsys.readouterr().out
+        assert "Pruned" in out
+        assert read_consumed_pending(str(data_dir)) == []
+
+
+# ---------------------------------------------------------------------------
 # TestInstallSkillsSubcommand
 # ---------------------------------------------------------------------------
 

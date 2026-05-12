@@ -20,7 +20,7 @@ One file per tracked wine (cross-vintage identity). Located in `output/wines/tra
 
 Filename: `{tracked_wine_id:05d}-{slug}.md`.
 
-Contains YAML frontmatter, a vintages overview table, and agent-owned research sections. No ETL-owned content beyond the scaffold.
+Contains YAML frontmatter, a **Vintage Comparison** matrix (ETL-generated, per-vintage scores/prices/status/bottles with best-value and drink-order callouts), and agent-owned research sections.
 
 ## Ownership Model
 
@@ -70,12 +70,26 @@ Agent-owned content is delimited by HTML comment fences:
 ```markdown
 ## Producer Profile
 <!-- source: agent:research -->
+<!-- research-meta: {"date": "2025-01-15", "agent": "cellarbrain-research", "sources": ["wine-searcher.com"], "confidence": "high"} -->
 
 Content written by the research agent goes here.
 It is **preserved** across ETL runs.
 
 <!-- source: agent:research — end -->
 ```
+
+### Research Metadata
+
+When an agent writes to a section, a `<!-- research-meta: {...} -->` HTML comment is embedded immediately after the opening fence. This JSON object contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | `str` | ISO date (YYYY-MM-DD) when the section was last written. |
+| `agent` | `str` | Name of the agent that wrote the content (default `"unknown"`). |
+| `sources` | `list[str]` | Optional. URLs or source names consulted. |
+| `confidence` | `str` | Optional. `"high"`, `"medium"`, or `"low"`. |
+
+The `stale_research` MCP tool uses this metadata to identify sections that haven't been refreshed within a configurable number of months. The `pending_research` tool can optionally include stale sections via `include_stale=True`.
 
 For mixed sections, the agent sub-section uses an H3 heading:
 
@@ -133,6 +147,25 @@ When `update_dossier()` writes a section, it moves the key from `agent_sections_
 | Price Tracker | `price_tracker` | `agent:price` |
 
 Companion dossiers also have `agent_sections_populated` / `agent_sections_pending` in frontmatter, plus `related_wine_ids` and `vintages_tracked` arrays.
+
+### Vintage Comparison Matrix (ETL-owned)
+
+The `## Vintage Comparison` section is regenerated on every ETL run and contains:
+
+| Column | Source |
+|--------|--------|
+| Vintage | `wine.vintage` |
+| Status | `wine.drinking_status` (computed) |
+| Score | Best of pro ratings / personal tastings (highest per vintage) |
+| Price | `wine.list_price` + `wine.list_currency` |
+| Bottles | Count of stored, non-in-transit bottles |
+| Notes | Reserved for future use |
+
+Below the table, three computed callouts appear when data permits:
+
+- **Best value** — vintage with the highest normalised-score / price-per-750ml ratio
+- **Suggested drink order** — urgency-based sequence (optimal → drinkable → too young); `past_window` vintages shown as a separate warning
+- **Vintage trend** — "improving", "declining", or "stable" (requires ≥3 scored vintages, uses linear regression slope)
 
 ## Dossier Lifecycle
 

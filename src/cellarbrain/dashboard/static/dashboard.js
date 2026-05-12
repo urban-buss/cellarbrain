@@ -99,3 +99,39 @@ function renderLineChart(canvasId, datasets) {
         }
     });
 }
+
+function renderVelocityChart(canvasId, labels, acquired, consumed) {
+    new Chart(document.getElementById(canvasId), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Acquired',
+                    data: acquired,
+                    backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                    borderColor: '#10b981',
+                    borderWidth: 1,
+                },
+                {
+                    label: 'Consumed',
+                    data: consumed,
+                    backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                    borderColor: '#6366f1',
+                    borderWidth: 1,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, ticks: { precision: 0 } }
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } }
+            }
+        }
+    });
+}

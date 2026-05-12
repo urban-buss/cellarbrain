@@ -87,6 +87,28 @@ class TestSommelierConfig:
         s = load_settings(cfg)
         assert s.sommelier.auto_food_tags is False
 
+    def test_hybrid_defaults(self):
+        cfg = SommelierConfig()
+        assert cfg.hybrid_enabled is True
+        assert cfg.rerank_pool_size == 30
+        assert cfg.rerank_blend == 0.5
+
+    def test_hybrid_from_toml(self, tmp_path):
+        cfg = tmp_path / "test.toml"
+        cfg.write_text(
+            textwrap.dedent("""\
+            [sommelier]
+            hybrid_enabled = false
+            rerank_pool_size = 50
+            rerank_blend = 0.7
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(cfg)
+        assert s.sommelier.hybrid_enabled is False
+        assert s.sommelier.rerank_pool_size == 50
+        assert s.sommelier.rerank_blend == 0.7
+
 
 # ---------------------------------------------------------------------------
 # TestBuildWineText

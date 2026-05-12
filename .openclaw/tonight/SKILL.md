@@ -1,55 +1,51 @@
----
+﻿---
 name: tonight
-description: "Recommend a wine to open tonight. Considers occasion, mood, food, and what's ready to drink."
+description: "Recommend a wine to open tonight. Uses the scoring engine for occasion, food, budget, and urgency."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
 ---
 
 # What to Drink Tonight
 
-Recommend a wine from the cellar for tonight, considering occasion, mood, food, budget, and drinking readiness.
+Recommend a wine using the smart recommendation engine.
 
 ## Owner Context
 
-- Switzerland, CHF. Notes may be in German — translate when presenting.
-- Prefer wines stored **onsite** (home cellar) over offsite.
+Switzerland, CHF. German notes — translate. Prefer onsite wines.
 
-## Workflow
+## 1. Map the Request
 
-### 1. Understand the Request
+| User says | `occasion` | `budget` |
+|-----------|------------|----------|
+| weeknight, casual, just me | `casual` or `solo` | `under_30` |
+| dinner with friends, guests | `dinner_party` | `under_50` |
+| celebrate, birthday | `celebration` | `special` |
+| date night, anniversary | `romantic` | `special` |
+| tasting, compare wines | `tasting` | `any` |
 
-Extract: occasion (casual / date night / guests), food (if any), mood (bold / light / celebratory), budget feel (everyday / special).
+## 2. Recommend
 
-### 2. If Food Is Mentioned
+`recommend_tonight(occasion=..., cuisine="<dish>" if food mentioned, budget=..., limit=5)`
 
-Call `pair_wine(dish, occasion)` — returns ready-to-drink recommendations with reasons. Present the top 3 directly. Done.
+Scores: urgency + occasion fit + pairing + freshness + diversity + quality. Wines on drink-tonight list are auto-excluded.
 
-### 3. Without Food — Search by Intent
+## 3. Drink-Tonight List
 
-Build a `find_wine` query using intent keywords:
+- Show list: `get_drink_tonight()`
+- Add/remove: instruct user to use dashboard `/drink-tonight`
 
-| Occasion | Query keywords |
-|----------|---------------|
-| Casual weeknight | `"ready to drink" budget` + preferred category |
-| Date night | `"ready to drink" top rated` + category |
-| Guests / celebration | `"ready to drink" favorite` |
-| Adventurous | `"ready to drink"` + unusual grape or region |
+## 4. Deep-Dive (optional)
 
-Call `find_wine(query, limit=8)`.
+`read_dossier(wine_id, sections=["tasting_notes", "wine_description"])` for the user's pick.
 
-### 4. Deep-Dive Top Candidates
+Offer `similar_wines(wine_id, limit=3)` if they want alternatives.
 
-For the best 3–5 matches: `read_dossier(wine_id, sections=["tasting_notes", "wine_description", "food_pairings"])`.
+## 5. Fallback
 
-### 5. Present
+If `recommend_tonight` returns nothing: `find_wine("ready to drink", limit=8)` then `read_dossier`. Search auto-falls-back through fuzzy/phonetic.
 
-For each recommendation show:
-- Wine name, vintage, wine_id
-- One-sentence character description
-- Drinking status (optimal / drinkable / drink soon)
-- Storage location
-- Purchase price
+## Presentation
 
-Flag wines past optimal as "drink soon — don't wait."
+Per pick: **Wine** vintage (id) — one-line character — status — location — CHF price. Flag past-optimal as "drink soon".
 
 ## Tools
 
@@ -58,7 +54,11 @@ Flag wines past optimal as "drink soon — don't wait."
 | `find_wine` | Text search with intent detection |
 | `read_dossier` | Wine details and tasting notes |
 | `pair_wine` | Single-shot food+wine pairing |
+| `recommend_tonight` | Primary scored recommendation |
+| `get_drink_tonight` | Read drink-tonight shortlist |
+| `similar_wines` | Alternatives to a pick |
 
 ## Output Format
 
 Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
+

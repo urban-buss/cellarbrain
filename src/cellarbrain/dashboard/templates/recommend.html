@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active_nav = "recommend" %}
+{% block title %}Smart Recommendations — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Smart Recommendations{% endblock %}
+
+{% block content %}
+<p style="font-size:0.85rem; color:var(--pico-muted-color);">
+    Get personalised wine picks scored by urgency, occasion, food pairing, diversity, and quality.
+    Wines past their drinking window or recently recommended are deprioritised.
+</p>
+
+<form hx-post="/recommend" hx-target="#recommend-results" hx-swap="innerHTML">
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+    <div>
+      <label>Occasion
+        <select name="occasion">
+          <option value="">Any</option>
+          {% for occ in occasions %}
+          <option value="{{ occ }}">{{ occ|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Cuisine / dish
+        <input type="text" name="cuisine" placeholder="e.g. grilled lamb, sushi, raclette">
+      </label>
+    </div>
+    <div>
+      <label>Budget
+        <select name="budget">
+          <option value="">Any</option>
+          {% for b in budgets %}
+          <option value="{{ b }}">{{ b|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>Guests
+        <input type="number" name="guests" min="1" max="20" placeholder="# of people">
+      </label>
+    </div>
+    <div>
+      <label>Results
+        <input type="number" name="limit" min="1" max="15" value="5">
+      </label>
+    </div>
+    <div style="display:flex; align-items:end;">
+      <button type="submit">Recommend</button>
+    </div>
+  </div>
+</form>
+
+<div id="recommend-results">
+{% include "partials/recommend_results.html" %}
+</div>
+{% endblock %}

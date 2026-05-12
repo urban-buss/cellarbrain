@@ -314,6 +314,32 @@ def get_quick_stats(
     }
 
 
+def get_wine_of_the_day(
+    con: duckdb.DuckDBPyConnection,
+) -> dict | None:
+    """Today's wine pick for the dashboard widget."""
+    try:
+        from cellarbrain.wotd import pick_wine_of_the_day
+
+        pick = pick_wine_of_the_day(con)
+        if pick is None:
+            return None
+        return {
+            "wine_id": pick.wine_id,
+            "wine_name": pick.wine_name,
+            "vintage": pick.vintage,
+            "winery_name": pick.winery_name,
+            "category": pick.category,
+            "region": pick.region,
+            "primary_grape": pick.primary_grape,
+            "drinking_status": pick.drinking_status,
+            "bottles_stored": pick.bottles_stored,
+            "reason": pick.reason,
+        }
+    except Exception:
+        return None
+
+
 # ---- Statistics -----------------------------------------------------------
 
 
@@ -507,3 +533,260 @@ def get_price_observations(
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase C/D/E/F: Interactive dashboard helpers
+# ---------------------------------------------------------------------------
+
+
+def get_pending_consumed_details(
+    con: duckdb.DuckDBPyConnection,
+    bottle_ids: list[int],
+) -> list[dict]:
+    """Look up bottle + wine display info for the consumed-pending sidecar."""
+    if not bottle_ids:
+        return []
+    placeholders = ",".join("?" for _ in bottle_ids)
+    rows = con.execute(
+        f"""
+        SELECT bottle_id, wine_id, wine_name, vintage, winery_name,
+               cellar_name, shelf, status, is_in_transit
+        FROM bottles_full
+        WHERE bottle_id IN ({placeholders})
+        ORDER BY wine_name, vintage
+        """,
+        bottle_ids,
+    ).fetchall()
+    return [
+        {
+            "bottle_id": r[0],
+            "wine_id": r[1],
+            "wine_name": r[2],
+            "vintage": r[3],
+            "winery_name": r[4],
+            "cellar_name": r[5],
+            "shelf": r[6],
+            "status": r[7],
+            "is_in_transit": r[8],
+        }
+        for r in rows
+    ]
+
+
+def get_wines_by_ids(
+    con: duckdb.DuckDBPyConnection,
+    wine_ids: list[int],
+) -> list[dict]:
+    """Display info for a list of wine IDs (used by the drink-tonight page)."""
+    if not wine_ids:
+        return []
+    placeholders = ",".join("?" for _ in wine_ids)
+    rows = con.execute(
+        f"""
+        SELECT wine_id, wine_name, vintage, winery_name, category,
+               bottles_stored, drinking_status, drink_from, drink_until
+        FROM wines_full
+        WHERE wine_id IN ({placeholders})
+        ORDER BY wine_name, vintage
+        """,
+        wine_ids,
+    ).fetchall()
+    return [
+        {
+            "wine_id": r[0],
+            "wine_name": r[1],
+            "vintage": r[2],
+            "winery_name": r[3],
+            "category": r[4],
+            "bottles_stored": r[5],
+            "drinking_status": r[6],
+            "drink_from": r[7],
+            "drink_until": r[8],
+        }
+        for r in rows
+    ]
+
+
+def get_drinking_window_dataset(
+    con: duckdb.DuckDBPyConnection,
+) -> list[dict]:
+    """Rows for the floating-bar drinking-window timeline.
+
+    Only includes wines with at least one stored bottle and a defined
+    drink_from/drink_until window.
+    """
+    rows = con.execute(
+        """
+        SELECT wine_id, wine_name, vintage, winery_name, category,
+               bottles_stored, drinking_status,
+               drink_from, drink_until, optimal_from, optimal_until
+        FROM wines_full
+        WHERE bottles_stored > 0
+          AND drink_from IS NOT NULL
+          AND drink_until IS NOT NULL
+        ORDER BY drink_from
+        """
+    ).fetchall()
+    return [
+        {
+            "wine_id": r[0],
+            "wine_name": r[1],
+            "vintage": r[2],
+            "winery_name": r[3],
+            "category": r[4],
+            "bottles_stored": r[5],
+            "drinking_status": r[6],
+            "drink_from": r[7],
+            "drink_until": r[8],
+            "optimal_from": r[9],
+            "optimal_until": r[10],
+        }
+        for r in rows
+    ]
+
+
+def get_heatmap_layout(
+    con: duckdb.DuckDBPyConnection,
+) -> list[dict]:
+    """Per-cellar / per-shelf grouping with drinking-status counts.
+
+    Returns a list shaped as::
+
+        [
+            {
+                "cellar_name": "Cave",
+                "shelves": [
+                    {
+                        "shelf": "A1",
+                        "bottles": [
+                            {"wine_id": 1, "wine_name": "...",
+                             "drinking_status": "optimal", "vintage": 2018},
+                            ...
+                        ],
+                    },
+                    ...
+                ],
+            },
+            ...
+        ]
+
+    Bottles without a shelf are grouped under a virtual ``"(no shelf)"`` row.
+    """
+    rows = con.execute(
+        """
+        SELECT
+            COALESCE(cellar_name, '(no cellar)') AS cellar_name,
+            COALESCE(shelf, '(no shelf)') AS shelf,
+            wine_id, wine_name, vintage, drinking_status
+        FROM bottles_full
+        WHERE status = 'stored' AND NOT is_in_transit
+        ORDER BY cellar_name, shelf, wine_name, vintage
+        """
+    ).fetchall()
+
+    layout: dict[str, dict[str, list[dict]]] = {}
+    for r in rows:
+        cellar = r[0]
+        shelf = r[1]
+        layout.setdefault(cellar, {}).setdefault(shelf, []).append(
+            {
+                "wine_id": r[2],
+                "wine_name": r[3],
+                "vintage": r[4],
+                "drinking_status": r[5],
+            }
+        )
+    return [
+        {
+            "cellar_name": cellar,
+            "shelves": [{"shelf": shelf, "bottles": bottles} for shelf, bottles in shelves.items()],
+        }
+        for cellar, shelves in layout.items()
+    ]
+
+
+def get_consumption_velocity(
+    con: duckdb.DuckDBPyConnection,
+    months: int = 6,
+) -> dict | None:
+    """Consumption velocity data for the dashboard widget.
+
+    Returns a dict with month-by-month acquired/consumed counts and summary
+    metrics, or None if no data is available.
+    """
+    import datetime as _dt
+
+    today = _dt.date.today()
+    current_month_start = _dt.date(today.year, today.month, 1)
+
+    if today.month - months >= 1:
+        range_start = _dt.date(today.year, today.month - months, 1)
+    else:
+        years_back = (months - today.month) // 12 + 1
+        m = today.month - months + 12 * years_back
+        range_start = _dt.date(today.year - years_back, m, 1)
+
+    try:
+        rows = con.execute(f"""
+            WITH series AS (
+                SELECT unnest(generate_series(
+                    '{range_start}'::DATE, '{current_month_start}'::DATE, INTERVAL '1 MONTH'
+                )) AS period_start
+            ),
+            periods AS (
+                SELECT period_start::DATE AS period_start,
+                       (period_start + INTERVAL '1 MONTH')::DATE AS period_end,
+                       strftime(period_start, '%Y-%m') AS label
+                FROM series
+                WHERE period_start < '{current_month_start}'::DATE
+            )
+            SELECT
+                p.label,
+                count(*) FILTER (
+                    WHERE b.purchase_date >= p.period_start AND b.purchase_date < p.period_end
+                ) AS acquired,
+                count(*) FILTER (
+                    WHERE b.output_date >= p.period_start AND b.output_date < p.period_end
+                ) AS consumed
+            FROM periods p
+            CROSS JOIN bottles_full b
+            GROUP BY p.label, p.period_start
+            ORDER BY p.period_start
+        """).fetchall()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    month_labels = [r[0] for r in rows]
+    acquired = [int(r[1]) for r in rows]
+    consumed = [int(r[2]) for r in rows]
+
+    num_months = len(rows)
+    total_acquired = sum(acquired)
+    total_consumed = sum(consumed)
+    avg_acquired = round(total_acquired / num_months, 1)
+    avg_consumed = round(total_consumed / num_months, 1)
+    net_growth = round(avg_acquired - avg_consumed, 1)
+
+    try:
+        current_bottles = con.execute(
+            "SELECT count(*) FROM bottles_full WHERE status = 'stored' AND NOT is_in_transit"
+        ).fetchone()[0]
+    except Exception:
+        current_bottles = 0
+
+    projected_12m = int(current_bottles + round(net_growth * 12))
+
+    return {
+        "labels": month_labels,
+        "acquired": acquired,
+        "consumed": consumed,
+        "avg_acquired": avg_acquired,
+        "avg_consumed": avg_consumed,
+        "net_growth": net_growth,
+        "current_bottles": int(current_bottles),
+        "projected_12m": projected_12m,
+    }

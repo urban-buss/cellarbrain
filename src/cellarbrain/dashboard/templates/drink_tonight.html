@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% set active_nav = "drink_tonight" %}
+{% block title %}Drink Tonight — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Drink Tonight Shortlist{% endblock %}
+
+{% block content %}
+<p style="font-size:0.9rem; color:var(--pico-muted-color);">
+    {{ count }} wine{{ '' if count == 1 else 's' }} staged for tonight. The list
+    is mirrored to <code>.drink-tonight.json</code> so MCP-aware agents can read
+    it via the <code>get_drink_tonight</code> tool.
+</p>
+
+{% if rows %}
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            <th>Wine</th><th>Vintage</th><th>Producer</th><th>Category</th>
+            <th>Status</th><th>Stock</th><th>Window</th><th>Added</th><th>Note</th><th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td><a href="/cellar/{{ r.wine_id }}">{{ r.wine_name }}</a></td>
+            <td>{{ r.vintage or "—" }}</td>
+            <td>{{ r.winery_name or "—" }}</td>
+            <td>{{ r.category or "—" }}</td>
+            <td>
+                {% if r.drinking_status %}
+                <span class="badge badge-{{ 'ok' if r.drinking_status == 'optimal' else 'warn' }}"
+                      style="font-size:0.7rem;">
+                    {{ r.drinking_status|replace("_", " ") }}
+                </span>
+                {% else %}—{% endif %}
+            </td>
+            <td>{{ r.bottles_stored }}</td>
+            <td style="font-size:0.75rem;">
+                {{ r.drink_from or "?" }}–{{ r.drink_until or "?" }}
+            </td>
+            <td class="mono" style="font-size:0.7rem;">{{ r.added_at or "—" }}</td>
+            <td>{{ r.note or "" }}</td>
+            <td>
+                <button type="button" class="outline contrast"
+                        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+                        hx-post="/drink-tonight/remove"
+                        hx-vals='{"wine_id": "{{ r.wine_id }}"}'
+                        hx-target="closest tr" hx-swap="outerHTML">
+                    Remove
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% else %}
+<p style="color:var(--pico-muted-color); font-style:italic;">
+    No wines on tonight&apos;s shortlist. Add any wine via the <em>+ Tonight</em> button on its detail page.
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/drink-tonight.js"></script>
+{% endblock %}

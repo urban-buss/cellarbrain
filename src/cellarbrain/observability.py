@@ -52,6 +52,29 @@ class ToolEvent:
     agent_name: str | None = None
     trace_id: str | None = None
     client_id: str | None = None
+    data_size: int | None = None
+    metadata_keys: str | None = None
+    cache_hit: bool | None = None
+
+
+@dataclass(frozen=True)
+class SearchEvent:
+    """One observed search query with path metadata."""
+
+    event_id: str
+    session_id: str
+    turn_id: str
+    query: str
+    normalized_query: str
+    result_count: int
+    intent_matched: bool
+    used_soft_and: bool
+    used_fuzzy: bool
+    used_phonetic: bool
+    used_suggestions: bool
+    started_at: datetime
+    duration_ms: float
+    client_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -105,11 +128,43 @@ CREATE TABLE IF NOT EXISTS tool_events (
     agent_name      VARCHAR,
     trace_id        VARCHAR,
     client_id       VARCHAR,
+    data_size       INTEGER,
+    metadata_keys   VARCHAR,
+    cache_hit       BOOLEAN,
 )
 """
 
+_UPGRADE_TABLE_SQL = """\
+ALTER TABLE tool_events ADD COLUMN IF NOT EXISTS data_size INTEGER;
+ALTER TABLE tool_events ADD COLUMN IF NOT EXISTS metadata_keys VARCHAR;
+ALTER TABLE tool_events ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN;
+"""
+
 _INSERT_SQL = """\
-INSERT INTO tool_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO tool_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_CREATE_SEARCH_TABLE_SQL = """\
+CREATE TABLE IF NOT EXISTS search_events (
+    event_id        VARCHAR PRIMARY KEY,
+    session_id      VARCHAR NOT NULL,
+    turn_id         VARCHAR NOT NULL,
+    query           VARCHAR NOT NULL,
+    normalized_query VARCHAR NOT NULL,
+    result_count    INTEGER NOT NULL,
+    intent_matched  BOOLEAN NOT NULL,
+    used_soft_and   BOOLEAN NOT NULL,
+    used_fuzzy      BOOLEAN NOT NULL,
+    used_phonetic   BOOLEAN NOT NULL,
+    used_suggestions BOOLEAN NOT NULL,
+    started_at      TIMESTAMPTZ NOT NULL,
+    duration_ms     DOUBLE NOT NULL,
+    client_id       VARCHAR,
+)
+"""
+
+_SEARCH_INSERT_SQL = """\
+INSERT INTO search_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _CREATE_INGEST_TABLE_SQL = """\
@@ -148,6 +203,7 @@ class EventCollector:
         self.session_id: str = uuid.uuid4().hex
         self._config = config
         self._buffer: deque[ToolEvent] = deque()
+        self._search_buffer: deque[SearchEvent] = deque()
         self._ingest_buffer: deque[IngestEvent] = deque()
         self._turn_id: str = uuid.uuid4().hex
         self._last_event_time: float = time.monotonic()
@@ -191,6 +247,11 @@ class EventCollector:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._db = duckdb.connect(str(path))
             self._db.execute(_CREATE_TABLE_SQL)
+            # Idempotent upgrade for pre-existing log stores
+            for stmt in _UPGRADE_TABLE_SQL.strip().splitlines():
+                if stmt.strip():
+                    self._db.execute(stmt)
+            self._db.execute(_CREATE_SEARCH_TABLE_SQL)
             self._db.execute(_CREATE_INGEST_TABLE_SQL)
             logger.debug("Observability log store opened: %s", self._db_path)
         except Exception as exc:
@@ -263,38 +324,87 @@ class EventCollector:
         if self._db is not None and len(self._buffer) >= _FLUSH_THRESHOLD:
             self.flush()
 
+    def record_search(self, event: SearchEvent) -> None:
+        """Record a search query event."""
+        self._rotate_turn()
+        self._search_buffer.append(event)
+        logger.debug(
+            "search query=%r results=%d fuzzy=%s phonetic=%s",
+            event.query,
+            event.result_count,
+            event.used_fuzzy,
+            event.used_phonetic,
+        )
+        if self._db is not None and len(self._search_buffer) >= _FLUSH_THRESHOLD:
+            self.flush()
+
     def flush(self) -> None:
-        if self._db is None or not self._buffer:
+        if self._db is None:
             return
-        rows = []
-        while self._buffer:
-            e = self._buffer.popleft()
-            rows.append(
-                (
-                    e.event_id,
-                    e.session_id,
-                    e.turn_id,
-                    e.event_type,
-                    e.name,
-                    e.started_at,
-                    e.ended_at,
-                    e.duration_ms,
-                    e.status,
-                    e.request_id,
-                    e.parameters,
-                    e.error_type,
-                    e.error_message,
-                    e.result_size,
-                    e.agent_name,
-                    e.trace_id,
-                    e.client_id,
+        if not self._buffer and not self._search_buffer:
+            return
+        # Flush tool events
+        if self._buffer:
+            rows = []
+            while self._buffer:
+                e = self._buffer.popleft()
+                rows.append(
+                    (
+                        e.event_id,
+                        e.session_id,
+                        e.turn_id,
+                        e.event_type,
+                        e.name,
+                        e.started_at,
+                        e.ended_at,
+                        e.duration_ms,
+                        e.status,
+                        e.request_id,
+                        e.parameters,
+                        e.error_type,
+                        e.error_message,
+                        e.result_size,
+                        e.agent_name,
+                        e.trace_id,
+                        e.client_id,
+                        e.data_size,
+                        e.metadata_keys,
+                        e.cache_hit,
+                    )
                 )
-            )
-        try:
-            self._db.executemany(_INSERT_SQL, rows)
-            logger.debug("Flushed %d events to log store", len(rows))
-        except Exception:
-            logger.warning("Failed to flush events to log store", exc_info=True)
+            try:
+                self._db.executemany(_INSERT_SQL, rows)
+                logger.debug("Flushed %d events to log store", len(rows))
+            except Exception:
+                logger.warning("Failed to flush events to log store", exc_info=True)
+        # Flush search events
+        if self._search_buffer:
+            search_rows = []
+            while self._search_buffer:
+                s = self._search_buffer.popleft()
+                search_rows.append(
+                    (
+                        s.event_id,
+                        s.session_id,
+                        s.turn_id,
+                        s.query,
+                        s.normalized_query,
+                        s.result_count,
+                        s.intent_matched,
+                        s.used_soft_and,
+                        s.used_fuzzy,
+                        s.used_phonetic,
+                        s.used_suggestions,
+                        s.started_at,
+                        s.duration_ms,
+                        s.client_id,
+                    )
+                )
+            try:
+                self._db.executemany(_SEARCH_INSERT_SQL, search_rows)
+                logger.debug("Flushed %d search events to log store", len(search_rows))
+            except Exception:
+                logger.warning("Failed to flush search events to log store", exc_info=True)
 
     # -- Ingest event lifecycle ---------------------------------------------
 

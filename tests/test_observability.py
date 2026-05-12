@@ -11,6 +11,7 @@ from cellarbrain.observability import (
     _LOCK_PID_RE,
     EventCollector,
     IngestEvent,
+    SearchEvent,
     ToolEvent,
     _discover_log_files,
     get_collector,
@@ -303,6 +304,105 @@ class TestPeriodicFlush:
         collector.close()
         assert collector._flush_timer is None
         assert collector._closed is True
+
+
+class TestSearchEvents:
+    """Tests for the search_events logging subsystem."""
+
+    def _make_search_event(self, collector: EventCollector, **kwargs) -> SearchEvent:
+        defaults = {
+            "event_id": "sevt-001",
+            "session_id": collector.session_id,
+            "turn_id": collector.turn_id,
+            "query": "château test",
+            "normalized_query": "château test",
+            "result_count": 3,
+            "intent_matched": False,
+            "used_soft_and": False,
+            "used_fuzzy": False,
+            "used_phonetic": False,
+            "used_suggestions": False,
+            "started_at": datetime.now(UTC),
+            "duration_ms": 12.5,
+            "client_id": None,
+        }
+        defaults.update(kwargs)
+        return SearchEvent(**defaults)
+
+    def test_record_search_appends_to_buffer(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = self._make_search_event(collector)
+        collector.record_search(event)
+        assert len(collector._search_buffer) == 1
+        collector.close()
+
+    def test_flush_writes_search_events_to_duckdb(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = self._make_search_event(collector)
+        collector._search_buffer.append(event)
+        collector.flush()
+
+        assert len(collector._search_buffer) == 0
+        row = collector._db.execute("SELECT query, result_count, used_fuzzy FROM search_events").fetchone()
+        assert row[0] == "château test"
+        assert row[1] == 3
+        assert row[2] is False
+        collector.close()
+
+    def test_search_events_schema(self, tmp_path):
+        """search_events table has expected columns."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        cols = collector._db.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'search_events' ORDER BY ordinal_position"
+        ).fetchall()
+        col_names = [c[0] for c in cols]
+        expected = {
+            "event_id",
+            "session_id",
+            "turn_id",
+            "query",
+            "normalized_query",
+            "result_count",
+            "intent_matched",
+            "used_soft_and",
+            "used_fuzzy",
+            "used_phonetic",
+            "used_suggestions",
+            "started_at",
+            "duration_ms",
+            "client_id",
+        }
+        assert expected.issubset(set(col_names))
+        collector.close()
+
+    def test_auto_flush_at_threshold(self, tmp_path):
+        """Search events auto-flush at _FLUSH_THRESHOLD."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        for i in range(5):
+            event = self._make_search_event(collector, event_id=f"sevt{i}")
+            collector.record_search(event)
+        # Buffer should be flushed after threshold
+        assert len(collector._search_buffer) == 0
+        count = collector._db.execute("SELECT COUNT(*) FROM search_events").fetchone()[0]
+        assert count == 5
+        collector.close()
+
+    def test_fuzzy_and_phonetic_flags_persisted(self, tmp_path):
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        event = self._make_search_event(collector, used_fuzzy=True, used_phonetic=True, result_count=1)
+        collector._search_buffer.append(event)
+        collector.flush()
+
+        row = collector._db.execute("SELECT used_fuzzy, used_phonetic FROM search_events").fetchone()
+        assert row[0] is True
+        assert row[1] is True
+        collector.close()
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +705,157 @@ class TestLockConflictDiagnostics:
 
 
 # ---------------------------------------------------------------------------
+# TestSchemaUpgrade — data_size and metadata_keys columns
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaUpgrade:
+    """Test that observability handles new data_size/metadata_keys fields."""
+
+    def test_upgrade_adds_columns_to_old_schema(self, tmp_path):
+        """Simulate opening a pre-existing DB without the new columns."""
+        import duckdb
+
+        db_path = str(tmp_path / "old.duckdb")
+        # Create table with the OLD 17-column schema (no data_size/metadata_keys)
+        con = duckdb.connect(db_path)
+        con.execute("""
+            CREATE TABLE tool_events (
+                event_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR NOT NULL,
+                turn_id VARCHAR,
+                event_type VARCHAR NOT NULL,
+                name VARCHAR NOT NULL,
+                started_at TIMESTAMP NOT NULL,
+                ended_at TIMESTAMP,
+                duration_ms DOUBLE,
+                status VARCHAR NOT NULL,
+                request_id VARCHAR,
+                parameters VARCHAR,
+                error_type VARCHAR,
+                error_message VARCHAR,
+                result_size INTEGER,
+                agent_name VARCHAR,
+                trace_id VARCHAR,
+                client_id VARCHAR
+            )
+        """)
+        con.close()
+
+        # Now open via EventCollector — should upgrade the table
+        config = LoggingConfig(log_db=db_path)
+        collector = EventCollector(config, str(tmp_path))
+
+        # Verify columns exist by inserting a full event with data_size
+        now = datetime.now(UTC)
+        event = ToolEvent(
+            event_id="e-upgrade",
+            session_id="s1",
+            turn_id="t1",
+            event_type="tool",
+            name="test",
+            started_at=now,
+            ended_at=now,
+            duration_ms=5.0,
+            status="ok",
+            data_size=128,
+            metadata_keys="row_count,query",
+        )
+        collector._buffer.append(event)
+        collector.flush()
+
+        row = collector._db.execute(
+            "SELECT data_size, metadata_keys FROM tool_events WHERE event_id = 'e-upgrade'"
+        ).fetchone()
+        assert row[0] == 128
+        assert row[1] == "row_count,query"
+        collector.close()
+
+    def test_data_size_and_metadata_keys_nullable(self, tmp_path):
+        """New columns default to NULL when not provided."""
+        config = LoggingConfig(log_db=str(tmp_path / "test.duckdb"))
+        collector = EventCollector(config, str(tmp_path))
+        now = datetime.now(UTC)
+        event = ToolEvent(
+            event_id="e-null",
+            session_id="s1",
+            turn_id="t1",
+            event_type="tool",
+            name="test",
+            started_at=now,
+            ended_at=now,
+            duration_ms=5.0,
+            status="ok",
+        )
+        collector._buffer.append(event)
+        collector.flush()
+
+        row = collector._db.execute(
+            "SELECT data_size, metadata_keys FROM tool_events WHERE event_id = 'e-null'"
+        ).fetchone()
+        assert row[0] is None
+        assert row[1] is None
+        collector.close()
+
+    def test_cache_hit_column_added_on_upgrade(self, tmp_path):
+        """Simulate opening a pre-existing DB without the cache_hit column."""
+        import duckdb
+
+        db_path = str(tmp_path / "old-no-cache.duckdb")
+        # Create table with 19-column schema (no cache_hit)
+        con = duckdb.connect(db_path)
+        con.execute("""
+            CREATE TABLE tool_events (
+                event_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR NOT NULL,
+                turn_id VARCHAR,
+                event_type VARCHAR NOT NULL,
+                name VARCHAR NOT NULL,
+                started_at TIMESTAMP NOT NULL,
+                ended_at TIMESTAMP,
+                duration_ms DOUBLE,
+                status VARCHAR NOT NULL,
+                request_id VARCHAR,
+                parameters VARCHAR,
+                error_type VARCHAR,
+                error_message VARCHAR,
+                result_size INTEGER,
+                agent_name VARCHAR,
+                trace_id VARCHAR,
+                client_id VARCHAR,
+                data_size INTEGER,
+                metadata_keys VARCHAR
+            )
+        """)
+        con.close()
+
+        # Open via EventCollector — should upgrade the table
+        config = LoggingConfig(log_db=db_path)
+        collector = EventCollector(config, str(tmp_path))
+
+        # Insert event with cache_hit=True
+        now = datetime.now(UTC)
+        event = ToolEvent(
+            event_id="e-cache",
+            session_id="s1",
+            turn_id="t1",
+            event_type="tool",
+            name="cellar_stats",
+            started_at=now,
+            ended_at=now,
+            duration_ms=2.0,
+            status="ok",
+            cache_hit=True,
+        )
+        collector._buffer.append(event)
+        collector.flush()
+
+        row = collector._db.execute("SELECT cache_hit FROM tool_events WHERE event_id = 'e-cache'").fetchone()
+        assert row[0] is True
+        collector.close()
+
+
+# ---------------------------------------------------------------------------
 # Log file discovery tests (Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -721,7 +972,7 @@ class TestOpenLogReader:
         c1.execute(_CREATE_INGEST_TABLE_SQL)
         c1.execute(
             "INSERT INTO tool_events VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
             ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
         )
         c1.close()
@@ -733,7 +984,7 @@ class TestOpenLogReader:
         c2.execute(_CREATE_INGEST_TABLE_SQL)
         c2.execute(
             "INSERT INTO tool_events VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
             ["e2", "s2", "t2", "tool", "find_wine", now, now, 20.0, "ok"],
         )
         c2.close()

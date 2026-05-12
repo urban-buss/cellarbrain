@@ -1,0 +1,11 @@
+{% if critical or warnings %}
+<div style="padding: 0.5rem 1rem; margin-bottom: 0.5rem; border-radius: 6px; font-size: 0.85rem;
+     background: {% if critical %}#fecaca{% else %}#fef9c3{% endif %};
+     color: {% if critical %}#991b1b{% else %}#854d0e{% endif %};">
+    {% if critical %}🔴 {{ critical|length }} critical{% endif %}
+    {% if critical and warnings %}, {% endif %}
+    {% if warnings %}🟡 {{ warnings|length }} warning{{ "s" if warnings|length != 1 else "" }}{% endif %}
+    anomal{{ "ies" if (critical|length + warnings|length) != 1 else "y" }} detected —
+    <a href="/anomalies">View details</a>
+</div>
+{% endif %}
