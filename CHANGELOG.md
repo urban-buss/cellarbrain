@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.14] — 2026-05-12
+
+### Fixed
+- **Agent view selection**: `wines` and `bottles` views now clearly document that they include
+  ALL non-deleted wines (stored, consumed, on order). Agent-facing guidance in `query_cellar`
+  docstring and view descriptions updated to recommend `wines_stored`/`bottles_stored` as default
+  for cellar questions.
+- **Column hint accuracy**: `wines.price` hint corrected from "purchase price" to "list/catalogue
+  price". Added `bottles.price` and `bottles_full.price` hints for actual purchase prices.
+- **`find_wine` status markers**: search results now append `[on order]` or `[consumed]` to
+  wine names for non-stored wines, so agents and users can immediately see storage status.
+- **Flaky currency freshness test**: relaxed timing-sensitive assertion that could fail across
+  day boundaries.
+
+### Added
+- New local-branch creation prompt (`new-branch.prompt.md`).
+
 ## [0.2.13] — 2026-05-11
 
 ### Added

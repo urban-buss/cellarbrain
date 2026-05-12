@@ -101,7 +101,8 @@ These views are registered on the internal connection only (via `get_connection(
 
 The `query_cellar` tool docstring steers agents toward the right view:
 
-- **Default to `wines` / `bottles`** (slim) for most queries.
+- **Default to `wines_stored` / `bottles_stored`** for cellar questions (what's in stock, most expensive stored wine, cellar value, etc.).
+- **Use `wines` / `bottles`** (slim) when you need the full catalogue including consumed and on-order wines (e.g. purchase history, past tastings).
 - **Use `wines_full` / `bottles_full`** only when you need:
   - Wine details: `alcohol_pct`, `grapes`, `volume_ml`, `classification`, ageing, `serving_temp_c`.
   - Bottle details: `provider_name`, `purchase_date`, `purchase_comment`, `volume_ml`, `is_in_transit`.

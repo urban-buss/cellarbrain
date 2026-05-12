@@ -158,6 +158,8 @@ class TestQueryCellarTool:
         doc = query_cellar.__doc__
         assert "View selection guide" in doc
         assert "Default to" in doc
+        assert "wines_stored" in doc
+        assert "bottles_stored" in doc
         assert "wines_full" in doc
         assert "bottles_full" in doc
 
@@ -1066,6 +1068,7 @@ class TestSchemaResource:
     def test_schema_contains_view_descriptions(self, server):
         result = server.view_schemas()
         assert "One row per wine (slim: 20 columns)" in result
+        assert "wines_stored" in result
 
 
 # ---------------------------------------------------------------------------
