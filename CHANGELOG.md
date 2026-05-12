@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.2.13] — 2026-05-11
 
 ### Added
+- **Query Cache & Connection Pooling** (`QueryCache` class): Thread-safe LRU cache for expensive
+  read-only MCP tool queries (`cellar_stats`, `find_wine`). Configurable via `[cache]` TOML
+  section (`enabled`, `max_size`). ETL-triggered invalidation on Parquet file changes via mtime
+  fingerprinting. New `cache_stats` MCP tool exposes hit/miss/eviction metrics.
+- Observability schema extended with `cache_hit` (BOOLEAN) column for tracking cache effectiveness.
+- **Typed MCP Tool Responses** (`ToolResponse` class): MCP tools can now return structured data
+  alongside human-readable text. `ToolResponse` is a `str` subclass carrying optional `.data` and
+  `.metadata` dicts. The wire wrapper converts these to `CallToolResult` with `structuredContent`
+  for MCP clients that support it. Six tools migrated: `query_cellar`, `cellar_stats`, `find_wine`,
+  `cellar_info`, `recommend_tonight`, `reload_data`. Remaining tools continue to work unchanged.
+- Observability schema extended with `data_size` (INTEGER) and `metadata_keys` (VARCHAR) columns,
+  with idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` upgrade for existing log stores.
+- `query.execute_query_structured()` returns both markdown text and machine-readable row data.
 - **Web Explorer dashboard** (`cellarbrain dashboard`): local Starlette web app with observability
   overview, tool usage, error log, session drill-down, latency charts, live event tail (SSE),
   cellar browser, bottle inventory, drinking window, tracked wines, SQL playground, cellar statistics,

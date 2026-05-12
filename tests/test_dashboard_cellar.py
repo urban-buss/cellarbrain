@@ -10,6 +10,7 @@ from cellarbrain.dashboard.cellar_queries import (
     get_cellar_names,
     get_cellar_stats_grouped,
     get_cellar_stats_overview,
+    get_consumption_velocity,
     get_drinking_now,
     get_filter_options,
     get_format_siblings,
@@ -465,3 +466,83 @@ class TestGetFormatSiblings:
 
     def test_unknown_group_returns_empty(self, format_con):
         assert get_format_siblings(format_con, 99, 999) == []
+
+
+# ---------------------------------------------------------------------------
+# TestGetConsumptionVelocity
+# ---------------------------------------------------------------------------
+
+
+class TestGetConsumptionVelocity:
+    @pytest.fixture()
+    def velocity_con(self):
+        """DuckDB with bottles_full containing acquisition and consumption data."""
+        import datetime as _dt
+
+        con = duckdb.connect(":memory:")
+
+        # Use dates relative to today so the test always looks back at recent months
+        today = _dt.date.today()
+        m1 = _dt.date(today.year, today.month, 1) - _dt.timedelta(days=30)
+        m2 = _dt.date(today.year, today.month, 1) - _dt.timedelta(days=60)
+        m3 = _dt.date(today.year, today.month, 1) - _dt.timedelta(days=90)
+
+        con.execute(f"""
+            CREATE VIEW bottles_full AS
+            SELECT * FROM (VALUES
+                (1, '{m1}'::DATE, NULL::DATE, 'stored', false),
+                (2, '{m1}'::DATE, NULL::DATE, 'stored', false),
+                (3, '{m2}'::DATE, '{m1}'::DATE, 'consumed', false),
+                (4, '{m3}'::DATE, '{m2}'::DATE, 'consumed', false),
+                (5, '{m3}'::DATE, NULL::DATE, 'stored', true)
+            ) AS t(bottle_id, purchase_date, output_date, status, is_in_transit)
+        """)
+        yield con
+        con.close()
+
+    def test_returns_dict(self, velocity_con):
+        result = get_consumption_velocity(velocity_con, months=3)
+        assert isinstance(result, dict)
+
+    def test_expected_keys(self, velocity_con):
+        result = get_consumption_velocity(velocity_con, months=3)
+        expected_keys = {
+            "labels",
+            "acquired",
+            "consumed",
+            "avg_acquired",
+            "avg_consumed",
+            "net_growth",
+            "current_bottles",
+            "projected_12m",
+        }
+        assert expected_keys == set(result.keys())
+
+    def test_months_list_length(self, velocity_con):
+        result = get_consumption_velocity(velocity_con, months=3)
+        assert len(result["labels"]) == 3
+        assert len(result["acquired"]) == 3
+        assert len(result["consumed"]) == 3
+
+    def test_net_growth_is_avg_diff(self, velocity_con):
+        result = get_consumption_velocity(velocity_con, months=3)
+        expected = round(result["avg_acquired"] - result["avg_consumed"], 1)
+        assert result["net_growth"] == expected
+
+    def test_current_bottles_excludes_in_transit(self, velocity_con):
+        result = get_consumption_velocity(velocity_con, months=3)
+        # Stored and not in_transit: ids 1, 2 → 2 bottles
+        assert result["current_bottles"] == 2
+
+    def test_empty_view_returns_none(self):
+        con = duckdb.connect(":memory:")
+        con.execute("""
+            CREATE VIEW bottles_full AS
+            SELECT * FROM (VALUES
+                (1, NULL::DATE, NULL::DATE, 'stored', false)
+            ) AS t(bottle_id, purchase_date, output_date, status, is_in_transit)
+            WHERE 1 = 0
+        """)
+        result = get_consumption_velocity(con, months=3)
+        assert result is None
+        con.close()

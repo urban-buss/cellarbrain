@@ -181,6 +181,10 @@ class SearchConfig:
     synonyms: dict[str, str] = field(
         default_factory=lambda: _default_search_synonyms(),
     )
+    fuzzy_threshold: float = 0.85
+    auto_fuzzy_threshold: float = 0.90
+    suggest_threshold: float = 0.70
+    enable_phonetic: bool = True
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,16 @@ class SommelierConfig:
     eval_split: float = 0.1
     auto_retrain_threshold: int = 100
     auto_food_tags: bool = True
+    # --- Hybrid RAG + embedding pairing (I5) ----------------------------
+    # When ``hybrid_enabled`` is True and a sommelier model is available,
+    # the pairing engine retrieves ``rerank_pool_size`` candidates via
+    # the SQL/RAG strategies in ``pairing.py`` and re-ranks them using
+    # cosine similarity in embedding space.  ``rerank_blend`` controls
+    # the weight of the embedding score in the blended ranking
+    # (0 = pure RAG signals, 1 = pure embedding similarity).
+    hybrid_enabled: bool = True
+    rerank_pool_size: int = 30
+    rerank_blend: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -226,6 +240,83 @@ class BackupConfig:
     max_backups: int = 5
     include_sommelier: bool = False
     include_logs: bool = False
+
+
+@dataclass(frozen=True)
+class RecommendConfig:
+    """Smart drinking recommendation engine configuration."""
+
+    default_limit: int = 5
+    max_limit: int = 15
+    urgency_weight: float = 3.0
+    occasion_weight: float = 2.0
+    pairing_weight: float = 2.0
+    freshness_weight: float = 1.0
+    diversity_weight: float = 1.0
+    quality_weight: float = 1.0
+    freshness_days_hard: int = 7
+    freshness_days_mid: int = 14
+    freshness_days_soft: int = 30
+    last_bottle_penalty: float = 1.0
+    last_bottle_exceptions: tuple[str, ...] = ("celebration", "romantic")
+
+
+@dataclass(frozen=True)
+class DinnerConfig:
+    """Dinner Party Concierge configuration."""
+
+    pool_size: int = 20
+    glasses_per_bottle: int = 5
+    max_courses: int = 8
+
+
+@dataclass(frozen=True)
+class GiftingConfig:
+    """Gift Advisor configuration."""
+
+    default_limit: int = 3
+    max_limit: int = 10
+    min_bottles: int = 2
+    markup_factor: float = 1.0
+    famous_regions: tuple[str, ...] = (
+        "Burgundy",
+        "Bordeaux",
+        "Champagne",
+        "Barolo",
+        "Barbaresco",
+        "Napa Valley",
+        "Tuscany",
+        "Rioja",
+        "Mosel",
+    )
+
+
+@dataclass(frozen=True)
+class AnomalyConfig:
+    """Anomaly detection configuration."""
+
+    enabled: bool = True
+    baseline_days: int = 7
+    volume_window_hours: int = 1
+    volume_factor: float = 5.0
+    volume_min_calls: int = 10
+    latency_factor: float = 2.5
+    latency_min_samples: int = 20
+    error_window_hours: int = 1
+    error_cluster_min: int = 5
+    drift_pct: float = 30.0
+    drift_min_samples: int = 30
+    etl_baseline_runs: int = 5
+    etl_delete_min_abs: int = 50
+    etl_delete_min_pct: float = 20.0
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    """Query-result caching configuration."""
+
+    enabled: bool = True
+    max_size: int = 128
 
 
 @dataclass(frozen=True)
@@ -276,6 +367,33 @@ class IngestConfig:
     dedup_strategy: str = "latest"
     dead_letter_folder: str = ""
     max_uptime: int = 86400
+
+
+@dataclass(frozen=True)
+class RetailerConfig:
+    """Configuration for a single newsletter retailer."""
+
+    sender_patterns: tuple[str, ...] = ()
+    enabled: bool = True
+    parser: str = ""
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class PromotionsConfig:
+    """Newsletter promotion scanning configuration."""
+
+    imap_host: str = "imap.mail.me.com"
+    imap_port: int = 993
+    use_ssl: bool = True
+    credential_scope: str = "shared"
+    mailbox: str = "INBOX"
+    max_age_days: int = 30
+    archive_raw: bool = False
+    archive_dir: str = "promotions-archive"
+    mark_processed: bool = True
+    processed_color: str = "yellow"
+    retailers: dict[str, RetailerConfig] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +495,7 @@ def _default_agent_sections() -> tuple[AgentSection, ...]:
         AgentSection("wine_description", "Wine Description", "agent:research"),
         AgentSection("market_availability", "Market & Availability", "agent:research"),
         AgentSection("similar_wines", "Similar Wines", "agent:recommendation"),
+        AgentSection("dashboard_notes", "Dashboard Notes", "agent:dashboard"),
         AgentSection("agent_log", "Agent Log", "agent"),
         AgentSection("ratings_reviews", "From Research", "agent:research", mixed=True),
         AgentSection("tasting_notes", "Community Tasting Notes", "agent:research", mixed=True),
@@ -613,7 +732,13 @@ class Settings:
     sommelier: SommelierConfig = field(default_factory=SommelierConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
+    promotions: PromotionsConfig = field(default_factory=PromotionsConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
+    recommend: RecommendConfig = field(default_factory=RecommendConfig)
+    dinner: DinnerConfig = field(default_factory=DinnerConfig)
+    gifting: GiftingConfig = field(default_factory=GiftingConfig)
+    anomaly: AnomalyConfig = field(default_factory=AnomalyConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     companion_sections: tuple[AgentSection, ...] = field(
         default_factory=_default_companion_sections,
@@ -784,6 +909,9 @@ def _resolve_sommelier_paths(
         eval_split=cfg.eval_split,
         auto_retrain_threshold=cfg.auto_retrain_threshold,
         auto_food_tags=cfg.auto_food_tags,
+        hybrid_enabled=cfg.hybrid_enabled,
+        rerank_pool_size=cfg.rerank_pool_size,
+        rerank_blend=cfg.rerank_blend,
     )
 
 
@@ -1033,11 +1161,45 @@ def load_settings(
     else:
         ingest = IngestConfig()
 
+    # Promotions — nested retailers table
+    promotions_raw = raw.get("promotions", {})
+    if promotions_raw:
+        promo_kw: dict = dict(promotions_raw)
+        retailers_raw = promo_kw.pop("retailers", {})
+        retailers: dict[str, RetailerConfig] = {}
+        for rid, rcfg in retailers_raw.items():
+            rcfg_kw = dict(rcfg)
+            if "sender_patterns" in rcfg_kw:
+                rcfg_kw["sender_patterns"] = tuple(rcfg_kw["sender_patterns"])
+            _validate_keys(f"promotions.retailers.{rid}", rcfg_kw, RetailerConfig)
+            retailers[rid] = RetailerConfig(**rcfg_kw)
+        _validate_keys("promotions", promo_kw, PromotionsConfig)
+        promotions = PromotionsConfig(**promo_kw, retailers=retailers)
+    else:
+        promotions = PromotionsConfig()
+
     # Backup — simple scalar config
     backup_raw = raw.get("backup", {})
     if backup_raw:
         _validate_keys("backup", backup_raw, BackupConfig)
     backup = BackupConfig(**backup_raw) if backup_raw else BackupConfig()
+
+    # Recommend — scalar config with tuple conversion for last_bottle_exceptions
+    recommend_raw = raw.get("recommend", {})
+    if recommend_raw:
+        recommend_kw: dict = dict(recommend_raw)
+        if "last_bottle_exceptions" in recommend_kw:
+            recommend_kw["last_bottle_exceptions"] = tuple(recommend_kw["last_bottle_exceptions"])
+        _validate_keys("recommend", recommend_kw, RecommendConfig)
+        recommend = RecommendConfig(**recommend_kw)
+    else:
+        recommend = RecommendConfig()
+
+    # Anomaly detection — simple scalar config
+    anomaly_raw = raw.get("anomaly", {})
+    if anomaly_raw:
+        _validate_keys("anomaly", anomaly_raw, AnomalyConfig)
+    anomaly = AnomalyConfig(**anomaly_raw) if anomaly_raw else AnomalyConfig()
 
     # Output — simple scalar config
     output_raw = raw.get("output", {})
@@ -1103,7 +1265,10 @@ def load_settings(
         sommelier=sommelier,
         dashboard=dashboard,
         ingest=ingest,
+        promotions=promotions,
         backup=backup,
+        recommend=recommend,
+        anomaly=anomaly,
         output=output,
         companion_sections=companion_sections,
         config_source=str(resolved) if resolved else None,

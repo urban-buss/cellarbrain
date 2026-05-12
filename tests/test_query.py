@@ -15,7 +15,9 @@ from cellarbrain.query import (
     _fmt_chf,
     _fmt_litres,
     cellar_churn,
+    cellar_gaps,
     cellar_stats,
+    consumption_velocity,
     execute_query,
     get_agent_connection,
     get_connection,
@@ -1496,6 +1498,221 @@ class TestCellarChurn:
         con = get_connection(data_dir)
         result = cellar_churn(con, year=2024, month=6)
         assert "**Ending**" in result
+
+
+# ---------------------------------------------------------------------------
+# TestConsumptionVelocity
+# ---------------------------------------------------------------------------
+
+
+class TestConsumptionVelocity:
+    """Test consumption_velocity rate analysis.
+
+    Uses the same fixture data as TestCellarChurn:
+      id=1: purchased 2023-06-01, stored
+      id=2: purchased 2023-06-01, stored
+      id=3: purchased 2022-01-15, consumed 2024-12-25
+      id=4: purchased 2025-03-10, stored (in transit)
+      id=5: purchased 2024-06-15, consumed 2024-09-20
+      id=6: purchased 2024-11-01, stored
+      id=7: purchased 2025-02-10, consumed 2025-03-15
+      id=8: purchased 2023-09-01, stored
+    """
+
+    def test_returns_tuple_of_str_and_dict(self, data_dir):
+        con = get_connection(data_dir)
+        result = consumption_velocity(con, months=6)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        text, data = result
+        assert isinstance(text, str)
+        assert isinstance(data, dict)
+
+    def test_markdown_structure(self, data_dir):
+        con = get_connection(data_dir)
+        text, _ = consumption_velocity(con, months=6)
+        assert "## Consumption Velocity" in text
+        assert "acquired" in text.lower()
+        assert "consumed" in text.lower()
+        assert "Projected" in text
+
+    def test_structured_data_keys(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=6)
+        expected_keys = {
+            "months",
+            "avg_acquired_per_month",
+            "avg_consumed_per_month",
+            "net_growth_per_month",
+            "current_bottles",
+            "projected_12m",
+            "lookback_months",
+        }
+        assert expected_keys <= set(data.keys())
+
+    def test_months_list_has_correct_length(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=6)
+        assert data["lookback_months"] == 6
+        assert len(data["months"]) == 6
+
+    def test_custom_lookback(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=3)
+        assert data["lookback_months"] == 3
+        assert len(data["months"]) == 3
+
+    def test_net_growth_is_acquired_minus_consumed(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=12)
+        expected_net = round(data["avg_acquired_per_month"] - data["avg_consumed_per_month"], 1)
+        assert data["net_growth_per_month"] == expected_net
+
+    def test_projection_uses_net_growth(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=6)
+        expected = int(data["current_bottles"] + round(data["net_growth_per_month"] * 12))
+        assert data["projected_12m"] == expected
+
+    def test_invalid_months_raises(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="months must be >= 1"):
+            consumption_velocity(con, months=0)
+
+    def test_current_bottles_excludes_in_transit(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = consumption_velocity(con, months=6)
+        # Bottle id=4 is in transit (cellar_id=2 which is 'in_transit')
+        # Stored non-transit: id=1, 2, 6, 8 = 4 bottles
+        assert data["current_bottles"] == 4
+
+
+# ---------------------------------------------------------------------------
+# TestCellarGaps
+# ---------------------------------------------------------------------------
+
+
+class TestCellarGaps:
+    """Test cellar_gaps gap analysis.
+
+    Uses the same fixture data as TestCellarChurn:
+      Wine 1: Bordeaux, Merlot, optimal, category=Red wine, vintage=2020
+      Wine 2: Rioja, Tempranillo, drinkable, category=Red wine, vintage=2018
+      Wine 3: Bordeaux, Merlot, optimal, category=Red wine, vintage=2019
+      Consumed bottles: id=3 (Rioja, 2024-12-25), id=5 (Bordeaux, 2024-09-20),
+                        id=7 (Bordeaux, 2025-03-15)
+    """
+
+    def test_returns_tuple_of_str_and_dict(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_gaps(con)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        text, data = result
+        assert isinstance(text, str)
+        assert isinstance(data, dict)
+
+    def test_markdown_structure(self, data_dir):
+        con = get_connection(data_dir)
+        text, _ = cellar_gaps(con)
+        assert "### Region Gaps" in text
+        assert "### Grape Gaps" in text
+        assert "### Price Tier Gaps" in text
+        assert "### Vintage Gaps" in text
+
+    def test_structured_data_keys_all_dimensions(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con)
+        assert "dimension" in data
+        assert "months" in data
+        assert "region_gaps" in data
+        assert "grape_gaps" in data
+        assert "price_tier_gaps" in data
+        assert "vintage_gaps" in data
+        assert data["dimension"] is None
+        assert data["months"] == 12
+
+    def test_single_dimension_region(self, data_dir):
+        con = get_connection(data_dir)
+        text, data = cellar_gaps(con, dimension="region")
+        assert "### Region Gaps" in text
+        assert "### Grape Gaps" not in text
+        assert "region_gaps" in data
+        assert "grape_gaps" not in data
+
+    def test_single_dimension_grape(self, data_dir):
+        con = get_connection(data_dir)
+        text, data = cellar_gaps(con, dimension="grape")
+        assert "### Grape Gaps" in text
+        assert "### Region Gaps" not in text
+        assert "grape_gaps" in data
+        assert "region_gaps" not in data
+
+    def test_single_dimension_price_tier(self, data_dir):
+        con = get_connection(data_dir)
+        text, data = cellar_gaps(con, dimension="price_tier")
+        assert "### Price Tier Gaps" in text
+        assert "### Region Gaps" not in text
+        assert "price_tier_gaps" in data
+        assert "region_gaps" not in data
+
+    def test_single_dimension_vintage(self, data_dir):
+        con = get_connection(data_dir)
+        text, data = cellar_gaps(con, dimension="vintage")
+        assert "### Vintage Gaps" in text
+        assert "### Region Gaps" not in text
+        assert "vintage_gaps" in data
+        assert "region_gaps" not in data
+
+    def test_invalid_dimension_raises(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="Invalid dimension"):
+            cellar_gaps(con, dimension="invalid")
+
+    def test_invalid_months_too_low(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="months must be between 1 and 60"):
+            cellar_gaps(con, months=0)
+
+    def test_invalid_months_too_high(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="months must be between 1 and 60"):
+            cellar_gaps(con, months=100)
+
+    def test_custom_months(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, months=3)
+        assert data["months"] == 3
+
+    def test_region_gaps_returns_list(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension="region")
+        assert isinstance(data["region_gaps"], list)
+
+    def test_grape_gaps_returns_list(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension="grape")
+        assert isinstance(data["grape_gaps"], list)
+
+    def test_price_tier_gaps_returns_list(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension="price_tier")
+        assert isinstance(data["price_tier_gaps"], list)
+
+    def test_vintage_gaps_returns_list(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension="vintage")
+        assert isinstance(data["vintage_gaps"], list)
+
+    def test_dimension_case_insensitive(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension="REGION")
+        assert "region_gaps" in data
+
+    def test_dimension_stripped(self, data_dir):
+        con = get_connection(data_dir)
+        _, data = cellar_gaps(con, dimension=" grape ")
+        assert "grape_gaps" in data
 
 
 # ---------------------------------------------------------------------------

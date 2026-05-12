@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from cellarbrain.companion_markdown import (
+    VintageStats,
+    _aggregate_vintage_stats,
     _extract_agent_sections,
+    _select_best_value,
+    _suggest_drink_order,
+    _vintage_trend,
     companion_dossier_slug,
     generate_companion_dossiers,
     render_companion_dossier,
@@ -124,12 +129,24 @@ def _tracked_wine(
     }
 
 
-def _related_wine(wine_id: int = 1, vintage: int = 2020) -> dict:
+def _related_wine(
+    wine_id: int = 1,
+    vintage: int = 2020,
+    drinking_status: str = "unknown",
+    list_price: float | None = None,
+    list_currency: str | None = None,
+    price_per_750ml: float | None = None,
+    tracked_wine_id: int = 90_001,
+) -> dict:
     return {
         "wine_id": wine_id,
         "vintage": vintage,
         "is_deleted": False,
-        "tracked_wine_id": 90_001,
+        "tracked_wine_id": tracked_wine_id,
+        "drinking_status": drinking_status,
+        "list_price": list_price,
+        "list_currency": list_currency,
+        "price_per_750ml": price_per_750ml,
     }
 
 
@@ -522,9 +539,9 @@ class TestRenderPriceTrackerSection:
         settings = Settings()
 
         result = render_companion_dossier(tw, wines, "Test", None, settings)
-        assert "## Vintages in Cellar" in result
-        assert "| 2018 | 2 |" in result
-        assert "| 2020 | 1 |" in result
+        assert "## Vintage Comparison" in result
+        assert "| 2018 |" in result
+        assert "| 2020 |" in result
 
 
 # ---------------------------------------------------------------------------
@@ -601,3 +618,356 @@ class TestGenerateCompanionDossiers:
         assert len(paths) == 1
         content = paths[0].read_text(encoding="utf-8")
         assert "Existing research." in content
+
+    def test_renders_vintage_comparison_with_entity_data(self, tmp_path):
+        """generate_companion_dossiers uses tasting/pro_rating/bottle entities."""
+        entities = {
+            "tracked_wine": [_tracked_wine(90_001, 1, "Grand Vin")],
+            "wine": [
+                {**_related_wine(1, 2020, "optimal", 45.0, "CHF", 45.0), "winery_id": 1, "name": "GV"},
+                {**_related_wine(2, 2021, "drinkable", 42.0, "CHF", 42.0), "winery_id": 1, "name": "GV"},
+            ],
+            "winery": [{"winery_id": 1, "name": "Château Test"}],
+            "appellation": [],
+            "pro_rating": [
+                {"wine_id": 1, "source": "Parker", "score": 94.0, "max_score": 100.0},
+            ],
+            "tasting": [
+                {"wine_id": 2, "score": 17.0, "max_score": 20.0},
+            ],
+            "bottle": [
+                {"wine_id": 1, "status": "stored", "is_in_transit": False},
+                {"wine_id": 1, "status": "stored", "is_in_transit": False},
+                {"wine_id": 2, "status": "consumed", "is_in_transit": False},
+            ],
+        }
+        settings = Settings()
+        (tmp_path / "wines").mkdir()
+
+        paths = generate_companion_dossiers(entities, tmp_path, settings)
+        content = paths[0].read_text(encoding="utf-8")
+        assert "## Vintage Comparison" in content
+        assert "94/100" in content
+        assert "17/20" in content
+        assert "| 2020 | optimal | 94/100 | CHF 45 | 2 |" in content
+
+
+# ---------------------------------------------------------------------------
+# Vintage comparison helpers
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateVintageStats:
+    def test_basic(self):
+        wines = [_related_wine(1, 2020, "optimal", 45.0, "CHF", 45.0)]
+        tastings = {1: [{"score": 17.0, "max_score": 20.0}]}
+        ratings = {1: [{"score": 94.0, "max_score": 100.0}]}
+        bottles = {1: 3}
+
+        result = _aggregate_vintage_stats(wines, tastings, ratings, bottles)
+        assert len(result) == 1
+        s = result[0]
+        assert s.vintage == 2020
+        assert s.best_score == 94.0
+        assert s.best_score_source == "pro"
+        assert s.bottles_stored == 3
+        assert s.drinking_status == "optimal"
+
+    def test_prefers_pro_over_personal(self):
+        wines = [_related_wine(1, 2020)]
+        tastings = {1: [{"score": 18.0, "max_score": 20.0}]}
+        ratings = {1: [{"score": 92.0, "max_score": 100.0}]}
+
+        result = _aggregate_vintage_stats(wines, tastings, ratings, {})
+        assert result[0].best_score == 92.0
+        assert result[0].best_score_source == "pro"
+
+    def test_falls_back_to_personal(self):
+        wines = [_related_wine(1, 2020)]
+        tastings = {1: [{"score": 16.5, "max_score": 20.0}]}
+
+        result = _aggregate_vintage_stats(wines, tastings, {}, {})
+        assert result[0].best_score == 16.5
+        assert result[0].best_score_source == "personal"
+
+    def test_no_scores(self):
+        wines = [_related_wine(1, 2020)]
+        result = _aggregate_vintage_stats(wines, {}, {}, {})
+        assert result[0].best_score is None
+        assert result[0].best_score_source is None
+
+    def test_multiple_vintages_sorted(self):
+        wines = [_related_wine(2, 2021), _related_wine(1, 2019)]
+        result = _aggregate_vintage_stats(wines, {}, {}, {})
+        assert result[0].vintage == 2019
+        assert result[1].vintage == 2021
+
+    def test_max_pro_score_selected(self):
+        wines = [_related_wine(1, 2020)]
+        ratings = {
+            1: [
+                {"score": 89.0, "max_score": 100.0},
+                {"score": 93.0, "max_score": 100.0},
+                {"score": 91.0, "max_score": 100.0},
+            ]
+        }
+
+        result = _aggregate_vintage_stats(wines, {}, ratings, {})
+        assert result[0].best_score == 93.0
+
+
+class TestSelectBestValue:
+    def test_basic(self):
+        stats = [
+            VintageStats(1, 2020, "optimal", 94.0, 100.0, "pro", 45.0, "CHF", 45.0, 3),
+            VintageStats(2, 2021, "drinkable", 91.0, 100.0, "pro", 42.0, "CHF", 42.0, 2),
+        ]
+        result = _select_best_value(stats)
+        # 2021: 91/100 / 42 = 0.02167; 2020: 94/100 / 45 = 0.02089
+        assert result is not None
+        assert result.vintage == 2021
+
+    def test_none_when_no_price(self):
+        stats = [
+            VintageStats(1, 2020, "optimal", 94.0, 100.0, "pro", None, None, None, 3),
+        ]
+        assert _select_best_value(stats) is None
+
+    def test_none_when_no_score(self):
+        stats = [
+            VintageStats(1, 2020, "optimal", None, None, None, 45.0, "CHF", 45.0, 3),
+        ]
+        assert _select_best_value(stats) is None
+
+    def test_skips_zero_price(self):
+        stats = [
+            VintageStats(1, 2020, "optimal", 94.0, 100.0, "pro", 0.0, "CHF", 0.0, 1),
+        ]
+        assert _select_best_value(stats) is None
+
+
+class TestSuggestDrinkOrder:
+    def test_basic_ordering(self):
+        stats = [
+            VintageStats(1, 2018, "optimal", None, None, None, None, None, None, 1),
+            VintageStats(2, 2020, "drinkable", None, None, None, None, None, None, 1),
+            VintageStats(3, 2022, "too_young", None, None, None, None, None, None, 1),
+        ]
+        order, past = _suggest_drink_order(stats)
+        assert order == [2018, 2020, 2022]
+        assert past == []
+
+    def test_past_window_separated(self):
+        stats = [
+            VintageStats(1, 2015, "past_window", None, None, None, None, None, None, 1),
+            VintageStats(2, 2020, "optimal", None, None, None, None, None, None, 1),
+        ]
+        order, past = _suggest_drink_order(stats)
+        assert order == [2020]
+        assert past == [2015]
+
+    def test_urgent_before_drinkable(self):
+        stats = [
+            VintageStats(1, 2020, "drinkable", None, None, None, None, None, None, 1),
+            VintageStats(2, 2018, "past_optimal", None, None, None, None, None, None, 1),
+        ]
+        order, past = _suggest_drink_order(stats)
+        assert order == [2018, 2020]
+
+    def test_too_young_reversed(self):
+        stats = [
+            VintageStats(1, 2022, "too_young", None, None, None, None, None, None, 1),
+            VintageStats(2, 2023, "too_young", None, None, None, None, None, None, 1),
+        ]
+        order, _ = _suggest_drink_order(stats)
+        # Newest first among too_young (they will mature later)
+        assert order == [2023, 2022]
+
+    def test_empty_stats(self):
+        order, past = _suggest_drink_order([])
+        assert order == []
+        assert past == []
+
+
+class TestVintageTrend:
+    def test_improving(self):
+        stats = [
+            VintageStats(1, 2018, None, 88.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(2, 2019, None, 91.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(3, 2020, None, 95.0, 100.0, "pro", None, None, None, 0),
+        ]
+        assert _vintage_trend(stats) == "improving"
+
+    def test_declining(self):
+        stats = [
+            VintageStats(1, 2018, None, 95.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(2, 2019, None, 91.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(3, 2020, None, 87.0, 100.0, "pro", None, None, None, 0),
+        ]
+        assert _vintage_trend(stats) == "declining"
+
+    def test_stable(self):
+        stats = [
+            VintageStats(1, 2018, None, 92.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(2, 2019, None, 92.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(3, 2020, None, 92.0, 100.0, "pro", None, None, None, 0),
+        ]
+        assert _vintage_trend(stats) == "stable"
+
+    def test_none_with_fewer_than_3(self):
+        stats = [
+            VintageStats(1, 2018, None, 92.0, 100.0, "pro", None, None, None, 0),
+            VintageStats(2, 2019, None, 95.0, 100.0, "pro", None, None, None, 0),
+        ]
+        assert _vintage_trend(stats) is None
+
+    def test_none_with_no_scores(self):
+        stats = [
+            VintageStats(1, 2018, None, None, None, None, None, None, None, 0),
+            VintageStats(2, 2019, None, None, None, None, None, None, None, 0),
+            VintageStats(3, 2020, None, None, None, None, None, None, None, 0),
+        ]
+        assert _vintage_trend(stats) is None
+
+
+class TestVintageComparisonMatrix:
+    """Integration tests for the full Vintage Comparison section in render_companion_dossier."""
+
+    def test_happy_path_multi_vintage(self):
+        tw = _tracked_wine()
+        wines = [
+            _related_wine(1, 2019, "optimal", 45.0, "CHF", 45.0),
+            _related_wine(2, 2020, "drinkable", 42.0, "CHF", 42.0),
+            _related_wine(3, 2021, "too_young", 40.0, "CHF", 40.0),
+        ]
+        settings = Settings()
+        ratings = {
+            1: [{"score": 94.0, "max_score": 100.0}],
+            2: [{"score": 91.0, "max_score": 100.0}],
+            3: [{"score": 88.0, "max_score": 100.0}],
+        }
+        tastings = {2: [{"score": 17.5, "max_score": 20.0}]}
+        bottles = {1: 3, 2: 2}
+
+        result = render_companion_dossier(
+            tw,
+            wines,
+            "Test",
+            None,
+            settings,
+            tastings_by_wine=tastings,
+            pro_ratings_by_wine=ratings,
+            bottles_by_wine=bottles,
+        )
+        assert "## Vintage Comparison" in result
+        assert "| 2019 | optimal | 94/100 | CHF 45 | 3 |" in result
+        assert "91/100" in result
+        assert "**Best value:**" in result
+        assert "**Suggested drink order:**" in result
+        assert "**Vintage trend:**" in result
+
+    def test_single_vintage_no_trend(self):
+        tw = _tracked_wine()
+        wines = [_related_wine(1, 2020, "optimal", 50.0, "CHF", 50.0)]
+        settings = Settings()
+        ratings = {1: [{"score": 92.0, "max_score": 100.0}]}
+
+        result = render_companion_dossier(
+            tw,
+            wines,
+            "Test",
+            None,
+            settings,
+            pro_ratings_by_wine=ratings,
+        )
+        assert "## Vintage Comparison" in result
+        assert "| 2020 | optimal | 92/100 | CHF 50 |" in result
+        # Only one vintage — no trend
+        assert "**Vintage trend:**" not in result
+        # Single vintage with score+price still gets best value
+        assert "**Best value:**" in result
+
+    def test_no_scores(self):
+        tw = _tracked_wine()
+        wines = [
+            _related_wine(1, 2019, "drinkable", 45.0, "CHF", 45.0),
+            _related_wine(2, 2020, "drinkable", 42.0, "CHF", 42.0),
+        ]
+        settings = Settings()
+
+        result = render_companion_dossier(tw, wines, "Test", None, settings)
+        assert "## Vintage Comparison" in result
+        # Score column shows dashes
+        assert "| 2019 | drinkable | — | CHF 45 |" in result
+        # No best value without scores
+        assert "**Best value:**" not in result
+        assert "**Vintage trend:**" not in result
+
+    def test_no_prices(self):
+        tw = _tracked_wine()
+        wines = [_related_wine(1, 2020, "optimal"), _related_wine(2, 2021, "drinkable")]
+        settings = Settings()
+        ratings = {1: [{"score": 93.0, "max_score": 100.0}], 2: [{"score": 90.0, "max_score": 100.0}]}
+
+        result = render_companion_dossier(
+            tw,
+            wines,
+            "Test",
+            None,
+            settings,
+            pro_ratings_by_wine=ratings,
+        )
+        # Price column shows dashes
+        assert "| 2020 | optimal | 93/100 | — |" in result
+        # No best value without prices
+        assert "**Best value:**" not in result
+        # Drink order still works
+        assert "**Suggested drink order:**" in result
+
+    def test_past_window_warning(self):
+        tw = _tracked_wine()
+        wines = [
+            _related_wine(1, 2015, "past_window"),
+            _related_wine(2, 2020, "optimal"),
+        ]
+        settings = Settings()
+
+        result = render_companion_dossier(tw, wines, "Test", None, settings)
+        assert "> ⚠️ Past window: 2015" in result
+        # Past window not in main drink order
+        assert "**Suggested drink order:** 2020" in result
+
+    def test_nv_vintage(self):
+        tw = _tracked_wine()
+        wines = [_related_wine(1, None, "drinkable")]
+        settings = Settings()
+
+        result = render_companion_dossier(tw, wines, "Test", None, settings)
+        # NV vintage gets None in the dict, but vintages list is empty so no section
+        # Actually, let's use vintage=0 convention for NV...
+        # The current code uses `vintage or 0` for sorting, but the table
+        # only renders if `vintages` (the list of non-None vintage values) is non-empty.
+        # With a None vintage, `vintages` filter would be empty.
+        # This is expected — NV wines alone don't produce the comparison.
+        assert "## Vintage Comparison" not in result
+
+    def test_nv_with_real_vintages(self):
+        """NV wines render alongside real vintages when real vintages exist."""
+        tw = _tracked_wine()
+        wines = [
+            _related_wine(1, 2020, "optimal"),
+            {**_related_wine(2, None, "drinkable"), "vintage": None},
+        ]
+        settings = Settings()
+
+        result = render_companion_dossier(tw, wines, "Test", None, settings)
+        assert "## Vintage Comparison" in result
+        assert "| NV |" in result
+        assert "| 2020 |" in result
+
+    def test_empty_related_wines(self):
+        tw = _tracked_wine()
+        settings = Settings()
+
+        result = render_companion_dossier(tw, [], "Test", None, settings)
+        assert "## Vintage Comparison" not in result

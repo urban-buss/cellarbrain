@@ -317,3 +317,35 @@ GROUP BY po.tracked_wine_id, po.vintage, po.bottle_size_ml,
          po.retailer_name, DATE_TRUNC('month', po.observed_at)
 ORDER BY month DESC
 """
+
+# ---------------------------------------------------------------------------
+# Research completeness views
+# ---------------------------------------------------------------------------
+
+RESEARCH_COMPLETENESS_VIEW_SQL = """\
+SELECT * FROM research_completeness
+"""
+
+WINES_COMPLETENESS_VIEW_SQL = """\
+SELECT
+    w.wine_id,
+    w.wine_name,
+    w.vintage,
+    w.winery_name,
+    w.category,
+    w.country,
+    w.region,
+    w.bottles_stored,
+    w.is_favorite,
+    rc.score AS completeness_score,
+    rc.populated_count,
+    rc.pending_count,
+    rc.fresh_count,
+    rc.stale_count,
+    rc.has_food_tags,
+    rc.has_food_groups,
+    rc.has_pro_ratings,
+    rc.computed_at
+FROM wines w
+JOIN research_completeness rc ON w.wine_id = rc.wine_id
+"""

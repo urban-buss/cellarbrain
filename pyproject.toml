@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellarbrain"
-version = "0.2.13"
+version = "0.3.0a1"
 description = "AI sommelier for your wine cellar — ETL pipeline, DuckDB query layer, Markdown dossiers, and MCP server for wine cellar CSV exports"
 requires-python = ">=3.11"
 license = "MIT"
@@ -48,6 +48,14 @@ dashboard = [
 ingest = [
     "imapclient>=3.0",
     "keyring>=25.0",
+]
+promotions = [
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "imapclient>=3.0",
+]
+search = [
+    "jellyfish>=1.0",
 ]
 dev = [
     "pytest",

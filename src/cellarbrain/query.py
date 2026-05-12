@@ -39,6 +39,7 @@ from .flat import (
     PRICE_HISTORY_VIEW_SQL,
     PRICE_OBSERVATIONS_VIEW_SQL,
     TRACKED_WINES_VIEW_SQL,
+    WINES_COMPLETENESS_VIEW_SQL,
     WINES_FULL_VIEW_SQL,
     WINES_VIEW_SQL,
     WINES_WISHLIST_VIEW_SQL,
@@ -357,6 +358,13 @@ def get_agent_connection(
         con.execute(f"CREATE VIEW latest_prices AS {_substitute_price_tables(LATEST_PRICES_VIEW_SQL, d)}")
         con.execute(f"CREATE VIEW price_history AS {_substitute_price_tables(PRICE_HISTORY_VIEW_SQL, d)}")
 
+    # Research completeness view (optional — generated after dossiers exist)
+    rc_path = d / "research_completeness.parquet"
+    if rc_path.exists():
+        rc_pq = str(rc_path).replace("\\", "/")
+        con.execute(f"CREATE VIEW research_completeness AS SELECT * FROM read_parquet('{rc_pq}')")
+        con.execute(f"CREATE VIEW wines_completeness AS {WINES_COMPLETENESS_VIEW_SQL}")
+
     for name, sql in _CONVENIENCE_VIEWS.items():
         con.execute(f"CREATE VIEW {name} AS {sql}")
 
@@ -372,6 +380,11 @@ def get_agent_connection(
         "REPLACE(REPLACE(REPLACE(REPLACE("
         "s, chr(8216), chr(39)), chr(8217), chr(39)), chr(8220), chr(34)), chr(8221), chr(34))"
     )
+
+    # Register phonetic UDFs if the [search] extra is installed (non-fatal).
+    from .phonetic import register_udfs as _register_phonetic_udfs
+
+    _register_phonetic_udfs(con)
 
     return con
 
@@ -475,6 +488,61 @@ def execute_query(
         return result
 
     return _format_df(df, fmt)
+
+
+def execute_query_structured(
+    con: duckdb.DuckDBPyConnection,
+    sql: str,
+    row_limit: int = 200,
+) -> tuple[str, dict]:
+    """Execute a read-only SQL query and return (markdown_text, structured_data).
+
+    The structured data dict contains:
+    - columns: list of column names
+    - rows: list of row dicts (respecting row_limit)
+    - row_count: total rows before truncation
+    - truncated: whether output was truncated
+
+    Raises QueryError on validation failure or DuckDB execution error.
+    """
+    validate_sql(sql)
+    try:
+        df = con.execute(sql).fetchdf()
+    except duckdb.Error as exc:
+        msg = str(exc)
+        match = re.search(
+            r'column\s+["\']?(\w+)["\']?.*not found',
+            msg,
+            re.IGNORECASE,
+        )
+        if match:
+            suggestions = _suggest_columns(con, match.group(1))
+            if suggestions:
+                msg += f"\n\nDid you mean: {', '.join(suggestions)}?"
+        raise QueryError(msg) from exc
+
+    total = len(df)
+    logger.debug("execute_query_structured rows=%d sql=%s", total, sql.strip()[:200])
+    truncated = total > row_limit
+
+    if total == 0:
+        data = {"columns": list(df.columns), "rows": [], "row_count": 0, "truncated": False}
+        return "*No results.*", data
+
+    display_df = df.head(row_limit) if truncated else df
+    text = _format_df(display_df, "markdown")
+    if truncated:
+        text += f"\n\n*({total} rows total, showing first {row_limit})*"
+
+    # Convert to serialisable rows (NaN → None)
+    rows = display_df.where(display_df.notna(), None).to_dict(orient="records")
+    data = {
+        "columns": list(df.columns),
+        "rows": rows,
+        "row_count": total,
+        "truncated": truncated,
+    }
+    return text, data
 
 
 # ---------------------------------------------------------------------------
@@ -1136,19 +1204,382 @@ def _multi_period_churn(
 
 
 # ---------------------------------------------------------------------------
+# Consumption velocity (rate analysis)
+# ---------------------------------------------------------------------------
+
+
+def consumption_velocity(
+    con: duckdb.DuckDBPyConnection,
+    months: int = 6,
+    currency: str = "CHF",
+) -> tuple[str, dict]:
+    """Compute consumption and acquisition rates over recent months.
+
+    Returns a tuple of (markdown_text, structured_data) with month-by-month
+    counts, averages, net growth rate, and a 12-month cellar size projection.
+
+    Raises ValueError for invalid parameters.
+    """
+    import datetime as _dt
+
+    if months < 1:
+        raise ValueError(f"months must be >= 1, got {months}")
+
+    today = _dt.date.today()
+    # Start of the current month
+    current_month_start = _dt.date(today.year, today.month, 1)
+    # Go back N months from the start of the current month
+    # (we exclude the current incomplete month)
+    if today.month - months >= 1:
+        range_start = _dt.date(today.year, today.month - months, 1)
+    else:
+        years_back = (months - today.month) // 12 + 1
+        m = today.month - months + 12 * years_back
+        range_start = _dt.date(today.year - years_back, m, 1)
+
+    sql = f"""
+        WITH series AS (
+            SELECT unnest(generate_series(
+                '{range_start}'::DATE, '{current_month_start}'::DATE, INTERVAL '1 MONTH'
+            )) AS period_start
+        ),
+        periods AS (
+            SELECT period_start::DATE AS period_start,
+                   (period_start + INTERVAL '1 MONTH')::DATE AS period_end,
+                   strftime(period_start, '%Y-%m') AS label
+            FROM series
+            WHERE period_start < '{current_month_start}'::DATE
+        )
+        SELECT
+            p.label,
+            count(*) FILTER (
+                WHERE b.purchase_date >= p.period_start AND b.purchase_date < p.period_end
+            ) AS acquired,
+            count(*) FILTER (
+                WHERE b.output_date >= p.period_start AND b.output_date < p.period_end
+            ) AS consumed
+        FROM periods p
+        CROSS JOIN bottles_full b
+        GROUP BY p.label, p.period_start
+        ORDER BY p.period_start
+    """
+    rows = con.execute(sql).fetchall()
+
+    month_data = [{"month": r[0], "acquired": int(r[1]), "consumed": int(r[2])} for r in rows]
+
+    num_months = len(month_data) if month_data else 1
+    total_acquired = sum(m["acquired"] for m in month_data)
+    total_consumed = sum(m["consumed"] for m in month_data)
+    avg_acquired = round(total_acquired / num_months, 1)
+    avg_consumed = round(total_consumed / num_months, 1)
+    net_growth = round(avg_acquired - avg_consumed, 1)
+
+    # Current cellar size (stored, not in transit)
+    current_bottles = con.execute(
+        "SELECT count(*) FROM bottles_full WHERE status = 'stored' AND NOT is_in_transit"
+    ).fetchone()[0]
+
+    projected_12m = int(current_bottles + round(net_growth * 12))
+
+    # Build structured data
+    data = {
+        "months": month_data,
+        "avg_acquired_per_month": avg_acquired,
+        "avg_consumed_per_month": avg_consumed,
+        "net_growth_per_month": net_growth,
+        "current_bottles": int(current_bottles),
+        "projected_12m": projected_12m,
+        "lookback_months": num_months,
+    }
+
+    # Build markdown
+    net_sign = "+" if net_growth >= 0 else ""
+    lines: list[str] = [f"## Consumption Velocity — Last {num_months} Months\n"]
+    lines.append("| month | acquired | consumed | net |")
+    lines.append("|:------|--------:|---------:|----:|")
+    for m in month_data:
+        n = m["acquired"] - m["consumed"]
+        ns = f"+{n}" if n >= 0 else str(n)
+        lines.append(f"| {m['month']} | {m['acquired']} | {m['consumed']} | {ns} |")
+    lines.append("")
+    lines.append(
+        f"**Averages (per month):** acquired {avg_acquired}, consumed {avg_consumed}, net {net_sign}{net_growth}"
+    )
+    lines.append(f"**Current cellar:** {current_bottles} bottles")
+    lines.append(f"**Projected in 12 months:** ~{projected_12m} bottles")
+
+    return "\n".join(lines), data
+
+
+# ---------------------------------------------------------------------------
+# cellar_gaps — gap analysis
+# ---------------------------------------------------------------------------
+
+_VALID_GAP_DIMENSIONS = {"region", "grape", "price_tier", "vintage"}
+
+
+def cellar_gaps(
+    con: duckdb.DuckDBPyConnection,
+    dimension: str | None = None,
+    months: int = 12,
+) -> tuple[str, dict]:
+    """Identify underrepresented categories in the cellar.
+
+    Analyses gaps across four dimensions: regions consumed but depleted,
+    grape varieties with no drinkable bottles, price tiers lacking
+    ready-to-drink options, and aging-worthy vintages with no coverage.
+
+    Args:
+        dimension: Analyse a single dimension — one of "region", "grape",
+                   "price_tier", "vintage". If None, returns all four.
+        months: Lookback months for consumption frequency inference
+                (default 12, max 60).
+
+    Returns a tuple of (markdown_text, structured_data).
+    Raises ValueError for invalid parameters.
+    """
+    if dimension is not None:
+        dimension = dimension.strip().lower()
+        if dimension not in _VALID_GAP_DIMENSIONS:
+            raise ValueError(
+                f"Invalid dimension: {dimension!r}. Must be one of: {', '.join(sorted(_VALID_GAP_DIMENSIONS))}"
+            )
+    if months < 1 or months > 60:
+        raise ValueError(f"months must be between 1 and 60, got {months}")
+
+    sections: list[str] = []
+    data: dict = {"dimension": dimension, "months": months}
+
+    if dimension is None or dimension == "region":
+        region_md, region_data = _region_gaps(con, months)
+        sections.append(region_md)
+        data["region_gaps"] = region_data
+
+    if dimension is None or dimension == "grape":
+        grape_md, grape_data = _grape_gaps(con)
+        sections.append(grape_md)
+        data["grape_gaps"] = grape_data
+
+    if dimension is None or dimension == "price_tier":
+        tier_md, tier_data = _price_tier_gaps(con)
+        sections.append(tier_md)
+        data["price_tier_gaps"] = tier_data
+
+    if dimension is None or dimension == "vintage":
+        vintage_md, vintage_data = _vintage_gaps(con)
+        sections.append(vintage_md)
+        data["vintage_gaps"] = vintage_data
+
+    text = "\n\n".join(sections) if sections else "No gap data available."
+    return text, data
+
+
+def _region_gaps(
+    con: duckdb.DuckDBPyConnection,
+    months: int,
+) -> tuple[str, list[dict]]:
+    """Regions consumed frequently but with 0-1 bottles currently stored."""
+    import datetime as _dt
+
+    today = _dt.date.today()
+    if today.month - months >= 1:
+        range_start = _dt.date(today.year, today.month - months, 1)
+    else:
+        years_back = (months - today.month) // 12 + 1
+        m = today.month - months + 12 * years_back
+        range_start = _dt.date(today.year - years_back, m, 1)
+
+    sql = f"""
+        WITH consumed_regions AS (
+            SELECT w.region, count(*) AS consumed_count
+            FROM bottles_full b
+            JOIN wines_full w ON b.wine_id = w.wine_id
+            WHERE b.output_date >= '{range_start}'
+              AND w.region IS NOT NULL AND w.region != ''
+            GROUP BY w.region
+            HAVING count(*) >= 2
+        ),
+        stored_regions AS (
+            SELECT region, CAST(sum(bottles_stored) AS BIGINT) AS bottles_stored
+            FROM wines_full
+            WHERE region IS NOT NULL AND region != ''
+              AND bottles_stored > 0
+            GROUP BY region
+        )
+        SELECT cr.region,
+               cr.consumed_count,
+               COALESCE(sr.bottles_stored, 0) AS bottles_stored
+        FROM consumed_regions cr
+        LEFT JOIN stored_regions sr ON cr.region = sr.region
+        WHERE COALESCE(sr.bottles_stored, 0) <= 1
+        ORDER BY cr.consumed_count DESC
+    """
+    rows = con.execute(sql).fetchall()
+    gaps = [{"region": r[0], "consumed": int(r[1]), "stored": int(r[2])} for r in rows]
+
+    lines = [f"### Region Gaps (consumed in last {months} months but ≤1 bottle stored)\n"]
+    if gaps:
+        lines.append("| region | consumed | stored |")
+        lines.append("|:-------|--------:|-------:|")
+        for g in gaps:
+            lines.append(f"| {g['region']} | {g['consumed']} | {g['stored']} |")
+    else:
+        lines.append("No region gaps detected — all frequently consumed regions are well stocked.")
+
+    return "\n".join(lines), gaps
+
+
+def _grape_gaps(con: duckdb.DuckDBPyConnection) -> tuple[str, list[dict]]:
+    """Grape varieties in cellar with no bottles in optimal/drinkable window for next 12 months."""
+    import datetime as _dt
+
+    current_year = _dt.date.today().year
+
+    sql = f"""
+        WITH cellar_grapes AS (
+            SELECT DISTINCT primary_grape
+            FROM wines_full
+            WHERE bottles_stored > 0
+              AND primary_grape IS NOT NULL AND primary_grape != ''
+        ),
+        drinkable_grapes AS (
+            SELECT DISTINCT primary_grape
+            FROM wines_full
+            WHERE bottles_stored > 0
+              AND primary_grape IS NOT NULL AND primary_grape != ''
+              AND (
+                  drinking_status IN ('optimal', 'drinkable')
+                  OR (drink_from IS NOT NULL AND drink_from <= {current_year + 1})
+              )
+        )
+        SELECT cg.primary_grape,
+               CAST(sum(w.bottles_stored) AS BIGINT) AS total_stored
+        FROM cellar_grapes cg
+        JOIN wines_full w ON cg.primary_grape = w.primary_grape AND w.bottles_stored > 0
+        WHERE cg.primary_grape NOT IN (SELECT primary_grape FROM drinkable_grapes)
+        GROUP BY cg.primary_grape
+        ORDER BY total_stored DESC
+    """
+    rows = con.execute(sql).fetchall()
+    gaps = [{"grape": r[0], "bottles_stored": int(r[1])} for r in rows]
+
+    lines = ["### Grape Gaps (varieties with no drinkable bottles in next 12 months)\n"]
+    if gaps:
+        lines.append("| grape | bottles (all too young) |")
+        lines.append("|:------|----------------------:|")
+        for g in gaps:
+            lines.append(f"| {g['grape']} | {g['bottles_stored']} |")
+    else:
+        lines.append("No grape gaps — all varieties have at least one drinkable bottle.")
+
+    return "\n".join(lines), gaps
+
+
+def _price_tier_gaps(con: duckdb.DuckDBPyConnection) -> tuple[str, list[dict]]:
+    """Price tiers with stored bottles but no ready-to-drink options."""
+    sql = """
+        WITH tier_stored AS (
+            SELECT price_tier, CAST(sum(bottles_stored) AS BIGINT) AS total_stored
+            FROM wines_full
+            WHERE bottles_stored > 0
+              AND price_tier IS NOT NULL AND price_tier != '' AND price_tier != 'unknown'
+            GROUP BY price_tier
+        ),
+        tier_ready AS (
+            SELECT price_tier, CAST(sum(bottles_stored) AS BIGINT) AS ready_count
+            FROM wines_full
+            WHERE bottles_stored > 0
+              AND drinking_status IN ('optimal', 'drinkable')
+              AND price_tier IS NOT NULL AND price_tier != '' AND price_tier != 'unknown'
+            GROUP BY price_tier
+        )
+        SELECT ts.price_tier,
+               ts.total_stored,
+               COALESCE(tr.ready_count, 0) AS ready_count
+        FROM tier_stored ts
+        LEFT JOIN tier_ready tr ON ts.price_tier = tr.price_tier
+        WHERE COALESCE(tr.ready_count, 0) = 0
+        ORDER BY ts.total_stored DESC
+    """
+    rows = con.execute(sql).fetchall()
+    gaps = [{"price_tier": r[0], "total_stored": int(r[1]), "ready": int(r[2])} for r in rows]
+
+    lines = ["### Price Tier Gaps (tiers with bottles but none ready to drink)\n"]
+    if gaps:
+        lines.append("| price tier | bottles stored | ready to drink |")
+        lines.append("|:-----------|-------------:|---------------:|")
+        for g in gaps:
+            lines.append(f"| {g['price_tier']} | {g['total_stored']} | {g['ready']} |")
+    else:
+        lines.append("No price tier gaps — all tiers have at least one ready-to-drink bottle.")
+
+    return "\n".join(lines), gaps
+
+
+def _vintage_gaps(con: duckdb.DuckDBPyConnection) -> tuple[str, list[dict]]:
+    """Aging-worthy categories with empty vintage decades."""
+    sql = """
+        WITH aging_wines AS (
+            SELECT vintage,
+                   CAST((vintage / 10) * 10 AS BIGINT) AS decade,
+                   CAST(sum(bottles_stored) AS BIGINT) AS bottles
+            FROM wines_full
+            WHERE bottles_stored > 0
+              AND category IN ('Red wine', 'Fortified wine')
+              AND vintage IS NOT NULL AND vintage > 1900
+            GROUP BY vintage, CAST((vintage / 10) * 10 AS BIGINT)
+        ),
+        decade_range AS (
+            SELECT unnest(generate_series(
+                (SELECT min(decade) FROM aging_wines)::BIGINT,
+                (SELECT max(decade) FROM aging_wines)::BIGINT,
+                10::BIGINT
+            )) AS decade
+        ),
+        decade_summary AS (
+            SELECT dr.decade,
+                   COALESCE(sum(aw.bottles), 0) AS bottles
+            FROM decade_range dr
+            LEFT JOIN aging_wines aw ON dr.decade = aw.decade
+            GROUP BY dr.decade
+        )
+        SELECT decade, CAST(bottles AS BIGINT) AS bottles
+        FROM decade_summary
+        WHERE bottles = 0
+        ORDER BY decade
+    """
+    rows = con.execute(sql).fetchall()
+    gaps = [{"decade": int(r[0]), "bottles": int(r[1])} for r in rows]
+
+    lines = ["### Vintage Gaps (aging-worthy decades with zero bottles)\n"]
+    if gaps:
+        lines.append("| decade | bottles |")
+        lines.append("|:-------|--------:|")
+        for g in gaps:
+            lines.append(f"| {g['decade']}s | {g['bottles']} |")
+    else:
+        lines.append("No vintage decade gaps — all decades between your oldest and newest have coverage.")
+
+    return "\n".join(lines), gaps
+
+
+# ---------------------------------------------------------------------------
 # Re-exports -- backward compatibility for callers using query.find_wine
 # etc.  The actual implementations now live in search and price.
 # ---------------------------------------------------------------------------
 
 _SEARCH_REEXPORTS = {
     "IntentResult",
+    "SearchTelemetry",
     "_CONCEPT_EXPANSIONS",
     "_SEARCH_COLS",
     "_SYSTEM_CONCEPTS",
     "_extract_intents",
     "_normalise_query_tokens",
     "find_wine",
+    "find_wine_with_telemetry",
     "format_siblings",
+    "suggest_wines",
 }
 _PRICE_REEXPORTS = {
     "get_price_history",

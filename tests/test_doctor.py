@@ -25,6 +25,7 @@ from cellarbrain.doctor import (
     _check_sommelier_status,
     run_doctor,
 )
+from cellarbrain.migrate import CURRENT_VERSION, write_schema_version
 from cellarbrain.settings import (
     BackupConfig,
     PathsConfig,
@@ -162,6 +163,7 @@ class TestCheckSchemaConformance:
         data_dir = tmp_path / "output"
         data_dir.mkdir()
         _write_all_parquets(data_dir)
+        write_schema_version(data_dir, CURRENT_VERSION)
 
         report = DoctorReport()
         _check_schema_conformance(data_dir, report)
@@ -171,6 +173,7 @@ class TestCheckSchemaConformance:
     def test_extra_column_detected(self, tmp_path):
         data_dir = tmp_path / "output"
         data_dir.mkdir()
+        write_schema_version(data_dir, CURRENT_VERSION)
 
         # Write winery with an extra column
         schema = pa.schema(
@@ -197,6 +200,7 @@ class TestCheckSchemaConformance:
     def test_missing_column_detected(self, tmp_path):
         data_dir = tmp_path / "output"
         data_dir.mkdir()
+        write_schema_version(data_dir, CURRENT_VERSION)
 
         # Write winery missing 'name' column
         schema = pa.schema(
@@ -221,6 +225,7 @@ class TestCheckSchemaConformance:
     def test_skips_missing_files(self, tmp_path):
         data_dir = tmp_path / "output"
         data_dir.mkdir()
+        write_schema_version(data_dir, CURRENT_VERSION)
         # No files at all — should produce OK (nothing to check)
 
         report = DoctorReport()

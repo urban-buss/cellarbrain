@@ -124,8 +124,10 @@ Default retailers: gerstl.ch, martel.ch, flaschenpost.ch, moevenpick-wein.com, w
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `synonyms` | `dict[str, str]` | ~82 built-in entries | Maps query tokens to stored-data equivalents |
-
+| `synonyms` | `dict[str, str]` | ~82 built-in entries | Maps query tokens to stored-data equivalents || `fuzzy_threshold` | `float` | `0.85` | Jaro-Winkler similarity threshold for explicit fuzzy matching (`fuzzy=True`) |
+| `auto_fuzzy_threshold` | `float` | `0.90` | Stricter threshold for implicit auto-fuzzy (fires on zero results without `fuzzy=True`) |
+| `suggest_threshold` | `float` | `0.70` | Minimum JW similarity for "did you mean?" suggestions |
+| `enable_phonetic` | `bool` | `True` | Enable Double Metaphone phonetic matching (requires `jellyfish` from `[search]` extra) |
 The synonyms dict enables multi-language search by mapping German (and other) terms to the values stored in the database. Entries fall into five categories:
 
 | Category | Example | Effect |
@@ -160,6 +162,11 @@ Synonyms are merged from three layers (highest priority wins):
 | `training_batch_size` | `int` | `32` | Training batch size |
 | `warmup_ratio` | `float` | `0.1` | Fraction of steps used for learning-rate warm-up |
 | `eval_split` | `float` | `0.1` | Fraction of data held out for evaluation |
+| `auto_retrain_threshold` | `int` | `100` | Minimum new pairings before suggesting retrain |
+| `auto_food_tags` | `bool` | `True` | Auto-derive food tags during ETL |
+| `hybrid_enabled` | `bool` | `True` | Enable hybrid RAG + embedding pairing (uses sommelier as a re-ranker on top of `pairing.retrieve_candidates`). Falls back to pure RAG when the model is unavailable |
+| `rerank_pool_size` | `int` | `30` | Number of RAG candidates retrieved before embedding re-rank |
+| `rerank_blend` | `float` | `0.5` | Blend weight for the embedding score (`0.0` = pure RAG signals, `1.0` = pure embedding similarity). Out-of-range values are clamped |
 
 > **Path resolution:** At load time, `model_dir`, `pairing_dataset`, `food_index`, and `food_ids` are anchored to `data_dir` if they are relative paths. Absolute paths pass through unchanged. `base_model` and `food_catalogue` are intentionally *not* anchored — they reference install-time artefacts.
 
@@ -218,6 +225,52 @@ port = 9000
 workbench_read_only = true
 workbench_allow = ["log_price"]
 ```
+
+### `RecommendConfig`
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `default_limit` | `int` | `5` | Default number of recommendations returned |
+| `max_limit` | `int` | `15` | Maximum allowed limit (clamped by MCP tool) |
+| `urgency_weight` | `float` | `3.0` | Weight multiplier for urgency factor |
+| `occasion_weight` | `float` | `2.0` | Weight for occasion/budget fit |
+| `pairing_weight` | `float` | `2.0` | Weight for food pairing signals |
+| `freshness_weight` | `float` | `1.0` | Weight for freshness penalty |
+| `diversity_weight` | `float` | `1.0` | Weight for diversity re-ranking |
+| `quality_weight` | `float` | `1.0` | Weight for quality bonus |
+| `freshness_days_hard` | `int` | `7` | Days since tasting for max penalty (−5) |
+| `freshness_days_mid` | `int` | `14` | Days since tasting for mid penalty (−3) |
+| `freshness_days_soft` | `int` | `30` | Days since tasting for soft penalty (−1) |
+| `last_bottle_penalty` | `float` | `1.0` | Score deducted for last-bottle wines |
+| `last_bottle_exceptions` | `list[str]` | `["celebration", "romantic"]` | Occasions exempt from last-bottle penalty |
+
+TOML example:
+
+```toml
+[recommend]
+default_limit = 3
+urgency_weight = 4.0
+freshness_days_hard = 5
+last_bottle_exceptions = ["celebration"]
+```
+
+### `DinnerConfig`
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `pool_size` | `int` | `20` | Candidates retrieved per course for selection |
+| `glasses_per_bottle` | `int` | `5` | Glasses per standard 750ml bottle |
+| `max_courses` | `int` | `8` | Maximum courses allowed per plan |
+
+TOML example:
+
+```toml
+[dinner]
+pool_size = 25
+glasses_per_bottle = 4
+max_courses = 10
+```
+
 ### `IngestConfig`
 
 Configuration for the IMAP email ingestion daemon (`cellarbrain ingest`). Credentials are stored externally (system keyring or environment variables) — never in TOML.
@@ -306,6 +359,38 @@ cellarbrain ingest --setup
 export CELLARBRAIN_IMAP_USER="user@icloud.com"
 export CELLARBRAIN_IMAP_PASSWORD="app-specific-password"
 ```
+### `AnomalyConfig`
+
+Configuration for the anomaly detection subsystem (`cellar_anomalies` MCP tool, `cellarbrain anomalies` CLI, dashboard anomalies page).
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|--------|
+| `enabled` | `bool` | `True` | Master switch for anomaly detection |
+| `baseline_days` | `int` | `7` | Days of history used for baseline calculations |
+| `volume_window_hours` | `int` | `1` | Sliding window (hours) for volume spike detection |
+| `volume_factor` | `float` | `5.0` | Multiplier over baseline to trigger a volume spike |
+| `volume_min_calls` | `int` | `10` | Minimum calls in window before spike detection applies |
+| `latency_factor` | `float` | `2.5` | Multiplier over baseline p50 to flag latency spikes |
+| `latency_min_samples` | `int` | `20` | Minimum samples required for latency analysis |
+| `error_window_hours` | `int` | `1` | Sliding window (hours) for error cluster detection |
+| `error_cluster_min` | `int` | `5` | Minimum errors in window to form a cluster |
+| `drift_pct` | `float` | `30.0` | Percentage change in tool mix to flag drift |
+| `drift_min_samples` | `int` | `30` | Minimum total calls before drift detection applies |
+| `etl_baseline_runs` | `int` | `5` | Number of recent ETL runs for baseline |
+| `etl_delete_min_abs` | `int` | `50` | Minimum absolute deletes to trigger ETL anomaly |
+| `etl_delete_min_pct` | `float` | `20.0` | Minimum delete percentage to trigger ETL anomaly |
+
+TOML example:
+
+```toml
+[anomaly]
+enabled = true
+baseline_days = 14
+volume_factor = 3.0
+error_cluster_min = 10
+etl_delete_min_pct = 15.0
+```
+
 ### `AgentSection`
 
 Defines a single agent-owned section:
@@ -349,6 +434,7 @@ Composes all sub-configs plus convenience helpers:
 | `search` | `SearchConfig` |
 | `sommelier` | `SommelierConfig` |
 | `logging` | `LoggingConfig` |
+| `recommend` | `RecommendConfig` |
 | `companion_sections` | `tuple[AgentSection, ...]` |
 
 ### Helper Methods

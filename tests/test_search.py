@@ -13,10 +13,13 @@ from cellarbrain.search import (
     _CONCEPT_EXPANSIONS,
     _SEARCH_COLS,
     _SYSTEM_CONCEPTS,
+    SearchTelemetry,
     _extract_intents,
     _normalise_query_tokens,
     find_wine,
+    find_wine_with_telemetry,
     format_siblings,
+    suggest_wines,
 )
 from dataset_factory import (
     _now,
@@ -2806,3 +2809,80 @@ class TestFormatSiblings:
         con = get_agent_connection(format_dir)
         rows = con.execute("SELECT wine_id FROM format_groups ORDER BY wine_id").fetchall()
         assert [r[0] for r in rows] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy / phonetic / suggestion tests
+# ---------------------------------------------------------------------------
+
+
+class TestFuzzyExtensions:
+    """Tests for extended fuzzy matching across more columns."""
+
+    def test_fuzzy_matches_country(self, data_dir):
+        """Fuzzy match on country name."""
+        con = get_connection(data_dir)
+        result = find_wine(con, "Spaim", fuzzy=True)
+        # Should match "Spain" via Jaro-Winkler
+        assert "Reserva Especial" in result or "Bodega" in result
+
+    def test_fuzzy_matches_region(self, data_dir):
+        """Fuzzy match on region column."""
+        con = get_connection(data_dir)
+        result = find_wine(con, "Rioa", fuzzy=True)
+        assert "Reserva Especial" in result or "Bodega" in result
+
+    def test_implicit_auto_fuzzy_on_zero_results(self, data_dir):
+        """Auto-fuzzy kicks in when strict + soft-AND return zero results."""
+        con = get_connection(data_dir)
+        # "Chteau" is a typo of "Château" — should be rescued by auto-fuzzy
+        result = find_wine(con, "Chteau Test")
+        # Should still find the wine due to auto-fuzzy
+        assert "Château Test" in result or "Cuvée Alpha" in result
+
+
+class TestSuggestions:
+    """Tests for the suggest_wines autocomplete feature."""
+
+    def test_suggest_returns_results(self, data_dir):
+        """suggest_wines returns similar wine names."""
+        con = get_connection(data_dir)
+        # full_name is "Château Test Cuvée Alpha 2020" — use close match
+        result = suggest_wines(con, "Chateau Test Cuvee Alpha 2020", threshold=0.70)
+        assert "Château Test" in result or "Cuvée Alpha" in result
+
+    def test_suggest_short_query_returns_message(self, data_dir):
+        """Queries shorter than 4 chars return an appropriate message."""
+        con = get_connection(data_dir)
+        result = suggest_wines(con, "Cu")
+        # Short queries skip suggestion logic
+        assert "No suggestions" in result or result.strip() == ""
+
+    def test_suggest_no_match(self, data_dir):
+        """A completely unrelated query returns no suggestions."""
+        con = get_connection(data_dir)
+        result = suggest_wines(con, "Zyxwvutsrqp")
+        assert "No suggestions" in result or "0 suggestions" in result.lower() or result.strip() == ""
+
+
+class TestFindWineWithTelemetry:
+    """Tests for find_wine_with_telemetry returning structured metrics."""
+
+    def test_returns_tuple(self, data_dir):
+        """Returns (result_text, SearchTelemetry) tuple."""
+        con = get_connection(data_dir)
+        result, telemetry = find_wine_with_telemetry(con, "Château Test")
+        assert isinstance(result, str)
+        assert isinstance(telemetry, SearchTelemetry)
+
+    def test_telemetry_counts_results(self, data_dir):
+        """Telemetry reports correct result count."""
+        con = get_connection(data_dir)
+        _, telemetry = find_wine_with_telemetry(con, "Château Test")
+        assert telemetry.result_count > 0
+
+    def test_telemetry_fuzzy_flag(self, data_dir):
+        """Telemetry marks used_fuzzy when fuzzy matching is triggered."""
+        con = get_connection(data_dir)
+        _, telemetry = find_wine_with_telemetry(con, "Chteau Tset", fuzzy=True)
+        assert telemetry.used_fuzzy is True

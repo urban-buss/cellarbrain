@@ -57,6 +57,14 @@
 </head>
 <body>
     <main class="container-fluid">
+        <div id="reminder-banner"
+             hx-get="/reminders"
+             hx-trigger="load, every 30s"
+             hx-swap="innerHTML"></div>
+        <div id="anomaly-banner"
+             hx-get="/anomalies/banner"
+             hx-trigger="load, every 60s"
+             hx-swap="innerHTML"></div>
         <nav>
             <div class="nav-group">
                 <span class="nav-group-label">Cellar</span>
@@ -65,6 +73,10 @@
                 <a href="/tracked" class="{% if active_nav == 'tracked' %}active{% endif %}">Tracked</a>
                 <a href="/stats" class="{% if active_nav == 'stats' %}active{% endif %}">Stats</a>
                 <a href="/drinking" class="{% if active_nav == 'drinking' %}active{% endif %}">Drinking</a>
+                <a href="/drinking/timeline" class="{% if active_nav == 'timeline' %}active{% endif %}">Timeline</a>
+                <a href="/cellars/heatmap" class="{% if active_nav == 'heatmap' %}active{% endif %}">Heatmap</a>
+                <a href="/drink-tonight" class="{% if active_nav == 'drink_tonight' %}active{% endif %}">Drink Tonight</a>
+                <a href="/recommend" class="{% if active_nav == 'recommend' %}active{% endif %}">Recommend</a>
                 <a href="/pairing" class="{% if active_nav == 'pairing' %}active{% endif %}">Pairing</a>
                 <a href="/sql" class="{% if active_nav == 'sql' %}active{% endif %}">SQL</a>
             </div>
@@ -77,6 +89,7 @@
                 <a href="/latency" class="{% if active_nav == 'latency' %}active{% endif %}">Latency</a>
                 <a href="/ingest" class="{% if active_nav == 'ingest' %}active{% endif %}">Ingest</a>
                 <a href="/live" class="{% if active_nav == 'live' %}active{% endif %}">Live</a>
+                <a href="/anomalies" class="{% if active_nav == 'anomalies' %}active{% endif %}">Anomalies</a>
             </div>
             <div class="nav-group">
                 <span class="nav-group-label">Workbench</span>

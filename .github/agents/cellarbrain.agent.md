@@ -25,11 +25,14 @@ The cellarbrain MCP server gives you structured access to the cellar database an
 | `query_cellar` | Run read-only SQL (DuckDB) against 6 pre-joined views |
 | `cellar_info` | Version, config, ETL freshness, inventory summary. Call first to check data staleness. `verbose=True` for extended diagnostics. |
 | `cellar_stats` | Summary stats, optionally grouped by country/region/category/vintage/winery/grape/cellar/provider/status. `limit` (default 20, 0=unlimited) caps grouped rows with `(other)` rollup. `sort_by`: bottles/value/wines/volume. |
-| `find_wine` | ILIKE text search across wine name, winery, region, grape, vintage. Auto-expands German synonyms (e.g. Rotwein→red). Recognises intent queries: drinking status (ready to drink, too young), price (under 30, budget), ratings (top rated), stock (low stock, last bottle). Expands wine-style concepts (sparkling, dessert, fortified, sweet, natural) to concrete wine names. System concepts: tracked, favorite, wishlist. Soft-AND fallback: when strict AND returns 0 results and ≥2 text tokens exist, retries requiring at least one match and ranks by match count. |
+| `find_wine` | ILIKE text search across wine name, winery, region, grape, vintage. Auto-expands German synonyms (e.g. Rotwein→red). Recognises intent queries: drinking status (ready to drink, too young), price (under 30, budget), ratings (top rated), stock (low stock, last bottle). Expands wine-style concepts (sparkling, dessert, fortified, sweet, natural) to concrete wine names. System concepts: tracked, favorite, wishlist. Multi-stage fallback: soft-AND → auto-fuzzy (JW ≥ 0.90) → phonetic (Double Metaphone) → "Did you mean?" suggestions. Emits search telemetry. |
+| `wine_suggestions` | Autocomplete / "did you mean?" via Jaro-Winkler similarity against wine names. Returns close matches when `find_wine` returns nothing. |
+| `search_stats` | Search analytics from observability log: top queries, zero-result queries, fuzzy/phonetic rescue stats, latency. |
 | `read_dossier` | Read a wine dossier; optional `sections` list filters to specific H2 sections (frontmatter + H1 always included) |
 | `update_dossier` | Write agent-owned sections in a dossier (section key + Markdown content) |
 | `batch_update_dossier` | Write the same section content to multiple wines at once. Returns per-wine success/failure summary. |
 | `get_format_siblings` | Get format variants (Standard, Magnum, etc.) for a wine in a format group. Returns Markdown table. |
+| `similar_wines` | Find structurally similar wines (6-signal weighted scoring: winery, region, grape, category, price, food groups). Returns ranked Markdown table. |
 | `pending_research` | List per-vintage wines with empty agent sections, sorted by priority |
 | `pending_companion_research` | List tracked wines with pending companion dossier sections |
 | `reload_data` | Re-run ETL from CSV exports (only when asked) |
@@ -44,6 +47,11 @@ The cellarbrain MCP server gives you structured access to the cellar database an
 | `pairing_candidates` | SQL-based food→wine retrieval. Classifies a dish by protein/cuisine/weight/category and retrieves matching cellar wines using multi-strategy scoring (category, grapes, food_tags, food_groups, region). Always available — no ML model required. |
 | `suggest_wines` | Semantic food→wine pairing. Encodes food description, searches wine FAISS index, returns ranked Markdown table with scores, vintage, category, region, grape, bottles, and price. Requires trained sommelier model. |
 | `suggest_foods` | Semantic wine→food pairing. Encodes wine metadata, searches food FAISS index, returns ranked Markdown table of dishes with scores, cuisine, weight class, protein, and flavour profile. Requires trained sommelier model. |
+| `recommend_tonight` | Smart drinking recommendations. Scores cellar wines by urgency, occasion, food pairing, freshness, diversity, and quality. Returns a ranked table with reasons. Params: `occasion`, `cuisine`, `guests`, `budget`, `limit`. |
+| `gift_advisor` | Recommend wines as gifts for a specific recipient. Six-signal scoring: prestige, storytelling, drinkability, recognition, recipient fit, presentation. Returns ranked suggestions with gift notes. Params: `profile`, `budget`, `occasion`, `protect_last_bottle`, `limit`. |
+| `wine_of_the_day` | Deterministic daily wine pick. Urgency-weighted rotation from top candidates — same wine all day, changes at midnight. Returns pick with reasoning. |
+| `cellar_gaps` | Identify underrepresented cellar categories. Dimensions: `region` (consumed but depleted), `grape` (none drinkable next 12 months), `price_tier` (no ready-to-drink), `vintage` (empty aging decades). Default: all four. `months`: consumption lookback (default 12). |
+| `cellar_anomalies` | Anomaly detection: call-volume spikes, latency spikes, error clusters, tool-mix drift, ETL anomalies. Filter by `severity` (critical/warning/info) or `kinds` (comma-separated). |
 
 For automated price scanning, use the `cellarbrain-price-tracker` agent.
 For companion dossier research (tracked wines), use the `cellarbrain-tracked` agent.

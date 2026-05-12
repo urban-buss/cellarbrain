@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -26,8 +26,10 @@ from cellarbrain.dossier_ops import (
     read_companion_dossier,
     read_dossier,
     read_dossier_sections,
+    read_research_meta,
     resolve_companion_dossier_path,
     resolve_dossier_path,
+    stale_research,
     update_companion_dossier,
     update_dossier,
 )
@@ -710,6 +712,153 @@ class TestPendingResearch:
 
 
 # ---------------------------------------------------------------------------
+# TestResearchMetadata
+# ---------------------------------------------------------------------------
+
+
+class TestResearchMetadata:
+    def test_update_embeds_research_meta(self, data_dir):
+        update_dossier(1, "producer_profile", "Famous winery in Bordeaux.", data_dir)
+        content = read_dossier(1, data_dir)
+        assert "<!-- research-meta:" in content
+
+    def test_research_meta_contains_date(self, data_dir):
+        update_dossier(1, "producer_profile", "Famous winery.", data_dir)
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert "date" in meta
+        # Date should be today (ISO format)
+        from datetime import date
+
+        assert meta["date"] == date.today().isoformat()
+
+    def test_research_meta_contains_agent_name(self, data_dir):
+        update_dossier(1, "producer_profile", "Info.", data_dir, agent_name="test-agent")
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert meta["agent"] == "test-agent"
+
+    def test_research_meta_with_sources(self, data_dir):
+        update_dossier(
+            1,
+            "producer_profile",
+            "Info from sources.",
+            data_dir,
+            sources=["wine-searcher.com", "jancisrobinson.com"],
+        )
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert meta["sources"] == ["wine-searcher.com", "jancisrobinson.com"]
+
+    def test_research_meta_with_confidence(self, data_dir):
+        update_dossier(
+            1,
+            "producer_profile",
+            "High confidence info.",
+            data_dir,
+            confidence="high",
+        )
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert meta["confidence"] == "high"
+
+    def test_research_meta_without_optional_fields(self, data_dir):
+        update_dossier(1, "producer_profile", "Basic info.", data_dir)
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert "sources" not in meta
+        assert "confidence" not in meta
+
+    def test_multiple_updates_replace_meta(self, data_dir):
+        update_dossier(1, "producer_profile", "Draft 1.", data_dir, agent_name="agent-a")
+        update_dossier(1, "producer_profile", "Draft 2.", data_dir, agent_name="agent-b")
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is not None
+        assert meta["agent"] == "agent-b"
+        # Should only have one meta comment
+        content = read_dossier(1, data_dir)
+        assert content.count("<!-- research-meta:") == 1
+
+    def test_read_research_meta_returns_none_for_unresearched(self, data_dir):
+        # Wine 1 producer_profile has not been researched yet (placeholder)
+        meta = read_research_meta(1, "producer_profile", data_dir)
+        assert meta is None
+
+    def test_agent_log_does_not_get_research_meta(self, data_dir):
+        update_dossier(1, "agent_log", "Test log entry", data_dir)
+        content = read_dossier(1, data_dir)
+        # agent_log should NOT contain research-meta
+        # Count should be 0 since nothing else was researched
+        assert "<!-- research-meta:" not in content
+
+    def test_content_preserved_with_meta(self, data_dir):
+        update_dossier(1, "wine_description", "A rich, full-bodied wine.", data_dir)
+        content = read_dossier(1, data_dir)
+        assert "A rich, full-bodied wine." in content
+
+
+# ---------------------------------------------------------------------------
+# TestStaleResearch
+# ---------------------------------------------------------------------------
+
+
+class TestStaleResearch:
+    def test_no_stale_when_all_recent(self, data_dir):
+        update_dossier(1, "producer_profile", "Fresh research.", data_dir)
+        result = stale_research(data_dir, months=6)
+        assert "*No stale research found.*" in result
+
+    def test_detects_stale_section(self, data_dir):
+        # Write research, then manually backdate the meta comment
+        update_dossier(1, "producer_profile", "Old research.", data_dir)
+        path = list((data_dir / "wines").rglob("0001-*.md"))[0]
+        text = path.read_text(encoding="utf-8")
+        # Replace the current date with one from 8 months ago
+        import re
+        from datetime import date, timedelta
+
+        old_date = (date.today() - timedelta(days=250)).isoformat()
+        text = re.sub(
+            r'"date": "\d{4}-\d{2}-\d{2}"',
+            f'"date": "{old_date}"',
+            text,
+            count=1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        result = stale_research(data_dir, months=6)
+        assert "producer_profile" in result
+        assert "1" in result  # wine_id
+
+    def test_limit_respected(self, data_dir):
+        result = stale_research(data_dir, months=6, limit=1)
+        # Should only have at most 1 data row (or no stale)
+        lines = [l for l in result.strip().split("\n") if l.startswith("| ") and "---" not in l and "wine_id" not in l]
+        assert len(lines) <= 1
+
+    def test_section_filter(self, data_dir):
+        # Write + backdate producer_profile
+        update_dossier(1, "producer_profile", "Old.", data_dir)
+        update_dossier(1, "wine_description", "Also old.", data_dir)
+        path = list((data_dir / "wines").rglob("0001-*.md"))[0]
+        text = path.read_text(encoding="utf-8")
+        import re
+        from datetime import date, timedelta
+
+        old_date = (date.today() - timedelta(days=250)).isoformat()
+        text = re.sub(r'"date": "\d{4}-\d{2}-\d{2}"', f'"date": "{old_date}"', text)
+        path.write_text(text, encoding="utf-8")
+
+        result = stale_research(data_dir, months=6, section="wine_description")
+        assert "wine_description" in result
+        assert "producer_profile" not in result
+
+    def test_no_dossiers_returns_message(self, tmp_path):
+        result = stale_research(tmp_path, months=6)
+        assert "No wine dossiers found" in result
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -1113,3 +1262,358 @@ class TestLogging:
         with caplog.at_level("WARNING", logger="cellarbrain.dossier_ops"), pytest.raises(ProtectedSectionError):
             update_dossier(1, "identity", "Bad content", data_dir)
         assert "Protected section write attempt" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# TestReadAgentSectionContent (Phase B - dashboard_notes editor support)
+# ---------------------------------------------------------------------------
+
+
+class TestReadAgentSectionContent:
+    def test_returns_empty_for_placeholder(self, data_dir):
+        from cellarbrain.dossier_ops import read_agent_section_content
+
+        result = read_agent_section_content(1, "dashboard_notes", data_dir)
+        assert result == ""
+
+    def test_returns_content_after_update(self, data_dir):
+        from cellarbrain.dossier_ops import (
+            read_agent_section_content,
+            update_dossier,
+        )
+
+        update_dossier(
+            1,
+            "dashboard_notes",
+            "Try with venison stew.\n",
+            data_dir,
+            agent_name="dashboard",
+        )
+        result = read_agent_section_content(1, "dashboard_notes", data_dir)
+        assert "Try with venison stew" in result
+
+    def test_unknown_section_raises(self, data_dir):
+        from cellarbrain.dossier_ops import (
+            ProtectedSectionError,
+            read_agent_section_content,
+        )
+
+        with pytest.raises(ProtectedSectionError):
+            read_agent_section_content(1, "not_a_real_section", data_dir)
+
+    def test_etl_owned_section_raises(self, data_dir):
+        from cellarbrain.dossier_ops import (
+            ProtectedSectionError,
+            read_agent_section_content,
+        )
+
+        with pytest.raises(ProtectedSectionError):
+            read_agent_section_content(1, "identity", data_dir)
+
+
+# ---------------------------------------------------------------------------
+# TestResearchCompleteness
+# ---------------------------------------------------------------------------
+
+
+class TestResearchCompleteness:
+    """Tests for research completeness scoring."""
+
+    def _make_dossier(self, tmp_path, wine_id, frontmatter_extra="", body_extra=""):
+        """Create a minimal dossier file with given frontmatter and body."""
+        wines_dir = tmp_path / "wines" / "cellar"
+        wines_dir.mkdir(parents=True, exist_ok=True)
+        fm = f"---\nwine_id: {wine_id}\n{frontmatter_extra}---\n"
+        content = fm + "\n# Wine\n" + body_extra
+        path = wines_dir / f"wine-{wine_id}.md"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def _make_pro_ratings(self, tmp_path, wine_ids):
+        """Write a minimal pro_rating.parquet with given wine_ids."""
+        from datetime import datetime as dt
+
+        now = dt(2025, 1, 1)
+        rows = [
+            {
+                "rating_id": i + 1,
+                "wine_id": wid,
+                "source": "Parker",
+                "score": 95.0,
+                "max_score": 100,
+                "review_text": None,
+                "etl_run_id": 1,
+                "updated_at": now,
+            }
+            for i, wid in enumerate(wine_ids)
+        ]
+        writer.write_parquet("pro_rating", rows, tmp_path)
+
+    def test_fully_pending_score_zero(self, tmp_path):
+        """Wine with all sections pending, no food, no pro → score 0."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_pending:\n"
+            "  - producer_profile\n"
+            "  - vintage_report\n"
+            "  - wine_description\n"
+            "  - market_availability\n"
+            "  - ratings_reviews\n"
+            "  - tasting_notes\n"
+            "  - food_pairings\n"
+            "  - similar_wines\n"
+            "food_tags: []\n"
+            "food_groups: []\n"
+            "agent_sections_populated: []\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n"
+        result = _compute_wine_completeness(text, has_pro_rating=False)
+        assert result["score"] == 0
+        assert result["populated_count"] == 0
+        assert result["pending_count"] == 8
+        assert result["has_food_tags"] is False
+        assert result["has_food_groups"] is False
+        assert result["has_pro_ratings"] is False
+
+    def test_fully_populated_fresh_score_100(self, tmp_path):
+        """Wine with all sections populated+fresh, food data, and pro → 100."""
+        from datetime import datetime
+
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        fm = (
+            "agent_sections_populated:\n"
+            "  - producer_profile\n"
+            "  - vintage_report\n"
+            "  - wine_description\n"
+            "  - market_availability\n"
+            "  - ratings_reviews\n"
+            "  - tasting_notes\n"
+            "  - food_pairings\n"
+            "  - similar_wines\n"
+            "agent_sections_pending: []\n"
+            "food_tags:\n"
+            "  - grilled-lamb\n"
+            "food_groups:\n"
+            "  - red-meat\n"
+        )
+        # Build body with research-meta for all 8 sections
+        sections = [
+            ("Producer Profile", "agent:research"),
+            ("Vintage Report", "agent:research"),
+            ("Wine Description", "agent:research"),
+            ("Market & Availability", "agent:research"),
+            ("From Research", "agent:research"),
+            ("Community Tasting Notes", "agent:research"),
+            ("Recommended Pairings", "agent:research"),
+            ("Similar Wines", "agent:recommendation"),
+        ]
+        body = ""
+        for heading, tag in sections:
+            body += (
+                f"\n## {heading}\n\n"
+                f"<!-- source: {tag} -->\n"
+                f'<!-- research-meta: {{"date": "{today}", "agent": "test"}} -->\n'
+                f"Some content here.\n"
+                f"<!-- source: {tag} — end -->\n"
+            )
+
+        text = f"---\nwine_id: 1\n{fm}---\n{body}"
+        result = _compute_wine_completeness(text, has_pro_rating=True)
+        assert result["score"] == 100
+        assert result["populated_count"] == 8
+        assert result["pending_count"] == 0
+        assert result["fresh_count"] == 8
+        assert result["stale_count"] == 0
+        assert result["has_food_tags"] is True
+        assert result["has_food_groups"] is True
+        assert result["has_pro_ratings"] is True
+
+    def test_partial_population(self, tmp_path):
+        """4/8 sections populated → ~25 pts from sections alone."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_populated:\n"
+            "  - producer_profile\n"
+            "  - vintage_report\n"
+            "  - wine_description\n"
+            "  - market_availability\n"
+            "agent_sections_pending:\n"
+            "  - ratings_reviews\n"
+            "  - tasting_notes\n"
+            "  - food_pairings\n"
+            "  - similar_wines\n"
+            "food_tags: []\n"
+            "food_groups: []\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n"
+        result = _compute_wine_completeness(text, has_pro_rating=False)
+        # 4/8 × 50 = 25, no freshness (no meta), no food, no pro
+        assert result["score"] == 25
+        assert result["populated_count"] == 4
+        assert result["pending_count"] == 4
+
+    def test_stale_reduces_freshness(self, tmp_path):
+        """Populated but stale (>12mo) → freshness penalty."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_populated:\n"
+            "  - producer_profile\n"
+            "  - vintage_report\n"
+            "agent_sections_pending:\n"
+            "  - wine_description\n"
+            "  - market_availability\n"
+            "  - ratings_reviews\n"
+            "  - tasting_notes\n"
+            "  - food_pairings\n"
+            "  - similar_wines\n"
+            "food_tags: []\n"
+            "food_groups: []\n"
+        )
+        # Both sections have old research dates (2 years ago)
+        body = (
+            "\n## Producer Profile\n\n"
+            "<!-- source: agent:research -->\n"
+            '<!-- research-meta: {"date": "2024-01-01", "agent": "test"} -->\n'
+            "Content.\n"
+            "<!-- source: agent:research — end -->\n"
+            "\n## Vintage Report\n\n"
+            "<!-- source: agent:research -->\n"
+            '<!-- research-meta: {"date": "2024-01-01", "agent": "test"} -->\n'
+            "Content.\n"
+            "<!-- source: agent:research — end -->\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n{body}"
+        result = _compute_wine_completeness(text, has_pro_rating=False, stale_months=12)
+        # 2/8 × 50 = 12 (section score), 0/2 fresh → 0 freshness
+        assert result["score"] == 12
+        assert result["stale_count"] == 2
+        assert result["fresh_count"] == 0
+
+    def test_food_tags_contribute(self, tmp_path):
+        """food_tags populated → +10 pts."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_populated: []\n"
+            "agent_sections_pending:\n"
+            "  - producer_profile\n"
+            "food_tags:\n"
+            "  - grilled-lamb\n"
+            "  - pasta\n"
+            "food_groups: []\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n"
+        result = _compute_wine_completeness(text, has_pro_rating=False)
+        assert result["score"] == 10
+        assert result["has_food_tags"] is True
+        assert result["has_food_groups"] is False
+
+    def test_food_groups_contribute(self, tmp_path):
+        """food_groups populated → +5 pts."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_populated: []\n"
+            "agent_sections_pending:\n"
+            "  - producer_profile\n"
+            "food_tags: []\n"
+            "food_groups:\n"
+            "  - red-meat\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n"
+        result = _compute_wine_completeness(text, has_pro_rating=False)
+        assert result["score"] == 5
+        assert result["has_food_groups"] is True
+
+    def test_pro_ratings_contribute(self, tmp_path):
+        """Pro rating exists → +15 pts."""
+        from cellarbrain.dossier_ops import _compute_wine_completeness
+
+        fm = (
+            "agent_sections_populated: []\n"
+            "agent_sections_pending:\n"
+            "  - producer_profile\n"
+            "food_tags: []\n"
+            "food_groups: []\n"
+        )
+        text = f"---\nwine_id: 1\n{fm}---\n"
+        result = _compute_wine_completeness(text, has_pro_rating=True)
+        assert result["score"] == 15
+        assert result["has_pro_ratings"] is True
+
+    def test_compute_research_completeness_multi_wine(self, tmp_path):
+        """compute_research_completeness scans multiple dossiers."""
+        from cellarbrain.dossier_ops import compute_research_completeness
+
+        # Create two dossiers
+        self._make_dossier(
+            tmp_path,
+            1,
+            "agent_sections_populated: []\n"
+            "agent_sections_pending:\n"
+            "  - producer_profile\n"
+            "food_tags: []\n"
+            "food_groups: []\n",
+        )
+        self._make_dossier(
+            tmp_path,
+            2,
+            "agent_sections_populated:\n"
+            "  - producer_profile\n"
+            "  - vintage_report\n"
+            "agent_sections_pending: []\n"
+            "food_tags:\n"
+            "  - lamb\n"
+            "food_groups: []\n",
+        )
+        # No pro_rating.parquet → no pro ratings for anyone
+
+        results = compute_research_completeness(tmp_path)
+        assert len(results) == 2
+        # Wine 1: 0 populated, no food, no pro → 0
+        w1 = next(r for r in results if r["wine_id"] == 1)
+        assert w1["score"] == 0
+        # Wine 2: 2/8 × 50 = 12, food_tags → +10 = 22
+        w2 = next(r for r in results if r["wine_id"] == 2)
+        assert w2["score"] == 22
+
+    def test_write_completeness_parquet(self, tmp_path):
+        """write_completeness_parquet creates a valid Parquet file."""
+        from cellarbrain.dossier_ops import write_completeness_parquet
+
+        self._make_dossier(
+            tmp_path,
+            1,
+            "agent_sections_populated:\n"
+            "  - producer_profile\n"
+            "agent_sections_pending: []\n"
+            "food_tags: []\n"
+            "food_groups: []\n",
+        )
+        self._make_pro_ratings(tmp_path, [1])
+
+        path = write_completeness_parquet(tmp_path)
+        assert path.exists()
+        assert path.name == "research_completeness.parquet"
+
+        # Read it back
+        import pyarrow.parquet as pq_reader
+
+        table = pq_reader.read_table(path)
+        assert table.num_rows == 1
+        assert table.column("wine_id")[0].as_py() == 1
+        # 1/8 × 50 = 6, no freshness, no food, pro = 15 → 21
+        assert table.column("score")[0].as_py() == 21
+        assert table.column("has_pro_ratings")[0].as_py() is True
+
+    def test_no_dossiers_returns_empty(self, tmp_path):
+        """No wines dir → empty list."""
+        from cellarbrain.dossier_ops import compute_research_completeness
+
+        results = compute_research_completeness(tmp_path)
+        assert results == []

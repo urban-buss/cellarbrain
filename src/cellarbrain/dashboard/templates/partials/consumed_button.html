@@ -1,0 +1,17 @@
+{% if pending %}
+<button type="button" class="outline secondary"
+        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+        hx-post="/cellar/{{ wine_id }}/bottles/{{ bottle_id }}/consumed/undo"
+        hx-target="this" hx-swap="outerHTML"
+        title="Undo: remove this bottle from the consumed-pending sidecar">
+    Undo (pending sync)
+</button>
+{% else %}
+<button type="button" class="contrast"
+        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+        hx-post="/cellar/{{ wine_id }}/bottles/{{ bottle_id }}/consumed"
+        hx-target="this" hx-swap="outerHTML"
+        title="Mark consumed (queued; will be cleared by next ETL)">
+    Mark consumed
+</button>
+{% endif %}

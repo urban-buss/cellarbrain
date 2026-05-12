@@ -6,10 +6,11 @@ by both the MCP server and the CLI ``dossier`` subcommand.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import pathlib
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import duckdb
 import pyarrow.parquet as pq
@@ -153,6 +154,37 @@ def read_dossier(
     return path.read_text(encoding="utf-8")
 
 
+def read_agent_section_content(
+    wine_id: int,
+    section: str,
+    data_dir: str | pathlib.Path,
+    settings: Settings | None = None,
+) -> str:
+    """Return the raw prose between agent fences for *section*.
+
+    Returns an empty string when the section contains only the placeholder
+    sentinel or when the fence is not present yet. Raises
+    ``ProtectedSectionError`` when the requested section key is not an
+    allowed agent section.
+    """
+    agent_sections = _build_agent_sections(settings) if settings else AGENT_SECTIONS
+    if section not in agent_sections:
+        raise ProtectedSectionError(
+            f"Section {section!r} is not an allowed agent section. Allowed: {', '.join(sorted(agent_sections.keys()))}"
+        )
+
+    heading, tag = agent_sections[section]
+    text = read_dossier(wine_id, data_dir)
+    fence_re = _build_fence_re(heading, tag)
+    m = fence_re.search(text)
+    if not m:
+        return ""
+    body = m.group(4).strip()
+    if body == _PLACEHOLDER_SENTINEL:
+        return ""
+    return body
+
+
 def read_dossier_sections(
     wine_id: int,
     data_dir: str | pathlib.Path,
@@ -251,6 +283,8 @@ def update_dossier(
     data_dir: str | pathlib.Path,
     agent_name: str = "research",
     settings: Settings | None = None,
+    sources: list[str] | None = None,
+    confidence: str | None = None,
 ) -> str:
     """Write content to an agent-owned section in a wine dossier.
 
@@ -281,7 +315,15 @@ def update_dossier(
     if section == "agent_log":
         text = _append_agent_log(text, heading, tag, content, agent_name)
     else:
-        text = _replace_agent_block(text, heading, tag, content)
+        text = _replace_agent_block(
+            text,
+            heading,
+            tag,
+            content,
+            agent_name=agent_name,
+            sources=sources,
+            confidence=confidence,
+        )
 
     # Update frontmatter: move from pending → populated (or back if placeholder)
     text = _update_frontmatter_lists(
@@ -335,8 +377,15 @@ def _replace_agent_block(
     heading: str,
     tag: str,
     new_content: str,
+    agent_name: str = "research",
+    sources: list[str] | None = None,
+    confidence: str | None = None,
 ) -> str:
-    """Replace the content between agent fences for a section."""
+    """Replace the content between agent fences for a section.
+
+    Embeds a ``<!-- research-meta: {...} -->`` comment immediately after the
+    opening fence, before the prose content.
+    """
     fence_re = _build_fence_re(heading, tag)
     m = fence_re.search(text)
     if not m:
@@ -345,12 +394,19 @@ def _replace_agent_block(
             "in the dossier. The dossier may need to be regenerated."
         )
 
-    # Rebuild: heading + pre-fence + opening fence + NEW CONTENT + closing fence
+    # Strip any previous research-meta from the new content (prevent duplication)
+    clean_content = _strip_research_meta(new_content).rstrip("\n")
+
+    # Build the meta comment
+    meta_comment = _build_research_meta_comment(agent_name, sources, confidence)
+
+    # Rebuild: heading + pre-fence + opening fence + META + CONTENT + closing fence
     replacement = (
         m.group(1)  # heading line
         + m.group(2)  # any text between heading and opening fence
         + m.group(3)  # opening fence
-        + new_content.rstrip("\n")
+        + meta_comment
+        + clean_content
         + "\n\n"
         + m.group(5)  # closing fence
     )
@@ -380,6 +436,80 @@ def _append_agent_log(
 
 
 _PLACEHOLDER_SENTINEL = "*Not yet researched. Pending agent action.*"
+
+# ---------------------------------------------------------------------------
+# Research metadata — embedded as HTML comment after the opening fence
+# ---------------------------------------------------------------------------
+
+_RESEARCH_META_RE = re.compile(r"<!-- research-meta: ({.*?}) -->[ \t]*\n?")
+
+
+def _build_research_meta_comment(
+    agent_name: str,
+    sources: list[str] | None = None,
+    confidence: str | None = None,
+) -> str:
+    """Build the research-meta HTML comment line."""
+    meta: dict[str, str | list[str]] = {
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "agent": agent_name,
+    }
+    if sources:
+        meta["sources"] = sources
+    if confidence:
+        meta["confidence"] = confidence
+    return f"<!-- research-meta: {_json.dumps(meta, ensure_ascii=False)} -->\n"
+
+
+def _strip_research_meta(content: str) -> str:
+    """Remove any existing research-meta comment from content."""
+    return _RESEARCH_META_RE.sub("", content)
+
+
+def read_research_meta(
+    wine_id: int,
+    section: str,
+    data_dir: str | pathlib.Path,
+    settings: Settings | None = None,
+) -> dict | None:
+    """Extract research metadata from an agent section.
+
+    Returns a dict with keys ``date``, ``agent``, ``sources``, ``confidence``
+    or ``None`` if no metadata comment is present.
+    """
+    agent_sections = _build_agent_sections(settings) if settings else AGENT_SECTIONS
+    if section not in agent_sections:
+        raise ProtectedSectionError(f"Section {section!r} is not an allowed agent section.")
+
+    heading, tag = agent_sections[section]
+    text = read_dossier(wine_id, data_dir)
+    fence_re = _build_fence_re(heading, tag)
+    m = fence_re.search(text)
+    if not m:
+        return None
+    body = m.group(4)
+    meta_m = _RESEARCH_META_RE.search(body)
+    if not meta_m:
+        return None
+    try:
+        return _json.loads(meta_m.group(1))
+    except (ValueError, KeyError):
+        return None
+
+
+def _read_research_meta_from_text(text: str, heading: str, tag: str) -> dict | None:
+    """Extract research-meta from raw dossier text for a given section."""
+    fence_re = _build_fence_re(heading, tag)
+    m = fence_re.search(text)
+    if not m:
+        return None
+    meta_m = _RESEARCH_META_RE.search(m.group(4))
+    if not meta_m:
+        return None
+    try:
+        return _json.loads(meta_m.group(1))
+    except (ValueError, KeyError):
+        return None
 
 
 def _update_frontmatter_lists(
@@ -648,6 +778,8 @@ def pending_research(
     data_dir: str | pathlib.Path,
     limit: int = 20,
     section: str | None = None,
+    include_stale: bool = False,
+    stale_months: int = 6,
 ) -> str:
     """List wines with pending agent sections, sorted by priority.
 
@@ -659,6 +791,10 @@ def pending_research(
         limit: Maximum wines to return.
         section: Optional section key filter. When provided, only returns
             wines whose pending list includes this section.
+        include_stale: When True, also include wines with populated-but-stale
+            sections (research older than *stale_months*). These appear after
+            genuinely pending wines.
+        stale_months: Threshold for stale research (default 6 months).
     """
     d = pathlib.Path(data_dir)
     wines_dir = d / "wines"
@@ -766,7 +902,322 @@ def pending_research(
             f"| {item['pending_count']} |"
         )
 
+    # Optionally append stale research items
+    if include_stale:
+        stale_result = stale_research(data_dir, months=stale_months, limit=limit, section=section)
+        if "*No stale research found.*" not in stale_result:
+            lines.append("")
+            lines.append("### Stale Research (>" + str(stale_months) + " months)")
+            lines.append("")
+            lines.append(stale_result)
+
     return "\n".join(lines)
+
+
+def stale_research(
+    data_dir: str | pathlib.Path,
+    months: int = 6,
+    limit: int = 20,
+    section: str | None = None,
+    settings: Settings | None = None,
+) -> str:
+    """Find wine dossier sections where research metadata is older than *months*.
+
+    Only considers sections that have a ``<!-- research-meta: ... -->`` comment
+    with a parseable date. Sections without metadata are ignored (use
+    ``pending_research`` for those).
+
+    Returns a Markdown table sorted by oldest-first.
+    """
+    d = pathlib.Path(data_dir)
+    wines_dir = d / "wines"
+
+    if not wines_dir.exists():
+        return "*No wine dossiers found.*"
+
+    agent_sections = _build_agent_sections(settings) if settings else AGENT_SECTIONS
+    today = datetime.now(UTC).date()
+    # Approximate months as 30.44 days
+    cutoff_days = int(months * 30.44)
+    cutoff = today - timedelta(days=cutoff_days)
+
+    stale_items: list[dict] = []
+
+    for md_file in sorted(wines_dir.rglob("*.md")):
+        text = md_file.read_text(encoding="utf-8")
+
+        wid_m = _FM_WINE_ID_RE.search(text)
+        if not wid_m:
+            continue
+        wine_id = int(wid_m.group(1))
+
+        for key, (heading, tag) in agent_sections.items():
+            if key == "agent_log":
+                continue
+            if section and key != section:
+                continue
+            meta = _read_research_meta_from_text(text, heading, tag)
+            if meta is None or "date" not in meta:
+                continue
+            try:
+                research_date = datetime.strptime(meta["date"], "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if research_date < cutoff:
+                months_ago = (datetime.now(UTC).date() - research_date).days // 30
+                stale_items.append(
+                    {
+                        "wine_id": wine_id,
+                        "section": key,
+                        "date": meta["date"],
+                        "months_ago": months_ago,
+                        "agent": meta.get("agent", ""),
+                    }
+                )
+
+    if not stale_items:
+        return "*No stale research found.*"
+
+    # Sort oldest first
+    stale_items.sort(key=lambda x: x["date"])
+
+    # Enrich with wine names
+    wine_pq = d / "wine.parquet"
+    wine_meta: dict[int, str] = {}
+    if wine_pq.exists():
+        table = pq.read_table(wine_pq, columns=["wine_id", "full_name"])
+        for i in range(table.num_rows):
+            wid = table.column("wine_id")[i].as_py()
+            wine_meta[wid] = table.column("full_name")[i].as_py() or ""
+
+    stale_items = stale_items[:limit]
+
+    lines = [
+        "| wine_id | Name | Section | Date | Age | Agent |",
+        "|---|---|---|---|---|---|",
+    ]
+    for item in stale_items:
+        name = wine_meta.get(item["wine_id"], "")
+        lines.append(
+            f"| {item['wine_id']} "
+            f"| {name} "
+            f"| {item['section']} "
+            f"| {item['date']} "
+            f"| {item['months_ago']}mo "
+            f"| {item['agent']} |"
+        )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Research completeness scoring
+# ---------------------------------------------------------------------------
+
+# The 8 sections that count towards research completeness.
+# Excludes utility sections (agent_log, dashboard_notes).
+_RESEARCH_SECTIONS = frozenset(
+    {
+        "producer_profile",
+        "vintage_report",
+        "wine_description",
+        "market_availability",
+        "ratings_reviews",
+        "tasting_notes",
+        "food_pairings",
+        "similar_wines",
+    }
+)
+
+_FM_POPULATED_RE = re.compile(
+    r"^agent_sections_populated:\s*(?:\[]\s*\n|(\n(?:\s+-\s+.+\n)*))",
+    re.MULTILINE,
+)
+
+
+def _compute_wine_completeness(
+    text: str,
+    has_pro_rating: bool,
+    stale_months: int = 12,
+    settings: Settings | None = None,
+) -> dict:
+    """Compute research completeness score for a single wine dossier.
+
+    Args:
+        text: Raw dossier Markdown content.
+        has_pro_rating: Whether the wine has at least one pro rating.
+        stale_months: Threshold in months before research is considered stale.
+        settings: Optional settings for agent section resolution.
+
+    Returns:
+        Dict with keys: score, populated_count, pending_count, fresh_count,
+        stale_count, has_food_tags, has_food_groups, has_pro_ratings.
+    """
+    agent_sections = _build_agent_sections(settings) if settings else AGENT_SECTIONS
+
+    # Parse populated and pending lists from frontmatter
+    populated: list[str] = []
+    pop_m = _FM_POPULATED_RE.search(text)
+    if pop_m and pop_m.group(1):
+        populated = re.findall(r"-\s+(\S+)", pop_m.group(1))
+
+    pending: list[str] = []
+    pend_m = _FM_PENDING_RE.search(text)
+    if pend_m:
+        pending = re.findall(r"-\s+(\S+)", pend_m.group(1))
+
+    # Only count research sections
+    populated_research = [s for s in populated if s in _RESEARCH_SECTIONS]
+    pending_research_list = [s for s in pending if s in _RESEARCH_SECTIONS]
+    total_research = len(_RESEARCH_SECTIONS)
+
+    # --- Component 1: Section population (50 pts) ---
+    section_score = round(len(populated_research) / total_research * 50)
+
+    # --- Component 2: Research freshness (20 pts) ---
+    fresh_count = 0
+    stale_count = 0
+    if populated_research:
+        today = datetime.now(UTC).date()
+        cutoff_days = int(stale_months * 30.44)
+        cutoff = today - timedelta(days=cutoff_days)
+
+        for sec_key in populated_research:
+            if sec_key not in agent_sections:
+                continue
+            heading, tag = agent_sections[sec_key]
+            meta = _read_research_meta_from_text(text, heading, tag)
+            if meta and "date" in meta:
+                try:
+                    research_date = datetime.strptime(meta["date"], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    stale_count += 1
+                    continue
+                if research_date >= cutoff:
+                    fresh_count += 1
+                else:
+                    stale_count += 1
+            else:
+                # No metadata — treat as not-fresh (but not stale either, just unknown)
+                pass
+
+        freshness_score = round(fresh_count / len(populated_research) * 20)
+    else:
+        freshness_score = 0
+
+    # --- Component 3: Food data (15 pts) ---
+    has_food_tags = False
+    ft_m = _FM_FOOD_TAGS_RE.search(text)
+    if ft_m and ft_m.group(1):
+        items = re.findall(r"-\s+(\S+)", ft_m.group(1))
+        has_food_tags = len(items) > 0
+
+    has_food_groups = False
+    fg_m = _FM_FOOD_GROUPS_RE.search(text)
+    if fg_m and fg_m.group(1):
+        items = re.findall(r"-\s+(\S+)", fg_m.group(1))
+        has_food_groups = len(items) > 0
+
+    food_score = (10 if has_food_tags else 0) + (5 if has_food_groups else 0)
+
+    # --- Component 4: Pro ratings (15 pts) ---
+    pro_score = 15 if has_pro_rating else 0
+
+    # --- Total ---
+    total = min(section_score + freshness_score + food_score + pro_score, 100)
+
+    return {
+        "score": total,
+        "populated_count": len(populated_research),
+        "pending_count": len(pending_research_list),
+        "fresh_count": fresh_count,
+        "stale_count": stale_count,
+        "has_food_tags": has_food_tags,
+        "has_food_groups": has_food_groups,
+        "has_pro_ratings": has_pro_rating,
+    }
+
+
+def compute_research_completeness(
+    data_dir: str | pathlib.Path,
+    stale_months: int = 12,
+    settings: Settings | None = None,
+) -> list[dict]:
+    """Compute research completeness scores for all wines with dossiers.
+
+    Scans all dossier files and joins with pro_rating.parquet to determine
+    which wines have professional ratings.
+
+    Returns:
+        List of dicts with keys: wine_id, score, populated_count,
+        pending_count, fresh_count, stale_count, has_food_tags,
+        has_food_groups, has_pro_ratings.
+    """
+    d = pathlib.Path(data_dir)
+    wines_dir = d / "wines"
+
+    if not wines_dir.exists():
+        return []
+
+    # Build set of wine_ids that have at least one pro rating
+    pro_wine_ids: set[int] = set()
+    pro_pq = d / "pro_rating.parquet"
+    if pro_pq.exists():
+        table = pq.read_table(pro_pq, columns=["wine_id"])
+        for i in range(table.num_rows):
+            pro_wine_ids.add(table.column("wine_id")[i].as_py())
+
+    results: list[dict] = []
+    for md_file in sorted(wines_dir.rglob("*.md")):
+        with open(md_file, encoding="utf-8") as fh:
+            text = fh.read()
+
+        wid_m = _FM_WINE_ID_RE.search(text)
+        if not wid_m:
+            continue
+        wine_id = int(wid_m.group(1))
+
+        has_pro = wine_id in pro_wine_ids
+        score_data = _compute_wine_completeness(text, has_pro, stale_months, settings)
+        score_data["wine_id"] = wine_id
+        results.append(score_data)
+
+    return results
+
+
+def write_completeness_parquet(
+    data_dir: str | pathlib.Path,
+    stale_months: int = 12,
+    settings: Settings | None = None,
+) -> pathlib.Path:
+    """Compute and write research completeness scores to Parquet.
+
+    Writes ``research_completeness.parquet`` to *data_dir*.
+    Returns the path of the written file.
+    """
+    from . import writer
+
+    d = pathlib.Path(data_dir)
+    scores = compute_research_completeness(d, stale_months, settings)
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    rows = [
+        {
+            "wine_id": s["wine_id"],
+            "score": s["score"],
+            "populated_count": s["populated_count"],
+            "pending_count": s["pending_count"],
+            "fresh_count": s["fresh_count"],
+            "stale_count": s["stale_count"],
+            "has_food_tags": s["has_food_tags"],
+            "has_food_groups": s["has_food_groups"],
+            "has_pro_ratings": s["has_pro_ratings"],
+            "computed_at": now,
+        }
+        for s in scores
+    ]
+
+    return writer.write_parquet("research_completeness", rows, d)
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +1315,9 @@ def update_companion_dossier(
     content: str,
     data_dir: str | pathlib.Path,
     settings: Settings | None = None,
+    agent_name: str = "research",
+    sources: list[str] | None = None,
+    confidence: str | None = None,
 ) -> str:
     """Write content to an agent-owned section in a companion dossier.
 
@@ -890,7 +1344,15 @@ def update_companion_dossier(
     text = path.read_text(encoding="utf-8")
 
     heading, tag = companion_sections[section]
-    text = _replace_agent_block(text, heading, tag, content)
+    text = _replace_agent_block(
+        text,
+        heading,
+        tag,
+        content,
+        agent_name=agent_name,
+        sources=sources,
+        confidence=confidence,
+    )
     text = _update_frontmatter_lists(
         text,
         section,

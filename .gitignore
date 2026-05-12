@@ -62,6 +62,7 @@ issues/
 # Logs and backups
 bkp/
 logs/
+pip_out.txt
 
 # OpenClaw research
 openclaw/
@@ -79,6 +80,9 @@ ratings/
 models/sommelier/model/
 models/sommelier/food.index
 models/sommelier/food_ids.json
+
+# Newsletter training data (raw .eml exports from iCloud)
+newsletter-archive/
 
 # Locals and scripts
 local/

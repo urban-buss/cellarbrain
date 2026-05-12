@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Anomalies — Cellarbrain{% endblock %}
+{% block page_title %}Anomaly Detection{% endblock %}
+
+{% block content %}
+{% if not anomalies %}
+<p>No anomalies detected. All systems operating normally.</p>
+{% else %}
+<p>{{ anomalies|length }} anomal{{ "y" if anomalies|length == 1 else "ies" }} detected.</p>
+
+<table>
+<thead>
+<tr>
+    <th>Severity</th>
+    <th>Kind</th>
+    <th>Subject</th>
+    <th>Message</th>
+    <th>Observed</th>
+    <th>Baseline</th>
+</tr>
+</thead>
+<tbody>
+{% for a in anomalies %}
+<tr>
+    <td>
+        {% if a.severity == "critical" %}<span class="badge badge-error">CRITICAL</span>
+        {% elif a.severity == "warn" %}<span class="badge badge-warn">WARN</span>
+        {% else %}<span class="badge badge-ok">INFO</span>
+        {% endif %}
+    </td>
+    <td>{{ a.kind }}</td>
+    <td>{{ a.subject }}</td>
+    <td>{{ a.message }}</td>
+    <td>{{ "%.1f"|format(a.observed) }}</td>
+    <td>{{ "%.1f"|format(a.baseline) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+{% endblock %}

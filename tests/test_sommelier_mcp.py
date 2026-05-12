@@ -391,6 +391,7 @@ def sommelier_server(
         mcp_server._mcp_settings = None
         mcp_server._sommelier_engine = None
         mcp_server._food_catalogue_meta = None
+        mcp_server._hybrid_engine = None
 
         # Patch settings to inject sommelier config
         original_load = mcp_server._load_mcp_settings
@@ -410,6 +411,7 @@ def sommelier_server(
         mcp_server._mcp_settings = None
         mcp_server._sommelier_engine = None
         mcp_server._food_catalogue_meta = None
+        mcp_server._hybrid_engine = None
 
 
 # ---------------------------------------------------------------------------

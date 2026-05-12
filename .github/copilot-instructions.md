@@ -7,6 +7,10 @@ applyTo: "**"
 
 Cellarbrain is a CLI toolkit and MCP server that transforms Vinocell wine-cellar CSV exports into normalised Parquet tables, per-wine Markdown dossiers, and an in-process DuckDB query layer. Python 3.11+, MIT license.
 
+## Versioning
+
+The `local_future_of_cellarbrain` branch targets **0.3.0** (pre-release: `0.3.0a1`). The `main` branch is still on the 0.2.x line. When resolving merge conflicts involving the version field in `pyproject.toml`, always keep the **0.3.0** series version from this branch.
+
 ## Knowledge Base
 
 Detailed documentation lives in `docs/`. Consult these pages for architecture, data model, and subsystem behaviour:
@@ -85,9 +89,17 @@ Every code change must include corresponding test updates. Never submit producti
 1. Add parser in `parsers.py` (generic) or `vinocell_parsers.py` (Vinocell-specific) with docstring examples.
 2. Map it in `transform.py` builder function.
 3. Add column to `writer.SCHEMAS`.
-4. Add column to relevant dossier section in `markdown.py`.
-5. Add tests for parser + transform.
-6. Run `pytest` and `cellarbrain validate`.
+4. Add a schema migration in `src/cellarbrain/migrations/` if existing Parquet files need updating.
+5. Add column to relevant dossier section in `markdown.py`.
+6. Add tests for parser + transform.
+7. Run `pytest` and `cellarbrain validate`.
+
+### Adding a schema migration
+1. Bump `CURRENT_VERSION` in `migrate.py`.
+2. Create `src/cellarbrain/migrations/m00N_description.py` with a `MigrationStep` using primitives from `migrate.py`.
+3. Import and register in `migrations/__init__.py`.
+4. Add tests in `tests/test_migrate.py`.
+5. Run `pytest`.
 
 ### Adding a sommelier feature
 1. Implement in `src/cellarbrain/sommelier/` — keep engine, model, index, and text_builder separate.

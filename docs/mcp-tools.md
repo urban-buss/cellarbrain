@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-20 tools + `server_stats`, 10 resources, and prompts exposed via FastMCP with stdio transport.
+20 tools + `server_stats` + `cellar_anomalies`, 10 resources, and prompts exposed via FastMCP with stdio transport.
 
 ## Configuration
 
@@ -27,19 +27,36 @@ affect tool behaviour. Omit it for backward compatibility.
 | Tool | Args | Returns |
 |------|------|---------|
 | `query_cellar` | `sql: str` | Markdown table from read-only SQL. Agent connection (views only). |
-| `find_wine` | `query: str`, `limit?: int`, `fuzzy?: bool` | Markdown table of matches across name, winery, region, grape, category, vintage, sweetness, effervescence, specialty, subcategory. Includes price, bottle format (size), and price/750 mL. Applies synonym expansion (DE→EN), intent detection (drinking status, price, ratings, stock), and concept expansion (sparkling, dessert, fortified, sweet, tracked, favorite, wishlist) before search. Falls back to soft-AND (partial match) when strict AND returns 0 results and ≥2 text tokens exist. |
+| `find_wine` | `query: str`, `limit?: int`, `fuzzy?: bool` | Markdown table of matches across name, winery, region, grape, category, vintage, sweetness, effervescence, specialty, subcategory. Includes price, bottle format (size), and price/750 mL. Applies synonym expansion (DE→EN), intent detection (drinking status, price, ratings, stock), and concept expansion (sparkling, dessert, fortified, sweet, tracked, favorite, wishlist) before search. Falls back to soft-AND → auto-fuzzy (JW ≥ 0.90) → phonetic (Double Metaphone) → "Did you mean?" suggestions when strict search returns 0 results. |
+| `wine_suggestions` | `query: str`, `limit?: int` | Autocomplete / "did you mean" suggestions via Jaro-Winkler similarity against wine names. Returns Markdown list of close matches. |
+| `search_stats` | `window_days?: int`, `limit?: int` | Search query analytics from observability log: top queries, zero-result queries, fuzzy/phonetic rescue stats, and latency metrics. |
 | `cellar_info` | `verbose?: bool` | Version, currency, data directory, ETL freshness, inventory counts, and config metadata. Set `verbose=True` for extended diagnostics. |
 | `cellar_stats` | `group_by?: str`, `limit?: int`, `sort_by?: str` | Overall summary or grouped breakdown by one of 10 dimensions. `limit`: max groups (default 20, 0=unlimited); excess rolled into `(other)`. `sort_by`: "bottles" (default), "value", "wines", "volume". |
 | `cellar_churn` | `period?: str`, `year?: int`, `month?: int` | Roll-forward churn analysis (beginning/purchased/consumed/ending). |
+| `consumption_velocity` | `months?: int` | Month-by-month acquisition vs consumption rates, net growth, and 12-month projection. Default lookback: 6 months. |
+| `cellar_gaps` | `dimension?: str`, `months?: int` | Identify underrepresented categories. Dimensions: "region" (consumed but depleted), "grape" (none drinkable next 12 months), "price_tier" (no ready-to-drink), "vintage" (empty aging decades). Default: all four. `months`: consumption lookback (default 12). |
 | `search_synonyms` | `action: str`, `key?: str`, `value?: str` | Manage custom search synonyms. Actions: `list`, `add`, `remove`. |
 | `currency_rates` | `action: str`, `currency?: str`, `rate?: float` | Manage currency exchange rates. Actions: `list`, `set`, `remove`. |
 | `server_stats` | `period?: str` | Usage, latency, and error statistics from the observability log store. Period: `"1h"`, `"24h"`, `"7d"`, `"30d"`. |
+| `cellar_anomalies` | `severity?: str`, `kinds?: str` | Anomaly detection across call volume, latency, errors, drift, and ETL metrics. Filters by severity (`critical`, `warning`, `info`) or kind (`volume_spike`, `latency_spike`, `error_cluster`, `drift`, `etl_anomaly`). Returns Markdown table grouped by severity. |
 
 `query_cellar` validates SQL is read-only (SELECT/WITH only, no DDL/DML) and uses the agent connection which exposes only views, not raw entity tables.
 
 **View selection guide:** Default to `wines` / `bottles` (slim) for most queries. Use `wines_full` / `bottles_full` only when you need wine details (`alcohol_pct`, `grapes`, `volume_ml`, `classification`), bottle details (`provider_name`, `purchase_date`, `volume_ml`), or aggregates (`cellar_value`, `on_order_value`, tasting/rating scores). Convenience views (`wines_stored`, `bottles_stored`, etc.) also return slim columns.
 
-`find_wine` tokenises multi-word queries (AND across words, OR across columns) and uses `strip_accents()` for accent-insensitive matching. Searches 12 text columns: wine name, winery, country, region, subregion, classification, category, primary grape, subcategory, sweetness, effervescence, and specialty. Before searching, tokens are normalised via a synonym dictionary (~155 built-in entries) that maps German terms to stored values (e.g. `rotwein` → `red`, `schweiz` → `Switzerland`, `trocken` → `dry`) and drops stopwords (e.g. `weingut`, `wein`). After synonym normalisation, an intent detection layer recognises attribute-based patterns — drinking status (`ready to drink`, `too young`, `past optimal`), price (`under 30`, `budget`), ratings (`top rated`), and stock levels (`low stock`, `last bottle`) — and injects WHERE/ORDER BY clauses. Consumed intent tokens are excluded from text search. German intent triggers (e.g. `trinkreif` → `"ready to drink"`) are handled via the synonym layer. A concept expansion layer then handles wine-style keywords (`sparkling`, `dessert`, `fortified`, `sweet`, `natural`) by OR-expanding them to concrete wine names (e.g. `sparkling` also matches Prosecco, Champagne, Crémant, etc.) and system concepts (`tracked`, `favorite`/`favourite`, `wishlist`) which inject WHERE filters. German wine-style terms (`Schaumwein`, `Süsswein`, `Dessertwein`, `Likörwein`, `Sekt`) are mapped to concept keywords via the synonym layer. Custom synonyms can be added via `search_synonyms` or TOML `[search.synonyms]`. When strict AND returns zero results and at least two ILIKE text conditions exist, a soft-AND fallback fires: it requires at least one ILIKE condition to match and ranks results by match count (descending). Intent and system-concept filters remain mandatory. Results are prefixed with a "Partial match" header. If soft AND also returns nothing, the fuzzy fallback fires (when `fuzzy=True`). Uses parameterised queries to prevent SQL injection. The `limit` parameter must be ≥ 1; invalid values return an error message.
+`find_wine` tokenises multi-word queries (AND across words, OR across columns) and uses `strip_accents()` for accent-insensitive matching. Searches 12 text columns: wine name, winery, country, region, subregion, classification, category, primary grape, subcategory, sweetness, effervescence, and specialty. Before searching, tokens are normalised via a synonym dictionary (~155 built-in entries) that maps German terms to stored values (e.g. `rotwein` → `red`, `schweiz` → `Switzerland`, `trocken` → `dry`) and drops stopwords (e.g. `weingut`, `wein`). After synonym normalisation, an intent detection layer recognises attribute-based patterns — drinking status (`ready to drink`, `too young`, `past optimal`), price (`under 30`, `budget`), ratings (`top rated`), and stock levels (`low stock`, `last bottle`) — and injects WHERE/ORDER BY clauses. Consumed intent tokens are excluded from text search. German intent triggers (e.g. `trinkreif` → `"ready to drink"`) are handled via the synonym layer. A concept expansion layer then handles wine-style keywords (`sparkling`, `dessert`, `fortified`, `sweet`, `natural`) by OR-expanding them to concrete wine names (e.g. `sparkling` also matches Prosecco, Champagne, Crémant, etc.) and system concepts (`tracked`, `favorite`/`favourite`, `wishlist`) which inject WHERE filters. German wine-style terms (`Schaumwein`, `Süsswein`, `Dessertwein`, `Likörwein`, `Sekt`) are mapped to concept keywords via the synonym layer. Custom synonyms can be added via `search_synonyms` or TOML `[search.synonyms]`. When strict AND returns zero results, a multi-stage fallback chain fires:
+
+1. **Soft-AND** — requires at least one ILIKE condition to match (≥2 text tokens required); ranks by match count descending.
+2. **Explicit fuzzy** (when `fuzzy=True`) — per-token Jaro-Winkler similarity (threshold 0.85) across 8 columns (wine name, winery, country, region, classification, subregion, category, primary grape).
+3. **Auto-fuzzy** (implicit) — same as above but with higher threshold (0.90), fires even without `fuzzy=True`.
+4. **Phonetic** — Double Metaphone matching via `dmetaphone()` UDF (requires `[search]` extra with `jellyfish`). Matches phonetically-equivalent tokens against wine name, winery, grape, and region.
+5. **Suggestions** — if all else fails, appends a "Did you mean?" line with Jaro-Winkler suggestions (threshold 0.70).
+
+Intent and system-concept filters remain mandatory throughout all fallback stages. Uses parameterised queries to prevent SQL injection. The `limit` parameter must be ≥ 1; invalid values return an error message. All searches emit telemetry to the observability search_events table for analytics.
+
+`wine_suggestions` returns Jaro-Winkler-based autocomplete suggestions for wine names. Useful for "did you mean?" UX or when `find_wine` returns nothing. Queries shorter than 4 characters are skipped. Threshold configurable via `search.suggest_threshold` (default 0.70).
+
+`search_stats` queries the `search_events` table in the observability DuckDB log store. Returns: top queries by frequency, zero-result queries (indicating vocabulary gaps), rescued queries (where fuzzy/phonetic/soft-AND saved a zero-result), and summary metrics (total searches, average latency, rescue counts). Useful for identifying search quality improvements.
 
 `search_synonyms` manages the custom synonym layer (stored in `data_dir/search-synonyms.json`). Actions: `list` shows all synonyms (built-in + custom) with source; `add` saves a key→value mapping (empty value = stopword); `remove` deletes a custom synonym (built-in entries cannot be removed). Changes take effect on the next `find_wine` call.
 
@@ -50,6 +67,8 @@ affect tool behaviour. Omit it for backward compatibility.
 `cellar_stats` group_by options: `country`, `region`, `category`, `vintage`, `winery`, `grape`, `cellar`, `provider`, `status`, `on_order`.
 
 `cellar_churn` period options: `"month"` (month-by-month), `"year"` (year-by-year). If omitted, returns a single-period summary. Defaults to current month when no args given. Examples: `cellar_churn()`, `cellar_churn(year=2025, month=3)`, `cellar_churn(period="month", year=2025)`, `cellar_churn(period="year")`.
+
+`consumption_velocity` analyses how fast the cellar is growing or shrinking. Returns per-month acquired and consumed counts, average rates, net growth per month, current stored bottle count, and a 12-month projection. The `months` parameter controls the lookback window (1–60, default 6). Excludes the current incomplete month.
 
 #### Example SQL Queries
 
@@ -119,10 +138,12 @@ ORDER BY wine_id
 | Tool | Args | Returns |
 |------|------|---------|
 | `read_dossier` | `wine_id: int`, `sections?: list[str]` | Full dossier or filtered sections. |
-| `update_dossier` | `wine_id: int`, `section: str`, `content: str`, `agent_name?: str` | Confirmation. Agent sections only. |
-| `batch_update_dossier` | `wine_ids: list[int]`, `section: str`, `content: str`, `agent_name?: str` | Summary: X/Y succeeded + per-wine results. |
+| `update_dossier` | `wine_id: int`, `section: str`, `content: str`, `agent_name?: str`, `sources?: list[str]`, `confidence?: str` | Confirmation. Agent sections only. Embeds research metadata. |
+| `batch_update_dossier` | `wine_ids: list[int]`, `section: str`, `content: str`, `agent_name?: str`, `sources?: list[str]`, `confidence?: str` | Summary: X/Y succeeded + per-wine results. |
 | `get_format_siblings` | `wine_id: int` | Markdown table of format variants (Standard, Magnum, etc.). |
-| `pending_research` | `limit?: int`, `section?: str` | Per-vintage wines with unfilled agent sections. |
+| `similar_wines` | `wine_id: int`, `limit?: int`, `include_gone?: bool` | Ranked Markdown table of structurally similar wines (6-signal scoring). |
+| `pending_research` | `limit?: int`, `section?: str`, `include_stale?: bool`, `stale_months?: int` | Per-vintage wines with unfilled agent sections. Optionally includes stale research. |
+| `stale_research` | `months?: int`, `limit?: int`, `section?: str` | Wines with research metadata older than N months. |
 
 `read_dossier` section keys: ETL (`identity`, `origin`, `grapes`, `characteristics`, `drinking_window`, `cellar_inventory`, `purchase_history`, `consumption_history`, `owner_notes`), Mixed (`ratings_reviews`, `tasting_notes`, `food_pairings`), Agent (`producer_profile`, `vintage_report`, `wine_description`, `market_availability`, `similar_wines`, `agent_log`).
 
@@ -133,7 +154,7 @@ ORDER BY wine_id
 | Tool | Args | Returns |
 |------|------|---------|
 | `read_companion_dossier` | `tracked_wine_id: int`, `sections?: list[str]` | Full companion dossier or filtered sections. |
-| `update_companion_dossier` | `tracked_wine_id: int`, `section: str`, `content: str` | Confirmation. Agent sections only. |
+| `update_companion_dossier` | `tracked_wine_id: int`, `section: str`, `content: str`, `agent_name?: str`, `sources?: list[str]`, `confidence?: str` | Confirmation. Agent sections only. Embeds research metadata. |
 | `list_companion_dossiers` | `pending_only?: bool` | All tracked wines, or only those with pending sections. |
 | `pending_companion_research` | `limit?: int` | Tracked wines with unfilled companion sections. |
 
@@ -170,6 +191,29 @@ Both tools are always available (no model required) and use SQL strategies again
 
 **Agent workflow:** For food → wine pairing with a small LLM, call `pair_wine(dish="...")` and present the output. For capable LLMs, classify the dish first (protein, cuisine, weight, category) then call `pairing_candidates` → read dossiers → apply pairing rules → present recommendations. If the sommelier model is available, `suggest_wines` can supplement retrieval with embedding similarity. For wine → food, the agent calls `suggest_foods` → reads the wine dossier → presents dishes with context.
 
+### Recommendations
+
+| Tool | Args | Returns |
+|------|------|---------|
+| `recommend_tonight` | `occasion?: str`, `cuisine?: str`, `guests?: int`, `budget?: str`, `limit?: int`, `meta?: str` | Markdown table of scored wine picks. Combines urgency, occasion fit, food pairing (RAG), freshness, diversity, and quality into a composite score. |
+| `wine_of_the_day` | `meta?: str` | Today's deterministic wine pick — urgency-weighted daily rotation with reasoning. Same wine all day, changes at midnight. |
+| `plan_dinner` | `courses: str`, `guests?: int`, `budget?: str`, `style?: str`, `dinner_time?: str`, `meta?: str` | Complete wine flight plan for a multi-course dinner. Selects one wine per course with light-to-heavy progression, deduplication, budget constraints, and preparation timeline. |
+| `plan_trip` | `destination: str`, `include_producers?: bool`, `include_gaps?: bool`, `limit?: int`, `meta?: str` | Wine travel brief for a destination region or country. Combines cellar inventory, producer visit suggestions (from dossier research), and regional gap analysis (subregions/grapes once owned but no longer in stock). |
+| `gift_advisor` | `profile: str`, `budget?: str`, `occasion?: str`, `protect_last_bottle?: bool`, `limit?: int`, `meta?: str` | Ranked gift wine suggestions with six-signal scoring (prestige, storytelling, drinkability, recognition, recipient fit, presentation) and generated gift notes. |
+| `cellar_digest` | `period?: str` (`daily`/`weekly`), `meta?: str` | Formatted cellar intelligence brief with urgency warnings, newly optimal wines, top pick, inventory summary, and recent ETL changes. |
+
+Occasion values: `casual`, `weeknight`, `dinner_party`, `celebration`, `romantic`, `solo`, `tasting`. Budget values: `any`, `under_15`, `under_30`, `under_50`, `special`.
+
+Scoring factors (configurable weights in `[recommend]` settings):
+- **Urgency** (×3): wines past optimal or approaching end-of-window score highest.
+- **Occasion** (×2): price tier + category match for the occasion profile.
+- **Pairing** (×2): RAG-based food pairing signals when `cuisine` is provided.
+- **Freshness** (×1): penalty for recently consumed wines (hard/mid/soft windows).
+- **Diversity** (×1): re-ranking bonus for variety in winery and grape.
+- **Quality** (×1): critic score + favorite bonus, last-bottle penalty.
+
+Wines already on the drink-tonight sidecar list are automatically excluded.
+
 ### Price Tracking
 
 | Tool | Args | Returns |
@@ -190,6 +234,8 @@ Both tools are always available (no model required) and use SQL strategies again
 | `wine://{wine_id}` | Full dossier for a specific wine |
 | `cellar://stats` | Cellar statistics snapshot |
 | `cellar://drinking-now` | Wines in optimal drinking window |
+| `cellar://recommendations` | Smart recommendations scored by urgency, occasion, pairing, diversity |
+| `cellar://digest` | Proactive intelligence brief — urgency, newly optimal, top pick, changes |
 | `etl://last-run` | Most recent ETL run metadata |
 | `etl://changes` | Change log from last ETL run |
 | `schema://views` | Column reference for all queryable views — read before writing SQL |
