@@ -221,6 +221,36 @@ class TestBuildWines:
         nk = ("Domaine Test", "Cuvée Alpha", "2020")
         assert wine_lk[nk] == 42
 
+    def test_duplicate_natural_key_different_volume_no_log(self, sample_wine_row, caplog):
+        """Multi-format wines (same name, different volume) should not log."""
+        row_750 = {**sample_wine_row, "volume_raw": "750mL"}
+        row_mag = {**sample_wine_row, "volume_raw": "1500mL"}
+        rows = [row_750, row_mag]
+        _, winery_lk = build_wineries(rows)
+        _, app_lk = build_appellations(rows)
+
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="cellarbrain.transform"):
+            wines, wine_lk = build_wines(rows, winery_lk, app_lk)
+
+        assert len(wines) == 2
+        assert "Duplicate wine natural key" not in caplog.text
+
+    def test_duplicate_natural_key_same_volume_logs(self, sample_wine_row, caplog):
+        """True duplicates (same natural key + same volume) should log."""
+        rows = [sample_wine_row, {**sample_wine_row}]
+        _, winery_lk = build_wineries(rows)
+        _, app_lk = build_appellations(rows)
+
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="cellarbrain.transform"):
+            wines, wine_lk = build_wines(rows, winery_lk, app_lk)
+
+        assert len(wines) == 2
+        assert "Duplicate wine natural key" in caplog.text
+
 
 class TestAssignDossierPaths:
     def test_stored_wine_goes_to_cellar(self, sample_wine_row, sample_bottle_row):

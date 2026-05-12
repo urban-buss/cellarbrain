@@ -1986,3 +1986,67 @@ class TestPromotionHistoryTool:
     def test_empty_history(self, server, data_dir):
         result = server.promotion_history(months=1)
         assert "No promotion matches" in result
+
+
+# ---------------------------------------------------------------------------
+# TestStructuredOutputValidation — regression for issue #007
+# ---------------------------------------------------------------------------
+
+
+class TestStructuredOutputValidation:
+    """Ensure tools don't fail MCP output Pydantic validation (issue #007).
+
+    MCP library >=1.27 auto-generates output models from return annotations.
+    Our tools return CallToolResult with custom structuredContent which doesn't
+    match the auto-generated ``{"result": ...}`` schema.  Setting
+    ``structured_output=False`` disables this validation.
+    """
+
+    def test_tools_have_no_output_schema(self):
+        """All registered tools must have output_schema=None (structured_output=False)."""
+        from cellarbrain.mcp_server import mcp
+
+        tools = mcp._tool_manager._tools
+        assert len(tools) > 0, "No tools registered"
+        for name, tool in tools.items():
+            assert tool.fn_metadata.output_schema is None, (
+                f"Tool {name!r} has an output_schema — will cause Pydantic "
+                f"validation errors on the MCP wire. Set structured_output=False."
+            )
+
+    def test_cellar_stats_wire_conversion(self, server):
+        """cellar_stats returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        result = server.cellar_stats()
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent
+
+    def test_find_wine_wire_conversion(self, server):
+        """find_wine returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        result = server.find_wine(query="Test")
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent
+
+    def test_reload_data_error_wire_conversion(self, server):
+        """reload_data error path returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        # Will error because CSV files don't exist
+        result = server.reload_data()
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent
