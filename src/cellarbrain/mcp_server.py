@@ -480,7 +480,10 @@ def query_cellar(sql: str, format: str | None = None, meta: dict | None = None) 
 
     View selection guide:
 
-    - Default to **wines** / **bottles** (slim) for most queries.
+    - Default to **wines_stored** / **bottles_stored** for cellar questions
+      (what's in stock, most expensive stored wine, cellar value, etc.).
+    - Use **wines** / **bottles** when you need the full catalogue including
+      consumed and on-order wines (e.g. purchase history, past tastings).
     - Use **wines_full** / **bottles_full** only when you need:
       - Wine details: alcohol_pct, grapes, volume_ml, classification,
         ageing, serving_temp, winemaking_notes.
@@ -2137,9 +2140,9 @@ def recent_changes() -> str:
 # ---------------------------------------------------------------------------
 
 _VIEW_DESCRIPTIONS: dict[str, str] = {
-    "wines": "One row per wine (slim: 20 columns). Use for most queries.",
-    "wines_full": "One row per wine (all ~61 columns). Use when you need scores, cellar_value, alcohol_pct, or technical detail.",
-    "wines_stored": "Same as wines, filtered to bottles_stored > 0.",
+    "wines": "One row per wine (slim: 20 columns). Includes ALL non-deleted wines (stored, consumed, on order). Use **wines_stored** for in-cellar queries.",
+    "wines_full": "One row per wine (all ~61 columns). Includes ALL non-deleted wines. Use when you need scores, cellar_value, alcohol_pct, or technical detail.",
+    "wines_stored": "Same as wines, filtered to bottles_stored > 0. **Default for cellar questions.**",
     "wines_drinking_now": "Same as wines, filtered to optimal/drinkable + in stock.",
     "wines_on_order": "Same as wines, filtered to bottles_on_order > 0.",
     "bottles": "One row per bottle (slim: 17 columns).",
@@ -2153,13 +2156,21 @@ _VIEW_DESCRIPTIONS: dict[str, str] = {
 _COLUMN_HINTS: dict[tuple[str, str], str] = {
     ("wines", "subregion"): "Sub-appellation or commune (agents often guess 'appellation')",
     ("wines", "primary_grape"): "Dominant grape variety (agents often guess 'grape_variety' or 'grape')",
-    ("wines", "price"): "Purchase price per bottle in CHF (agents often guess 'price_chf')",
+    (
+        "wines",
+        "price",
+    ): "List/catalogue price per bottle in CHF — see bottles view for actual purchase prices (agents often guess 'price_chf')",
     ("wines", "category"): "Wine colour/type: red, white, rose, sparkling (agents often guess 'color' or 'type')",
     ("wines", "winery_name"): "Producer name (agents often guess 'producer' or 'domaine')",
     ("wines", "blend_type"): "varietal / blend / unknown (agents often guess 'grape_type')",
     ("wines", "style_tags"): "Merged tags: subcategory + sweetness + effervescence + specialty",
     ("wines_full", "best_pro_score"): "Highest professional rating (agents often guess 'score' or 'rating')",
     ("wines_full", "cellar_value"): "Total CHF value of stored bottles",
+    (
+        "bottles",
+        "price",
+    ): "Actual purchase price per bottle in CHF (different from wines.price which is the list/catalogue price)",
+    ("bottles_full", "price"): "Actual purchase price per bottle in CHF",
 }
 
 

@@ -326,6 +326,22 @@ def _normalise_query_tokens(
     return result if result else tokens
 
 
+def _add_status_markers(df: pd.DataFrame) -> pd.DataFrame:
+    """Append [on order] or [consumed] to wine_name for non-stored wines.
+
+    Requires ``bottles_stored`` and ``bottles_on_order`` columns.
+    Drops ``bottles_on_order`` after marking to keep output clean.
+    """
+    if df.empty:
+        return df
+    mask_on_order = (df["bottles_stored"] == 0) & (df["bottles_on_order"] > 0)
+    mask_consumed = (df["bottles_stored"] == 0) & (df["bottles_on_order"] == 0)
+    df = df.copy()
+    df.loc[mask_on_order, "wine_name"] = df.loc[mask_on_order, "wine_name"] + " [on order]"
+    df.loc[mask_consumed, "wine_name"] = df.loc[mask_consumed, "wine_name"] + " [consumed]"
+    return df.drop(columns=["bottles_on_order"])
+
+
 def format_siblings(
     con: duckdb.DuckDBPyConnection,
     wine_id: int,
@@ -452,7 +468,8 @@ def find_wine(
 
     sql = f"""
         SELECT wine_id, winery_name, wine_name, vintage, category,
-               country, region, primary_grape, bottles_stored, drinking_status,
+               country, region, primary_grape, bottles_stored, bottles_on_order,
+               drinking_status,
                price,
                CASE WHEN format_group_id IS NOT NULL
                     THEN bottle_format || ' ★'
@@ -481,12 +498,14 @@ def find_wine(
                 order_by,
             )
             if not df.empty:
+                df = _add_status_markers(df)
                 header = f"*Partial match for '{query}' (not all terms matched):*\n\n"
                 return header + _format_df(df, fmt, style="list")
         if fuzzy and remaining_tokens:
             expanded_query = " ".join(remaining_tokens)
             return _find_wine_fuzzy(con, expanded_query, limit)
         return f"*No wines found matching '{query}'.*"
+    df = _add_status_markers(df)
     return _format_df(df, fmt, style="list")
 
 
@@ -514,7 +533,8 @@ def _find_wine_soft_and(
 
     sql = f"""
         SELECT wine_id, winery_name, wine_name, vintage, category,
-               country, region, primary_grape, bottles_stored, drinking_status,
+               country, region, primary_grape, bottles_stored, bottles_on_order,
+               drinking_status,
                price,
                CASE WHEN format_group_id IS NOT NULL
                     THEN bottle_format || ' ★'
@@ -542,7 +562,8 @@ def _find_wine_fuzzy(
     sql = """
         WITH scored AS (
             SELECT wine_id, winery_name, wine_name, vintage, category,
-                   country, region, primary_grape, bottles_stored, drinking_status,
+                   country, region, primary_grape, bottles_stored, bottles_on_order,
+                   drinking_status,
                    price,
                    CASE WHEN format_group_id IS NOT NULL
                         THEN bottle_format || ' ★'
@@ -558,7 +579,8 @@ def _find_wine_fuzzy(
             FROM wines_full
         )
         SELECT wine_id, winery_name, wine_name, vintage, category,
-               country, region, primary_grape, bottles_stored, drinking_status,
+               country, region, primary_grape, bottles_stored, bottles_on_order,
+               drinking_status,
                price, size, price_per_750ml,
                tracked_wine_id,
                ROUND(similarity, 2) AS match_score
@@ -574,5 +596,6 @@ def _find_wine_fuzzy(
 
     if df.empty:
         return f"*No wines found matching '{query}' (including fuzzy).*"
+    df = _add_status_markers(df)
     header = f"*Fuzzy matches for '{query}':*\n\n"
     return header + _to_md(df)

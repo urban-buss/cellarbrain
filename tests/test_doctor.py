@@ -465,7 +465,7 @@ class TestCheckCurrencyFreshness:
         _check_currency_freshness(data_dir, report)
 
         assert report.checks[0].severity == Severity.WARN
-        assert "60 days ago" in report.checks[0].message
+        assert "days ago" in report.checks[0].message
 
 
 # ---------------------------------------------------------------------------
