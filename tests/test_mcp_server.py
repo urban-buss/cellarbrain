@@ -1083,17 +1083,14 @@ class TestToolRegistration:
             if "meta" in tool.inputSchema["properties"]:
                 required = tool.inputSchema.get("required", [])
                 assert "meta" not in required, (
-                    f"Tool {tool.name} has 'meta' as required — "
-                    "it must be optional for backward compat"
+                    f"Tool {tool.name} has 'meta' as required — it must be optional for backward compat"
                 )
 
     def test_tools_have_descriptions(self, server):
         tools = asyncio.run(server.mcp.list_tools())
         for tool in tools:
             assert tool.description, f"Tool {tool.name} has no description"
-            assert len(tool.description) > 10, (
-                f"Tool {tool.name} description too short"
-            )
+            assert len(tool.description) > 10, f"Tool {tool.name} description too short"
 
     def test_no_duplicate_tool_names(self, server):
         tools = asyncio.run(server.mcp.list_tools())

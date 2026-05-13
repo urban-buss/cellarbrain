@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from cellarbrain.sommelier.seed import (
     bundled_food_catalogue,
     bundled_pairing_dataset,

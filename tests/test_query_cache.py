@@ -288,7 +288,6 @@ class TestQueryCacheTTL:
         assert value == "value1"
 
     def test_entry_expired_after_ttl(self, monkeypatch):
-        import cellarbrain.query_cache as qc_mod
 
         cache = QueryCache(max_size=10, ttl_seconds=5)
         cache.put("k1", "value1")

@@ -50,6 +50,7 @@ See [Quick Start](getting-started/quick-start.md) for the full walkthrough.
 | [Sommelier](modules/sommelier.md) | ML food-wine pairing model and indexes |
 | [Email Ingest](modules/email-ingest.md) | IMAP polling, credentials, launchd daemon |
 | [Agent Skills](modules/agent-skills.md) | Skill architecture and available skills |
+| [iOS Prompt-Book](modules/ios-prompt-book.md) | Apple Notes, Text Replacements, Shortcuts for iMessage |
 
 > **Service management:** Use `cellarbrain service install` to register daemons (ingest, dashboard) as macOS launchd services. See [CLI reference](../docs/cli-reference.md#cellarbrain-service).
 

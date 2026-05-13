@@ -30,7 +30,8 @@ def _run_cellarbrain(*args: str) -> subprocess.CompletedProcess:
     subprocess.run(
         [sys.executable, "-c", "import cellarbrain"],
         capture_output=True,
-    ).returncode != 0,
+    ).returncode
+    != 0,
     reason="cellarbrain not installed",
 )
 class TestFreshInstall:

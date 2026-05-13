@@ -833,8 +833,10 @@ class TestResearchMetaBackwardCompat:
         update_dossier(1, "producer_profile", "Research done.", data_dir)
         result = pending_research(data_dir)
         # producer_profile should NOT appear as pending for wine 1
-        assert "producer_profile" not in result.split("Cuvée Alpha")[0].split("Cuvée Alpha")[-1] or \
-            "producer_profile" not in result
+        assert (
+            "producer_profile" not in result.split("Cuvée Alpha")[0].split("Cuvée Alpha")[-1]
+            or "producer_profile" not in result
+        )
 
     def test_plain_dossier_without_meta_still_works(self, data_dir):
         """Pre-v0.3 dossiers without any meta comments are fully readable."""

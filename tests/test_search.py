@@ -3049,4 +3049,3 @@ class TestSearchFallbackChain:
         result = suggest_wines(con, "Chateau Tset Cuvee")
         # Should either get a suggestion or "No suggestions" — no crash
         assert isinstance(result, str)
-
