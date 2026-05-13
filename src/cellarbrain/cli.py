@@ -2123,6 +2123,7 @@ def _rebuild_wine_index(model, data_dir: pathlib.Path, wine_dir: pathlib.Path, s
 
 def _cmd_train_model(args: argparse.Namespace, settings: Settings) -> None:
     try:
+        from .sommelier.seed import ensure_pairing_dataset
         from .sommelier.training import train_model
     except ImportError:
         print("ML dependencies not installed.", file=sys.stderr)
@@ -2133,6 +2134,8 @@ def _cmd_train_model(args: argparse.Namespace, settings: Settings) -> None:
     output = args.output or cfg.model_dir
     epochs = args.epochs or cfg.training_epochs
     batch_size = args.batch_size or cfg.training_batch_size
+
+    ensure_pairing_dataset(pathlib.Path(cfg.pairing_dataset))
 
     print(f"Training sommelier model ({epochs} epochs, batch {batch_size})...")
     print(f"  Base model: {cfg.base_model}")
@@ -2162,6 +2165,7 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
     both FAISS indexes.
     """
     try:
+        from .sommelier.seed import ensure_pairing_dataset
         from .sommelier.training import train_model
     except ImportError:
         print("ML dependencies not installed.", file=sys.stderr)
@@ -2177,6 +2181,7 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
         sys.exit(1)
 
     dataset_path = pathlib.Path(cfg.pairing_dataset)
+    ensure_pairing_dataset(dataset_path)
     if not dataset_path.exists():
         print(f"Error: pairing dataset not found at {dataset_path}")
         sys.exit(1)

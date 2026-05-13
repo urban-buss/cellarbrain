@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   aliases for backward compatibility.
 - See `docs/upgrading.md` for the full migration guide.
 
+## [0.2.15] — 2026-05-12
+
+### Fixed
+- **Sommelier seed files**: bundle `food_catalogue.parquet` and `pairing_dataset.parquet` as
+  package data so `cellarbrain train-model` works on pip installs where data-dir differs from
+  install-dir. Added copy-on-first-use pattern (`ensure_pairing_dataset`) and resolved
+  `food_catalogue` to the bundled package path. Fixes train-model failing on macOS pip installs.
+
 ## [0.2.14] — 2026-05-12
 
 ### Fixed
