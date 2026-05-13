@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0a2] — 2026-06-03
+
+### Added
+- **Sommelier seed files restored** — bundled `food_catalogue.parquet` and `pairing_dataset.parquet`
+  as package data so `train-model` works on fresh installs without manual seed setup.
+- **Upgrade guide** — new `docs/upgrading.md` covers all breaking changes from v0.2.x → v0.3.x.
+- **`--no-migrate` flag** — `cellarbrain etl --no-migrate` skips auto-migration for manual control.
+- **Query cache TTL** — `[cache] ttl_seconds = 300` auto-expires stale cache entries in
+  long-running MCP server sessions.
+
+### Fixed
+- `_resolve_sommelier_paths()` now resolves `food_catalogue` to the bundled package-data path
+  when the configured value is a relative path, preventing `FileNotFoundError` on fresh installs.
+
+### Breaking Changes
+- All optional extras (`research`, `dashboard`, `ingest`, `promotions`, `search`) absorbed into
+  base install. Only `[ml]` remains as a true optional extra. Legacy extra names kept as empty
+  aliases for backward compatibility.
+- See `docs/upgrading.md` for the full migration guide.
+
 ## [0.2.14] — 2026-05-12
 
 ### Fixed

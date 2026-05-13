@@ -47,14 +47,10 @@ pip install "cellarbrain[ml]"
 
 All other features (web dashboard, email ingestion, web research, phonetic search) are included in the base install.
 
-Install individual extras:
-
-```bash
-pip install "cellarbrain[research]"
-pip install "cellarbrain[sommelier]"
-pip install "cellarbrain[dashboard]"
-pip install "cellarbrain[ingest]"
-```
+> **Note (v0.3+):** Legacy extra names (`sommelier`, `research`, `dashboard`,
+> `ingest`, `promotions`, `search`) are retained as empty aliases for backward
+> compatibility. They install nothing additional — all functionality is in the
+> base package. See [Upgrading](../../docs/upgrading.md) for migration details.
 
 ## Verify
 

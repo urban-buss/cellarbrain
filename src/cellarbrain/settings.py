@@ -317,6 +317,7 @@ class CacheConfig:
 
     enabled: bool = True
     max_size: int = 128
+    ttl_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -889,14 +890,21 @@ def _resolve_sommelier_paths(
     """Anchor mutable sommelier paths to *data_dir*.
 
     Paths that are already absolute pass through unchanged.
-    ``base_model`` and ``food_catalogue`` are intentionally left unanchored
-    because they are install-time / read-only artifacts.
+    ``base_model`` is left unanchored (HuggingFace model ID).
+    ``food_catalogue`` is resolved to the bundled package-data path when
+    the configured value is a relative path.
     """
+    from .sommelier.seed import bundled_food_catalogue
+
+    food_cat = cfg.food_catalogue
+    if not pathlib.Path(food_cat).is_absolute():
+        food_cat = str(bundled_food_catalogue())
+
     return SommelierConfig(
         enabled=cfg.enabled,
         model_dir=_anchor(cfg.model_dir, data_dir),
         base_model=cfg.base_model,
-        food_catalogue=cfg.food_catalogue,
+        food_catalogue=food_cat,
         pairing_dataset=_anchor(cfg.pairing_dataset, data_dir),
         food_index=_anchor(cfg.food_index, data_dir),
         food_ids=_anchor(cfg.food_ids, data_dir),

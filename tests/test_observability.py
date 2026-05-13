@@ -854,6 +854,83 @@ class TestSchemaUpgrade:
         assert row[0] is True
         collector.close()
 
+    def test_v0215_full_upgrade_path(self, tmp_path):
+        """Simulate a v0.2.15 log store (17 columns) upgrading to v0.3 (20 columns)."""
+        import duckdb
+
+        db_path = str(tmp_path / "v0215.duckdb")
+        # v0.2.15 had exactly 17 columns
+        con = duckdb.connect(db_path)
+        con.execute("""
+            CREATE TABLE tool_events (
+                event_id VARCHAR PRIMARY KEY,
+                session_id VARCHAR NOT NULL,
+                turn_id VARCHAR,
+                event_type VARCHAR NOT NULL,
+                name VARCHAR NOT NULL,
+                started_at TIMESTAMP NOT NULL,
+                ended_at TIMESTAMP,
+                duration_ms DOUBLE,
+                status VARCHAR NOT NULL,
+                request_id VARCHAR,
+                parameters VARCHAR,
+                error_type VARCHAR,
+                error_message VARCHAR,
+                result_size INTEGER,
+                agent_name VARCHAR,
+                trace_id VARCHAR,
+                client_id VARCHAR
+            )
+        """)
+        # Insert a v0.2.15-era event (17 columns, no new fields)
+        con.execute("""
+            INSERT INTO tool_events (event_id, session_id, turn_id, event_type, name,
+                started_at, ended_at, duration_ms, status, agent_name)
+            VALUES ('old-event', 'old-session', 'old-turn', 'tool', 'find_wine',
+                '2025-05-01 10:00:00', '2025-05-01 10:00:01', 50.0, 'ok', 'research')
+        """)
+        con.close()
+
+        # Open via EventCollector — should upgrade all 3 missing columns
+        config = LoggingConfig(log_db=db_path)
+        collector = EventCollector(config, str(tmp_path))
+
+        # Verify old event is still readable
+        row = collector._db.execute(
+            "SELECT name, data_size, metadata_keys, cache_hit FROM tool_events WHERE event_id = 'old-event'"
+        ).fetchone()
+        assert row[0] == "find_wine"
+        assert row[1] is None  # data_size not present in old event
+        assert row[2] is None  # metadata_keys not present in old event
+        assert row[3] is None  # cache_hit not present in old event
+
+        # Insert a new v0.3-style event using all new columns
+        now = datetime.now(UTC)
+        event = ToolEvent(
+            event_id="new-event",
+            session_id="new-session",
+            turn_id="new-turn",
+            event_type="tool",
+            name="cellar_stats",
+            started_at=now,
+            ended_at=now,
+            duration_ms=15.0,
+            status="ok",
+            data_size=256,
+            metadata_keys="total_bottles,total_value",
+            cache_hit=True,
+        )
+        collector._buffer.append(event)
+        collector.flush()
+
+        row = collector._db.execute(
+            "SELECT data_size, metadata_keys, cache_hit FROM tool_events WHERE event_id = 'new-event'"
+        ).fetchone()
+        assert row[0] == 256
+        assert row[1] == "total_bottles,total_value"
+        assert row[2] is True
+        collector.close()
+
 
 # ---------------------------------------------------------------------------
 # Log file discovery tests (Phase 2)

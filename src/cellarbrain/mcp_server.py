@@ -154,8 +154,11 @@ def _init_query_cache() -> None:
     settings = _load_mcp_settings()
     if not settings.cache.enabled:
         _query_cache = QueryCache(max_size=0)
-    elif _query_cache._max_size != settings.cache.max_size:
-        _query_cache = QueryCache(max_size=settings.cache.max_size)
+    else:
+        _query_cache = QueryCache(
+            max_size=settings.cache.max_size,
+            ttl_seconds=settings.cache.ttl_seconds,
+        )
 
 
 # ---------------------------------------------------------------------------

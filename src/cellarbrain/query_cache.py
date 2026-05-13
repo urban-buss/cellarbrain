@@ -7,6 +7,9 @@ configured ``max_size`` is exceeded (LRU eviction).
 
 Cache keys are deterministic hashes of the tool name plus normalised keyword
 arguments, so identical calls collapse to a single lookup.
+
+Entries automatically expire after ``ttl_seconds`` (default 300s / 5 min).
+Set ``ttl_seconds=0`` to disable TTL-based expiry.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -60,11 +64,14 @@ class QueryCache:
     Args:
         max_size: Maximum number of entries before LRU eviction.
                   Set to 0 to disable caching entirely.
+        ttl_seconds: Time-to-live for entries in seconds.
+                     Set to 0 to disable TTL-based expiry.
     """
 
-    def __init__(self, max_size: int = 128) -> None:
+    def __init__(self, max_size: int = 128, ttl_seconds: int = 300) -> None:
         self._max_size = max(0, max_size)
-        self._store: OrderedDict[str, Any] = OrderedDict()
+        self._ttl = max(0, ttl_seconds)
+        self._store: OrderedDict[str, tuple[Any, float]] = OrderedDict()
         self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0
@@ -79,15 +86,26 @@ class QueryCache:
         """Return the canonical cache key for a (name, params) pair."""
         return _stable_key(name, params)
 
+    def _is_expired(self, stored_at: float) -> bool:
+        """Return True if the entry has exceeded its TTL."""
+        if self._ttl == 0:
+            return False
+        return (time.monotonic() - stored_at) > self._ttl
+
     def get(self, key: str) -> tuple[bool, Any]:
         """Look up a key.  Returns ``(found, value)``."""
         if not self.enabled:
             return False, None
         with self._lock:
             if key in self._store:
+                value, stored_at = self._store[key]
+                if self._is_expired(stored_at):
+                    del self._store[key]
+                    self._misses += 1
+                    return False, None
                 self._hits += 1
                 self._store.move_to_end(key)
-                return True, self._store[key]
+                return True, value
             self._misses += 1
             return False, None
 
@@ -96,11 +114,12 @@ class QueryCache:
         if not self.enabled:
             return
         with self._lock:
+            now = time.monotonic()
             if key in self._store:
                 self._store.move_to_end(key)
-                self._store[key] = value
+                self._store[key] = (value, now)
                 return
-            self._store[key] = value
+            self._store[key] = (value, now)
             while len(self._store) > self._max_size:
                 self._store.popitem(last=False)
                 self._evictions += 1

@@ -178,6 +178,7 @@ def run(
     sync_mode: bool = False,
     bottles_gone_csv: str,
     settings: Settings | None = None,
+    no_migrate: bool = False,
 ) -> bool:
     """Execute the ETL pipeline. Returns True if validation passes."""
     if settings is None:
@@ -201,14 +202,15 @@ def run(
             logger.warning("Backup failed (continuing ETL): %s", exc)
 
     # --- Auto-apply pending schema migrations ---
-    from .migrate import CURRENT_VERSION, read_schema_version, run_migrations
+    if not no_migrate:
+        from .migrate import CURRENT_VERSION, read_schema_version, run_migrations
 
-    if out.exists() and any(out.glob("*.parquet")):
-        current_schema = read_schema_version(out)
-        if current_schema < CURRENT_VERSION:
-            applied = run_migrations(out)
-            if applied:
-                print(f"Applied {len(applied)} pending schema migration(s)")
+        if out.exists() and any(out.glob("*.parquet")):
+            current_schema = read_schema_version(out)
+            if current_schema < CURRENT_VERSION:
+                applied = run_migrations(out)
+                if applied:
+                    print(f"Applied {len(applied)} pending schema migration(s)")
 
     now = datetime.now(UTC).replace(tzinfo=None)
     run_id = incremental.next_run_id(out)
@@ -542,6 +544,12 @@ def _subcommand_main(argv: list[str]) -> None:
     etl.add_argument("bottles_gone_csv")
     etl.add_argument("-o", "--output", default=None)
     etl.add_argument("--sync", action="store_true", default=False)
+    etl.add_argument(
+        "--no-migrate",
+        action="store_true",
+        default=False,
+        help="Skip automatic schema migrations before ETL",
+    )
 
     # --- validate ---
     sub.add_parser("validate", help="Validate Parquet output")
@@ -881,6 +889,7 @@ def _cmd_etl(args: argparse.Namespace, settings: Settings) -> None:
         sync_mode=args.sync,
         bottles_gone_csv=args.bottles_gone_csv,
         settings=settings,
+        no_migrate=args.no_migrate,
     )
     if ok:
         _prune_dashboard_sidecars(output)

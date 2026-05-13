@@ -83,6 +83,9 @@ where = ["src"]
     "README.md",
     "*/SKILL.md",
 ]
+"cellarbrain.sommelier" = [
+    "data/*.parquet",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

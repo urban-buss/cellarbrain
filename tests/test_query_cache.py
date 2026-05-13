@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -271,3 +272,93 @@ class TestQueryCacheThreadSafety:
         assert errors == []
         s = cache.stats()
         assert s.size <= 100
+
+
+# ---------------------------------------------------------------------------
+# TestQueryCacheTTL
+# ---------------------------------------------------------------------------
+
+
+class TestQueryCacheTTL:
+    def test_entry_returned_before_ttl(self):
+        cache = QueryCache(max_size=10, ttl_seconds=60)
+        cache.put("k1", "value1")
+        found, value = cache.get("k1")
+        assert found is True
+        assert value == "value1"
+
+    def test_entry_expired_after_ttl(self, monkeypatch):
+        import cellarbrain.query_cache as qc_mod
+
+        cache = QueryCache(max_size=10, ttl_seconds=5)
+        cache.put("k1", "value1")
+
+        # Advance time past TTL
+        original_monotonic = time.monotonic
+        monkeypatch.setattr(time, "monotonic", lambda: original_monotonic() + 10)
+        found, value = cache.get("k1")
+        assert found is False
+        assert value is None
+
+    def test_ttl_zero_disables_expiry(self, monkeypatch):
+        cache = QueryCache(max_size=10, ttl_seconds=0)
+        cache.put("k1", "value1")
+
+        # Advance time dramatically
+        original_monotonic = time.monotonic
+        monkeypatch.setattr(time, "monotonic", lambda: original_monotonic() + 99999)
+        found, value = cache.get("k1")
+        assert found is True
+        assert value == "value1"
+
+    def test_expired_entry_counted_as_miss(self, monkeypatch):
+        cache = QueryCache(max_size=10, ttl_seconds=1)
+        cache.put("k1", "value1")
+
+        # First get — hit
+        found, _ = cache.get("k1")
+        assert found is True
+        assert cache.stats().hits == 1
+
+        # Advance past TTL
+        original_monotonic = time.monotonic
+        monkeypatch.setattr(time, "monotonic", lambda: original_monotonic() + 5)
+
+        # Second get — miss (expired)
+        found, _ = cache.get("k1")
+        assert found is False
+        assert cache.stats().misses == 1
+
+    def test_get_or_compute_recomputes_after_ttl(self, monkeypatch):
+        cache = QueryCache(max_size=10, ttl_seconds=2)
+        call_count = 0
+
+        def compute():
+            nonlocal call_count
+            call_count += 1
+            return f"result-{call_count}"
+
+        # First call — computes
+        value, hit = cache.get_or_compute("tool", {}, compute)
+        assert value == "result-1"
+        assert hit is False
+
+        # Second call — cached
+        value, hit = cache.get_or_compute("tool", {}, compute)
+        assert value == "result-1"
+        assert hit is True
+
+        # Advance past TTL
+        original_monotonic = time.monotonic
+        monkeypatch.setattr(time, "monotonic", lambda: original_monotonic() + 5)
+
+        # Third call — recomputes
+        value, hit = cache.get_or_compute("tool", {}, compute)
+        assert value == "result-2"
+        assert hit is False
+
+    def test_default_ttl_is_300(self):
+        from cellarbrain.settings import CacheConfig
+
+        cfg = CacheConfig()
+        assert cfg.ttl_seconds == 300

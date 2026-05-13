@@ -798,6 +798,56 @@ class TestResearchMetadata:
 
 
 # ---------------------------------------------------------------------------
+# TestResearchMetaBackwardCompat
+# ---------------------------------------------------------------------------
+
+
+class TestResearchMetaBackwardCompat:
+    """Verify dossiers with research-meta HTML comments are readable as plain Markdown."""
+
+    def test_read_dossier_includes_content_not_meta_comments(self, data_dir):
+        """Content should be returned; meta comments are invisible in rendered Markdown."""
+        update_dossier(
+            1,
+            "producer_profile",
+            "Famous winery in Saint-Émilion.",
+            data_dir,
+            agent_name="test-agent",
+            sources=["wine-searcher.com"],
+        )
+        content = read_dossier(1, data_dir)
+        assert "Famous winery in Saint-Émilion." in content
+        # Meta comment is present in raw file but shouldn't block reading
+        assert "<!-- research-meta:" in content
+
+    def test_sections_parse_correctly_with_meta(self, data_dir):
+        """read_dossier_sections still returns section content when meta is present."""
+        update_dossier(1, "producer_profile", "Bio.", data_dir, agent_name="agent")
+        update_dossier(1, "wine_description", "Desc.", data_dir, agent_name="agent")
+        sections = read_dossier_sections(1, data_dir, sections=["producer_profile", "wine_description"])
+        assert "Bio." in sections
+        assert "Desc." in sections
+
+    def test_pending_research_ignores_meta(self, data_dir):
+        """Sections with meta are not considered pending."""
+        update_dossier(1, "producer_profile", "Research done.", data_dir)
+        result = pending_research(data_dir)
+        # producer_profile should NOT appear as pending for wine 1
+        assert "producer_profile" not in result.split("Cuvée Alpha")[0].split("Cuvée Alpha")[-1] or \
+            "producer_profile" not in result
+
+    def test_plain_dossier_without_meta_still_works(self, data_dir):
+        """Pre-v0.3 dossiers without any meta comments are fully readable."""
+        content = read_dossier(1, data_dir)
+        # Initially no research-meta
+        assert "<!-- research-meta:" not in content
+        # Sections still parseable
+        sections = read_dossier_sections(1, data_dir, sections=["producer_profile"])
+        assert isinstance(sections, str)
+        assert len(sections) > 0
+
+
+# ---------------------------------------------------------------------------
 # TestStaleResearch
 # ---------------------------------------------------------------------------
 

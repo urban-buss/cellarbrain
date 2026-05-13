@@ -1038,6 +1038,70 @@ class TestMetaParameter:
 
 
 # ---------------------------------------------------------------------------
+# TestToolRegistration
+# ---------------------------------------------------------------------------
+
+
+class TestToolRegistration:
+    """Verify _tool() decorator produces correct tool metadata."""
+
+    EXPECTED_TOOLS = {
+        "query_cellar",
+        "cellar_stats",
+        "cellar_churn",
+        "cellar_info",
+        "find_wine",
+        "wine_suggestions",
+        "read_dossier",
+        "update_dossier",
+        "reload_data",
+        "pending_research",
+        "suggest_wines",
+        "suggest_foods",
+        "pair_wine",
+        "add_pairing",
+        "server_stats",
+        "cache_stats",
+        "log_price",
+        "tracked_wine_prices",
+        "price_history",
+        "currency_rates",
+    }
+
+    def test_all_expected_tools_registered(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        tool_names = {t.name for t in tools}
+        missing = self.EXPECTED_TOOLS - tool_names
+        assert not missing, f"Missing tools: {missing}"
+
+    def test_meta_optional_in_input_schema(self, server):
+        """meta parameter must be optional (default None) so clients can ignore it."""
+        tools = asyncio.run(server.mcp.list_tools())
+        for tool in tools:
+            if not tool.inputSchema or "properties" not in tool.inputSchema:
+                continue
+            if "meta" in tool.inputSchema["properties"]:
+                required = tool.inputSchema.get("required", [])
+                assert "meta" not in required, (
+                    f"Tool {tool.name} has 'meta' as required — "
+                    "it must be optional for backward compat"
+                )
+
+    def test_tools_have_descriptions(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        for tool in tools:
+            assert tool.description, f"Tool {tool.name} has no description"
+            assert len(tool.description) > 10, (
+                f"Tool {tool.name} description too short"
+            )
+
+    def test_no_duplicate_tool_names(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        names = [t.name for t in tools]
+        assert len(names) == len(set(names)), "Duplicate tool registrations found"
+
+
+# ---------------------------------------------------------------------------
 # TestSchemaResource
 # ---------------------------------------------------------------------------
 

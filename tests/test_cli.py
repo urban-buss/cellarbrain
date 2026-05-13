@@ -874,3 +874,37 @@ class TestServiceCLI:
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         with pytest.raises(SystemExit, match="only supported on macOS"):
             main(["-d", str(data_dir), "service", "status"])
+
+
+# ---------------------------------------------------------------------------
+# TestNoMigrateFlag
+# ---------------------------------------------------------------------------
+
+
+class TestNoMigrateFlag:
+    def test_no_migrate_flag_parsed(self, capsys):
+        """--no-migrate is accepted by the argument parser."""
+        with pytest.raises(SystemExit) as exc_info:
+            main(["etl", "--no-migrate", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--no-migrate" in captured.out
+
+    def test_no_migrate_skips_migration(self, tmp_path, monkeypatch):
+        """When --no-migrate is set, run() does not call run_migrations."""
+        from unittest.mock import patch
+
+        from cellarbrain.cli import run
+
+        # Create a minimal output dir with a dummy parquet file
+        out = tmp_path / "output"
+        out.mkdir()
+        (out / "dummy.parquet").write_bytes(b"PAR1")
+
+        with patch("cellarbrain.migrate.run_migrations") as mock_mig:
+            # run() will fail on actual ETL but we just want to verify migration is skipped
+            try:
+                run("x.csv", "y.csv", str(out), bottles_gone_csv="z.csv", no_migrate=True)
+            except Exception:
+                pass
+            mock_mig.assert_not_called()
