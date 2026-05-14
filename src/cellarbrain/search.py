@@ -5,8 +5,11 @@ via DuckDB ILIKE matching. Extracted from ``query.py`` for cohesion.
 
 Public API:
 - ``find_wine`` — tokenised multi-column ILIKE search with intent detection
+- ``find_wine_with_telemetry`` — same, returning text + SearchTelemetry
+- ``suggest_wines`` — lightweight autocomplete/suggestion helper
 - ``format_siblings`` — Markdown table of format-group siblings
 - ``IntentResult`` — dataclass returned by intent extraction
+- ``SearchTelemetry`` — dataclass capturing search path metadata
 
 Internal helpers re-exported for test access:
 - ``_extract_intents``, ``_normalise_query_tokens``
@@ -39,6 +42,18 @@ class IntentResult:
     where_params: list = field(default_factory=list)
     order_by: str | None = None
     consumed_indices: set[int] = field(default_factory=set)
+
+
+@dataclass
+class SearchTelemetry:
+    """Metadata about the search path taken by a find_wine call."""
+
+    result_count: int = 0
+    intent_matched: bool = False
+    used_soft_and: bool = False
+    used_fuzzy: bool = False
+    used_phonetic: bool = False
+    used_suggestions: bool = False
 
 
 # Each pattern is (token_tuple, handler).  Handlers receive the matched
@@ -501,9 +516,25 @@ def find_wine(
                 df = _add_status_markers(df)
                 header = f"*Partial match for '{query}' (not all terms matched):*\n\n"
                 return header + _format_df(df, fmt, style="list")
+        # --- Explicit fuzzy (caller requested) ---
         if fuzzy and remaining_tokens:
             expanded_query = " ".join(remaining_tokens)
             return _find_wine_fuzzy(con, expanded_query, limit)
+        # --- Implicit fuzzy at higher threshold (auto "did you mean") ---
+        if remaining_tokens:
+            expanded_query = " ".join(remaining_tokens)
+            auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90)
+            if "No wines found" not in auto_result:
+                return auto_result.replace("*Fuzzy matches", "*Did you mean")
+        # --- Phonetic fallback ---
+        if remaining_tokens:
+            phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit)
+            if phonetic_result:
+                return phonetic_result
+        # --- Suggestions (very relaxed JW) ---
+        suggestions = _suggest_names(con, query, limit=5, threshold=0.70)
+        if suggestions:
+            return f"*No wines found matching '{query}'.*\n\n*Did you mean: {', '.join(suggestions)}?*"
         return f"*No wines found matching '{query}'.*"
     df = _add_status_markers(df)
     return _format_df(df, fmt, style="list")
@@ -558,7 +589,11 @@ def _find_wine_fuzzy(
     limit: int,
     threshold: float = 0.85,
 ) -> str:
-    """Fuzzy fallback — find close matches using Jaro-Winkler similarity."""
+    """Fuzzy fallback — find close matches using Jaro-Winkler similarity.
+
+    Compares against wine_name, winery_name, region, primary_grape,
+    country, classification, subregion, and category for broad coverage.
+    """
     sql = """
         WITH scored AS (
             SELECT wine_id, winery_name, wine_name, vintage, category,
@@ -574,7 +609,11 @@ def _find_wine_fuzzy(
                        jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(wine_name))), normalize_quotes(strip_accents(LOWER($1)))),
                        jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(winery_name))), normalize_quotes(strip_accents(LOWER($1)))),
                        jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(region, '')))), normalize_quotes(strip_accents(LOWER($1)))),
-                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(primary_grape, '')))), normalize_quotes(strip_accents(LOWER($1))))
+                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(primary_grape, '')))), normalize_quotes(strip_accents(LOWER($1)))),
+                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(country, '')))), normalize_quotes(strip_accents(LOWER($1)))),
+                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(classification, '')))), normalize_quotes(strip_accents(LOWER($1)))),
+                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(subregion, '')))), normalize_quotes(strip_accents(LOWER($1)))),
+                       jaro_winkler_similarity(normalize_quotes(strip_accents(LOWER(COALESCE(category, '')))), normalize_quotes(strip_accents(LOWER($1))))
                    ) AS similarity
             FROM wines_full
         )
@@ -599,3 +638,257 @@ def _find_wine_fuzzy(
     df = _add_status_markers(df)
     header = f"*Fuzzy matches for '{query}':*\n\n"
     return header + _to_md(df)
+
+
+def _find_wine_phonetic(
+    con: duckdb.DuckDBPyConnection,
+    tokens: list[str],
+    limit: int,
+) -> str | None:
+    """Phonetic fallback — match via Double Metaphone codes.
+
+    Returns a formatted result string, or None if phonetic is unavailable
+    or no matches found.
+    """
+    from .phonetic import dmetaphone, is_available
+
+    if not is_available():
+        return None
+
+    query_text = " ".join(tokens)
+    # Compute phonetic codes for each token
+    codes = [dmetaphone(t) for t in tokens if dmetaphone(t)]
+    if not codes:
+        return None
+
+    # Build OR conditions: any token's metaphone matches any searchable column's metaphone
+    or_parts: list[str] = []
+    params: list = []
+    idx = 1
+    for code in codes:
+        or_parts.append(
+            f"(dmetaphone(wine_name) = ${idx} "
+            f"OR dmetaphone(winery_name) = ${idx} "
+            f"OR dmetaphone(COALESCE(primary_grape, '')) = ${idx} "
+            f"OR dmetaphone(COALESCE(region, '')) = ${idx})"
+        )
+        params.append(code)
+        idx += 1
+
+    where = " OR ".join(or_parts)
+    params.append(limit)
+
+    sql = f"""
+        SELECT wine_id, winery_name, wine_name, vintage, category,
+               country, region, primary_grape, bottles_stored, drinking_status,
+               price,
+               CASE WHEN format_group_id IS NOT NULL
+                    THEN bottle_format || ' ★'
+                    ELSE bottle_format END AS size,
+               price_per_750ml,
+               tracked_wine_id
+        FROM wines_full
+        WHERE {where}
+        ORDER BY bottles_stored DESC, vintage DESC
+        LIMIT ${idx}
+    """
+    try:
+        df = con.execute(sql, params).fetchdf()
+    except duckdb.Error:
+        return None
+
+    if df.empty:
+        return None
+    header = f"*Phonetic matches for '{query_text}':*\n\n"
+    return header + _to_md(df)
+
+
+def _suggest_names(
+    con: duckdb.DuckDBPyConnection,
+    query: str,
+    limit: int = 5,
+    threshold: float = 0.70,
+) -> list[str]:
+    """Return wine names similar to *query* by JW similarity (lightweight).
+
+    Used internally for "Did you mean …?" suggestions. Skips queries
+    shorter than 4 characters to avoid noise.
+    """
+    if len(query.strip()) < 4:
+        return []
+    sql = """
+        SELECT DISTINCT wine_name,
+               jaro_winkler_similarity(
+                   normalize_quotes(strip_accents(LOWER(wine_name))),
+                   normalize_quotes(strip_accents(LOWER($1)))
+               ) AS sim
+        FROM wines_full
+        WHERE jaro_winkler_similarity(
+                  normalize_quotes(strip_accents(LOWER(wine_name))),
+                  normalize_quotes(strip_accents(LOWER($1)))
+              ) >= $2
+        ORDER BY sim DESC
+        LIMIT $3
+    """
+    try:
+        rows = con.execute(sql, [query, threshold, limit]).fetchall()
+    except duckdb.Error:
+        return []
+    return [row[0] for row in rows]
+
+
+def suggest_wines(
+    con: duckdb.DuckDBPyConnection,
+    query: str,
+    limit: int = 5,
+    threshold: float = 0.70,
+) -> str:
+    """Public autocomplete-style suggestion helper.
+
+    Returns a Markdown-formatted list of similar wine names, or an
+    informational message if none found.
+    """
+    names = _suggest_names(con, query, limit=limit, threshold=threshold)
+    if not names:
+        return f"*No suggestions for '{query}'.*"
+    items = ", ".join(names)
+    return f"*Suggestions for '{query}': {items}*"
+
+
+def find_wine_with_telemetry(
+    con: duckdb.DuckDBPyConnection,
+    query: str,
+    limit: int = 10,
+    fuzzy: bool = False,
+    synonyms: dict[str, str] | None = None,
+    fmt: str = "markdown",
+) -> tuple[str, SearchTelemetry]:
+    """Wrapper around ``find_wine`` that also returns search-path telemetry.
+
+    Returns a tuple of (result_text, SearchTelemetry).
+    """
+    telemetry = SearchTelemetry()
+
+    tokens = query.split()
+    if not tokens:
+        return "*Empty search query.*", telemetry
+    if synonyms:
+        tokens = _normalise_query_tokens(tokens, synonyms)
+
+    intent_conds: list[str] = []
+    ilike_conds: list[str] = []
+    params: list = []
+    param_idx = 1
+
+    intent = _extract_intents(tokens, param_idx)
+    if intent.where_clauses:
+        intent_conds.extend(intent.where_clauses)
+        params.extend(intent.where_params)
+        param_idx += len(intent.where_params)
+        telemetry.intent_matched = True
+
+    remaining_tokens = [t for i, t in enumerate(tokens) if i not in intent.consumed_indices]
+
+    for token in remaining_tokens:
+        lower = token.lower()
+
+        sys = _SYSTEM_CONCEPTS.get(lower)
+        if sys is not None:
+            sql_frag, sys_params = sys
+            intent_conds.append(sql_frag)
+            params.extend(sys_params)
+            param_idx += len(sys_params)
+            telemetry.intent_matched = True
+            continue
+
+        expansions = _CONCEPT_EXPANSIONS.get(lower)
+        search_terms = [token] if expansions is None else [token, *expansions]
+
+        term_groups: list[str] = []
+        for term in search_terms:
+            col_checks = [
+                f"normalize_quotes(strip_accents({col})) ILIKE normalize_quotes(strip_accents(${param_idx}))"
+                for col in _SEARCH_COLS
+            ]
+            col_checks.append(f"CAST(vintage AS VARCHAR) = ${param_idx + 1}")
+            term_groups.append(f"({' OR '.join(col_checks)})")
+            params.append(f"%{term}%")
+            params.append(term)
+            param_idx += 2
+
+        ilike_conds.append(f"({' OR '.join(term_groups)})")
+
+    conditions = intent_conds + ilike_conds
+    if not conditions:
+        return "*Empty search query.*", telemetry
+    where_clause = " AND ".join(conditions)
+    limit_param = f"${param_idx}"
+    params.append(limit)
+
+    order_by = intent.order_by or "bottles_stored DESC, vintage DESC"
+
+    sql = f"""
+        SELECT wine_id, winery_name, wine_name, vintage, category,
+               country, region, primary_grape, bottles_stored, drinking_status,
+               price,
+               CASE WHEN format_group_id IS NOT NULL
+                    THEN bottle_format || ' ★'
+                    ELSE bottle_format END AS size,
+               price_per_750ml,
+               tracked_wine_id
+        FROM wines_full
+        WHERE {where_clause}
+        ORDER BY {order_by}
+        LIMIT {limit_param}
+    """
+    try:
+        df = con.execute(sql, params).fetchdf()
+    except duckdb.Error as exc:
+        raise QueryError(str(exc)) from exc
+
+    if not df.empty:
+        telemetry.result_count = len(df)
+        return _format_df(df, fmt), telemetry
+
+    # --- Soft AND fallback ---
+    if len(ilike_conds) >= 2:
+        df = _find_wine_soft_and(con, intent_conds, ilike_conds, params, param_idx, order_by)
+        if not df.empty:
+            telemetry.used_soft_and = True
+            telemetry.result_count = len(df)
+            header = f"*Partial match for '{query}' (not all terms matched):*\n\n"
+            return header + _format_df(df, fmt), telemetry
+
+    # --- Explicit fuzzy ---
+    if fuzzy and remaining_tokens:
+        telemetry.used_fuzzy = True
+        expanded_query = " ".join(remaining_tokens)
+        result = _find_wine_fuzzy(con, expanded_query, limit)
+        if "No wines found" not in result:
+            telemetry.result_count = result.count("\n|") - 1  # approx rows
+        return result, telemetry
+
+    # --- Implicit fuzzy (high threshold) ---
+    if remaining_tokens:
+        expanded_query = " ".join(remaining_tokens)
+        auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90)
+        if "No wines found" not in auto_result:
+            telemetry.used_fuzzy = True
+            telemetry.result_count = auto_result.count("\n|") - 1
+            return auto_result.replace("*Fuzzy matches", "*Did you mean"), telemetry
+
+    # --- Phonetic fallback ---
+    if remaining_tokens:
+        phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit)
+        if phonetic_result:
+            telemetry.used_phonetic = True
+            telemetry.result_count = phonetic_result.count("\n|") - 1
+            return phonetic_result, telemetry
+
+    # --- Suggestions ---
+    suggestions = _suggest_names(con, query, limit=5, threshold=0.70)
+    if suggestions:
+        telemetry.used_suggestions = True
+        return (f"*No wines found matching '{query}'.*\n\n*Did you mean: {', '.join(suggestions)}?*"), telemetry
+
+    return f"*No wines found matching '{query}'.*", telemetry

@@ -1,62 +1,70 @@
----
+﻿---
 name: cellar-stats
-description: "Cellar overview: bottle counts, values by location, churn, spending, last ETL run, monthly summary."
+description: "Cellar overview: bottle counts, value, regions, aging potential, anomalies."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
 ---
 
 # Cellar Statistics
 
-Provide cellar overviews, per-location breakdowns, monthly summaries, and spending analysis.
+Overview and analysis of cellar composition.
 
 ## Owner Context
 
-- Switzerland, CHF. Multiple storage locations (onsite + offsite).
-- Monthly summary needed on last day of month for discussions with friends.
+Switzerland, CHF. Currency conversion automatic (EUR and USD inputs normalised to CHF).
 
-## Workflow: General Question
+## Monthly Summary Template
 
-1. `cellar_info()` — last ETL run, version, inventory totals
-2. `cellar_stats()` — overview (bottles, wines, value)
-3. Add detail as needed:
-   - By location: `cellar_stats(group_by="cellar")`
-   - By country: `cellar_stats(group_by="country")`
-   - By category: `cellar_stats(group_by="category")`
-   - By vintage: `cellar_stats(group_by="vintage")`
-   - By winery: `cellar_stats(group_by="winery", sort_by="value")`
+Use these steps in order when asked for a cellar overview / monthly summary:
 
-## Workflow: Monthly Summary Template
+### 1. Core Stats
 
-Use when the user asks for a monthly report or cellar overview for friends:
+`cellar_stats()` -- bottles, value, avg price, category/region splits.
 
-1. `cellar_info()` — capture last ETL timestamp
-2. `cellar_stats(group_by="cellar")` — bottles + value per location
-3. `query_cellar("SELECT count(*) AS bottles, sum(price) AS value FROM bottles_stored WHERE cellar_name != 'On Order'")` — total stored value
-4. `query_cellar("SELECT count(*) AS bottles, sum(price) AS value FROM bottles_stored WHERE cellar_name = 'On Order' OR wine_id IN (SELECT wine_id FROM wines_on_order)")` — on-order value
-5. `cellar_churn(period="month")` — this month's purchases vs consumption
+### 2. Bottle Counts by Category
 
-Present as:
-```
-📊 Cellar Summary (Month YYYY)
-- Last data refresh: <timestamp>
-- Stored: X bottles, CHF Y (onsite: A bottles / offsite: B bottles)
-- On order: Z bottles, CHF W
-- This month: +N purchased, -M consumed
-- Locations: <table>
-```
+`sql
+SELECT category, COUNT(*) as bottles, SUM(purchase_price_chf) as total_chf
+FROM wines_full WHERE bottles_stored > 0
+GROUP BY category ORDER BY bottles DESC
+`
 
-## Workflow: Spending / Purchase Questions
+### 3. Regional Distribution
 
-```sql
--- Spending by provider
-SELECT provider_name, count(*) AS bottles, sum(price) AS total
-FROM bottles_full WHERE provider_name IS NOT NULL
-GROUP BY provider_name ORDER BY total DESC
+`sql
+SELECT country, region, COUNT(*) as bottles
+FROM wines_full WHERE bottles_stored > 0
+GROUP BY country, region ORDER BY bottles DESC LIMIT 15
+`
 
--- Recent purchases
-SELECT wine_id, winery_name, wine_name, vintage, purchase_date, price
-FROM bottles_full WHERE purchase_date >= '<date>'
-ORDER BY purchase_date DESC
-```
+### 4. Aging Potential
+
+`sql
+SELECT drinking_status, COUNT(*) as bottles
+FROM wines_full WHERE bottles_stored > 0
+GROUP BY drinking_status
+`
+
+### 5. Recent Additions (last 30 days)
+
+`sql
+SELECT wine_id, winery_name, wine_name, vintage, purchase_price_chf, date_added
+FROM wines_full WHERE date_added >= CURRENT_DATE - INTERVAL 30 DAY
+  AND bottles_stored > 0
+ORDER BY date_added DESC LIMIT 10
+`
+
+### 6. Anomaly Check
+
+`cellar_anomalies()` -- flags wines with missing data, unusual values, stale dossiers.
+
+### 7. Health Check (optional, on request)
+
+`cache_stats()` -- search/query cache hit rates.
+`search_stats()` -- index coverage and query patterns.
+
+## Ad-Hoc Queries
+
+For specific questions ("how many Burgundy?", "total value of Pinot?"), build a SQL query from the `wines_full` view.
 
 ## Tools
 
@@ -66,7 +74,11 @@ ORDER BY purchase_date DESC
 | `cellar_stats` | Summary or grouped breakdown (10 dimensions) |
 | `cellar_churn` | Monthly/yearly roll-forward (begin + purchased − consumed = end) |
 | `query_cellar` | Custom SQL for specific questions |
+| `cellar_anomalies` | Data quality flags |
+| `cache_stats` | Cache hit/miss rates |
+| `search_stats` | Search index coverage |
 
 ## Output Format
 
 Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
+

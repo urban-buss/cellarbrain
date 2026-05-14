@@ -243,6 +243,47 @@ SCHEMAS: dict[str, pa.Schema] = {
             ("notes", pa.string(), True),
         ]
     ),
+    "promotion_match": pa.schema(
+        [
+            ("match_id", pa.int32(), False),
+            ("scan_time", pa.timestamp("us"), False),
+            ("retailer_id", pa.string(), False),
+            ("wine_name", pa.string(), False),
+            ("producer", pa.string(), False),
+            ("vintage", pa.int16(), True),
+            ("sale_price", pa.decimal128(8, 2), False),
+            ("currency", pa.string(), False),
+            ("original_price", pa.decimal128(8, 2), True),
+            ("discount_pct", pa.float64(), True),
+            ("match_type", pa.string(), False),
+            ("match_category", pa.string(), False),
+            ("confidence", pa.float64(), False),
+            ("wine_id", pa.int32(), True),
+            ("matched_wine_name", pa.string(), True),
+            ("bottles_owned", pa.int32(), False),
+            ("reference_price", pa.decimal128(8, 2), True),
+            ("discount_vs_reference", pa.float64(), True),
+            ("similar_to_wine_id", pa.int32(), True),
+            ("similarity_score", pa.float64(), True),
+            ("value_score", pa.float64(), False),
+            ("gap_dimension", pa.string(), True),
+            ("gap_detail", pa.string(), True),
+        ]
+    ),
+    "research_completeness": pa.schema(
+        [
+            ("wine_id", pa.int32(), False),
+            ("score", pa.int8(), False),
+            ("populated_count", pa.int8(), False),
+            ("pending_count", pa.int8(), False),
+            ("fresh_count", pa.int8(), False),
+            ("stale_count", pa.int8(), False),
+            ("has_food_tags", pa.bool_(), False),
+            ("has_food_groups", pa.bool_(), False),
+            ("has_pro_ratings", pa.bool_(), False),
+            ("computed_at", pa.timestamp("us"), False),
+        ]
+    ),
 }
 
 

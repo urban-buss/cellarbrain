@@ -502,6 +502,11 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
         con.execute(f"CREATE VIEW wine AS SELECT * FROM read_parquet('{_pq(output_dir, 'wine')}')")
         con.execute(f"CREATE VIEW bottle AS SELECT * FROM read_parquet('{_pq(output_dir, 'bottle')}')")
 
+        cellar_pq = output_dir / "cellar.parquet"
+        has_cellar = cellar_pq.exists()
+        if has_cellar:
+            con.execute(f"CREATE VIEW cellar AS SELECT * FROM read_parquet('{_pq(output_dir, 'cellar')}')")
+
         tracked_pq = output_dir / "tracked_wine.parquet"
         has_tracked = tracked_pq.exists()
         if has_tracked:
@@ -515,11 +520,14 @@ def check_dossier_integrity(output_dir: Path) -> list[CheckResult]:
 
         # Wines with at least one stored bottle (for routing check)
         wines_with_stored = set()
-        stored_rows = con.execute(
-            "SELECT DISTINCT b.wine_id FROM bottle b"
-            " LEFT JOIN cellar c ON b.cellar_id = c.cellar_id"
-            " WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') != 'in_transit'"
-        ).fetchall()
+        if has_cellar:
+            stored_rows = con.execute(
+                "SELECT DISTINCT b.wine_id FROM bottle b"
+                " LEFT JOIN cellar c ON b.cellar_id = c.cellar_id"
+                " WHERE b.status = 'stored' AND COALESCE(c.location_type, 'onsite') != 'in_transit'"
+            ).fetchall()
+        else:
+            stored_rows = con.execute("SELECT DISTINCT wine_id FROM bottle WHERE status = 'stored'").fetchall()
         for r in stored_rows:
             wines_with_stored.add(r[0])
 

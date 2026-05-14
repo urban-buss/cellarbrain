@@ -1,0 +1,21 @@
+{% if in_list %}
+<button type="button" class="outline contrast"
+        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+        hx-post="/drink-tonight/remove"
+        hx-vals='{"wine_id": "{{ wine_id }}"}'
+        hx-target="this" hx-swap="outerHTML"
+        data-drink-tonight-remove="{{ wine_id }}"
+        title="Remove from tonight&apos;s shortlist">
+    ★ In Tonight
+</button>
+{% else %}
+<button type="button" class="outline secondary"
+        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+        hx-post="/drink-tonight/add"
+        hx-vals='{"wine_id": "{{ wine_id }}"}'
+        hx-target="this" hx-swap="outerHTML"
+        data-drink-tonight-add="{{ wine_id }}"
+        title="Add to tonight&apos;s shortlist">
+    + Tonight
+</button>
+{% endif %}

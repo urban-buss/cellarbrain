@@ -44,6 +44,9 @@ from .dossier_ops import (
     read_dossier_sections as _read_dossier_sections,
 )
 from .dossier_ops import (
+    stale_research as _stale_research,
+)
+from .dossier_ops import (
     update_companion_dossier as _update_companion,
 )
 from .dossier_ops import (
@@ -89,6 +92,16 @@ def _load_mcp_settings() -> Settings:
             "MCP server starting â€” data_dir=%s",
             _mcp_settings.paths.data_dir,
         )
+        from .migrate import CURRENT_VERSION, read_schema_version
+
+        _schema_ver = read_schema_version(pathlib.Path(_mcp_settings.paths.data_dir))
+        if _schema_ver < CURRENT_VERSION:
+            logger.warning(
+                "Schema version %d < %d - some queries may fail. Run `cellarbrain migrate` to update.",
+                _schema_ver,
+                CURRENT_VERSION,
+            )
+
         from .observability import init_observability
 
         collector = init_observability(
@@ -126,18 +139,57 @@ _mcp_settings: Settings | None = None
 
 
 # ---------------------------------------------------------------------------
+# Query-result cache — memoises expensive read-only tool results.
+# Invalidated on ETL reload via invalidate_connections().
+# ---------------------------------------------------------------------------
+
+from .query_cache import QueryCache  # noqa: E402
+
+_query_cache = QueryCache(max_size=128)
+
+
+def _init_query_cache() -> None:
+    """Re-initialise cache with current settings (call after settings load)."""
+    global _query_cache
+    settings = _load_mcp_settings()
+    if not settings.cache.enabled:
+        _query_cache = QueryCache(max_size=0)
+    else:
+        _query_cache = QueryCache(
+            max_size=settings.cache.max_size,
+            ttl_seconds=settings.cache.ttl_seconds,
+        )
+
+
+# ---------------------------------------------------------------------------
 # DuckDB connection caching — avoids per-call view creation overhead.
 # Call invalidate_connections() after data changes (ETL reload).
 # ---------------------------------------------------------------------------
 
 _cached_connection: duckdb.DuckDBPyConnection | None = None
 _cached_agent_connection: duckdb.DuckDBPyConnection | None = None
+_parquet_fingerprint: float | None = None  # max mtime of parquet files
+
+
+def _compute_parquet_fingerprint() -> float:
+    """Return the max mtime of parquet files in data_dir (0.0 if none)."""
+    data_dir = pathlib.Path(_data_dir())
+    try:
+        mtimes = [f.stat().st_mtime for f in data_dir.glob("*.parquet")]
+        return max(mtimes) if mtimes else 0.0
+    except OSError:
+        return 0.0
 
 
 def _get_connection():
-    global _cached_connection
+    global _cached_connection, _parquet_fingerprint
+    current_fp = _compute_parquet_fingerprint()
+    if _cached_connection is not None and _parquet_fingerprint != current_fp:
+        # Parquet files changed — invalidate everything
+        invalidate_connections()
     if _cached_connection is None:
         _cached_connection = q.get_connection(_data_dir())
+        _parquet_fingerprint = current_fp
     return _cached_connection
 
 
@@ -150,17 +202,19 @@ def _get_agent_connection():
 
 
 def invalidate_connections() -> None:
-    """Close and discard cached DuckDB connections.
+    """Close and discard cached DuckDB connections and query cache.
 
     Called after ETL reload so the next query picks up fresh Parquet data.
     """
-    global _cached_connection, _cached_agent_connection
+    global _cached_connection, _cached_agent_connection, _parquet_fingerprint
     if _cached_connection is not None:
         _cached_connection.close()
         _cached_connection = None
     if _cached_agent_connection is not None:
         _cached_agent_connection.close()
         _cached_agent_connection = None
+    _parquet_fingerprint = None
+    _query_cache.invalidate()
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +310,37 @@ def _effective_rates() -> dict[str, float]:
     return base
 
 
+def _record_search_event(query: str, telemetry: object) -> None:
+    """Record a search event to the observability log store."""
+    from .observability import SearchEvent, get_collector
+
+    collector = get_collector()
+    if collector is None:
+        return
+
+    import uuid
+    from datetime import datetime
+
+    now = datetime.now(UTC)
+    event = SearchEvent(
+        event_id=uuid.uuid4().hex,
+        session_id=collector.session_id,
+        turn_id=collector.turn_id,
+        query=query,
+        normalized_query=query.lower().strip(),
+        result_count=getattr(telemetry, "result_count", 0),
+        intent_matched=getattr(telemetry, "intent_matched", False),
+        used_soft_and=getattr(telemetry, "used_soft_and", False),
+        used_fuzzy=getattr(telemetry, "used_fuzzy", False),
+        used_phonetic=getattr(telemetry, "used_phonetic", False),
+        used_suggestions=getattr(telemetry, "used_suggestions", False),
+        started_at=now,
+        duration_ms=0.0,  # timing captured at tool level by _log_tool
+        client_id=None,
+    )
+    collector.record_search(event)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -275,6 +360,7 @@ def _build_event(
     exc: BaseException | None,
 ) -> None:
     """Construct a ToolEvent and emit it to the collector."""
+    from .mcp_responses import ToolResponse, data_size
     from .observability import ToolEvent, get_collector
 
     collector = get_collector()
@@ -312,6 +398,14 @@ def _build_event(
         error_type = None
         error_message = None
 
+    # Extract structured payload metadata from ToolResponse
+    resp_data_size = data_size(result) if isinstance(result, str) else None
+    resp_metadata_keys: str | None = None
+    resp_cache_hit: bool | None = None
+    if isinstance(result, ToolResponse) and result.metadata:
+        resp_metadata_keys = ",".join(sorted(result.metadata.keys()))
+        resp_cache_hit = result.metadata.get("cache_hit")
+
     event = ToolEvent(
         event_id=uuid.uuid4().hex,
         session_id=collector.session_id,
@@ -330,6 +424,9 @@ def _build_event(
         agent_name=meta.get("agent_name"),
         trace_id=meta.get("trace_id"),
         client_id=meta.get("client_id"),
+        data_size=resp_data_size,
+        metadata_keys=resp_metadata_keys,
+        cache_hit=resp_cache_hit,
     )
     collector.emit(event)
 
@@ -439,12 +536,75 @@ def _log_prompt(fn):
 
 
 # ---------------------------------------------------------------------------
+# Unified registration decorators — combine logging + wire conversion + FastMCP
+# ---------------------------------------------------------------------------
+
+
+def _tool(name: str | None = None, **tool_kwargs):
+    """Register an MCP tool with logging, ToolResponse wire conversion, and FastMCP.
+
+    Returns the *logged* function so that direct calls in tests get a
+    ToolResponse/str.  FastMCP receives a wrapper that converts
+    ToolResponse → CallToolResult on the wire.
+
+    Structured output validation is disabled (structured_output=False) because
+    our tools return CallToolResult with custom structuredContent that doesn't
+    match the auto-generated output model the MCP library would derive from
+    the ``-> str`` return annotation.
+    """
+
+    def decorator(fn):
+        from .mcp_responses import to_call_tool_result
+
+        logged_fn = _log_tool(fn)
+
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def wire_wrapper(*args, **kwargs):
+                result = await logged_fn(*args, **kwargs)
+                return to_call_tool_result(result)
+        else:
+
+            @functools.wraps(fn)
+            def wire_wrapper(*args, **kwargs):
+                result = logged_fn(*args, **kwargs)
+                return to_call_tool_result(result)
+
+        mcp.add_tool(wire_wrapper, name=name, structured_output=False, **tool_kwargs)
+        return logged_fn
+
+    return decorator
+
+
+def _resource(uri: str, **resource_kwargs):
+    """Register an MCP resource with logging and FastMCP."""
+
+    def decorator(fn):
+        logged_fn = _log_resource(fn)
+        mcp.resource(uri, **resource_kwargs)(logged_fn)
+        return logged_fn
+
+    return decorator
+
+
+def _prompt(**prompt_kwargs):
+    """Register an MCP prompt with logging and FastMCP."""
+
+    def decorator(fn):
+        logged_fn = _log_prompt(fn)
+        mcp.prompt(**prompt_kwargs)(logged_fn)
+        return logged_fn
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
 # Tools â€” 16 thin data primitives
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def query_cellar(sql: str, format: str | None = None, meta: dict | None = None) -> str:
     """Run a read-only SQL query against the wine cellar database.
 
@@ -497,15 +657,17 @@ def query_cellar(sql: str, format: str | None = None, meta: dict | None = None) 
     Args:
         sql: A DuckDB-compatible SQL SELECT statement.
     """
+    from .mcp_responses import ToolResponse
+
     try:
         con = _get_agent_connection()
-        return q.execute_query(con, sql, row_limit=_load_mcp_settings().query.row_limit, fmt=_effective_fmt(format))
+        text, data = q.execute_query_structured(con, sql, row_limit=_load_mcp_settings().query.row_limit)
+        return ToolResponse(text, data=data, metadata={"row_count": data["row_count"]})
     except (QueryError, DataStaleError) as exc:
-        return f"Error: {exc}"
+        return ToolResponse.error(str(exc))
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def cellar_stats(
     group_by: str | None = None,
     limit: int = 20,
@@ -530,22 +692,26 @@ def cellar_stats(
                   Ignored when group_by is omitted.
         format:   Output format: "markdown" (default) or "plain" (no tables, iMessage-friendly).
     """
+    from .mcp_responses import ToolResponse
+
     try:
         con = _get_connection()
-        return q.cellar_stats(
-            con,
-            group_by=group_by,
-            currency=_load_mcp_settings().currency.default,
-            limit=limit,
-            sort_by=sort_by,
-            fmt=_effective_fmt(format),
-        )
+        currency = _load_mcp_settings().currency.default
+        cache_params = {"group_by": group_by, "limit": limit, "sort_by": sort_by, "currency": currency}
+
+        def _compute():
+            return q.cellar_stats(
+                con, group_by=group_by, currency=currency, limit=limit, sort_by=sort_by, fmt=_effective_fmt(format)
+            )
+
+        text, cache_hit = _query_cache.get_or_compute("cellar_stats", cache_params, _compute)
+        data = {"group_by": group_by, "currency": currency}
+        return ToolResponse(text, data=data, metadata={"cache_hit": cache_hit})
     except (ValueError, DataStaleError) as exc:
-        return f"Error: {exc}"
+        return ToolResponse.error(str(exc))
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def cellar_churn(
     period: str | None = None,
     year: int | None = None,
@@ -589,8 +755,72 @@ def cellar_churn(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
+def consumption_velocity(
+    months: int = 6,
+    meta: dict | None = None,
+) -> str:
+    """Get consumption velocity analysis — acquisition vs consumption rates.
+
+    Shows month-by-month bottles acquired and consumed, average rates,
+    net cellar growth per month, and a 12-month projection of cellar size.
+
+    Use this to understand whether the cellar is growing or shrinking,
+    and at what pace.
+
+    Args:
+        months: Number of past months to analyse (default 6, max 60).
+                The current (incomplete) month is excluded.
+    """
+    from .mcp_responses import ToolResponse
+
+    if months < 1 or months > 60:
+        return ToolResponse.error("months must be between 1 and 60.")
+
+    try:
+        con = _get_connection()
+        text, data = q.consumption_velocity(con, months=months, currency=_load_mcp_settings().currency.default)
+        return ToolResponse(text, data=data, metadata={"months": months})
+    except (ValueError, DataStaleError) as exc:
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def cellar_gaps(
+    dimension: str | None = None,
+    months: int = 12,
+    meta: dict | None = None,
+) -> str:
+    """Identify underrepresented categories (gaps) in the cellar.
+
+    Analyses the cellar across four dimensions to find areas that may
+    need attention or restocking:
+
+    - **region**: Regions consumed frequently but with 0-1 bottles remaining.
+    - **grape**: Grape varieties with bottles stored but none in a
+      drinkable window for the next 12 months.
+    - **price_tier**: Price tiers with stored bottles but no ready-to-drink
+      options tonight.
+    - **vintage**: Aging-worthy categories (red, fortified) with empty
+      vintage decades.
+
+    Args:
+        dimension: Analyse a single dimension — one of "region", "grape",
+                   "price_tier", "vintage". If omitted, returns all four.
+        months: Lookback months for consumption frequency inference
+                (default 12, max 60). Used by the region dimension.
+    """
+    from .mcp_responses import ToolResponse
+
+    try:
+        con = _get_connection()
+        text, data = q.cellar_gaps(con, dimension=dimension, months=months)
+        return ToolResponse(text, data=data, metadata={"dimension": dimension, "months": months})
+    except (ValueError, DataStaleError) as exc:
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
 def cellar_info(verbose: bool = False, meta: dict | None = None) -> str:
     """Return general information about this cellar installation.
 
@@ -720,11 +950,18 @@ def cellar_info(verbose: bool = False, meta: dict | None = None) -> str:
         for code, rate in sorted(s.currency.rates.items()):
             lines.append(f"| {code} | {rate} |")
 
-    return "\n".join(lines)
+    from .mcp_responses import ToolResponse
+
+    text = "\n".join(lines)
+    data = {
+        "version": version,
+        "data_dir": s.paths.data_dir,
+        "currency": s.currency.default,
+    }
+    return ToolResponse(text, data=data)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def find_wine(
     query: str, limit: int | None = None, fuzzy: bool = False, format: str | None = None, meta: dict | None = None
 ) -> str:
@@ -773,12 +1010,32 @@ def find_wine(
         limit: Maximum results to return.
         fuzzy: Enable fuzzy matching for typo tolerance (slower, off by default).
     """
+    from .mcp_responses import ToolResponse
+
     try:
         con = _get_agent_connection()
         effective_limit = limit if limit is not None else _load_mcp_settings().query.search_limit
         if effective_limit < 1:
-            return "Error: limit must be at least 1."
-        return q.find_wine(
+            return ToolResponse.error("limit must be at least 1.")
+
+        cache_params = {"query": query, "limit": effective_limit, "fuzzy": fuzzy}
+        cache_key = _query_cache.make_key("find_wine", cache_params)
+        found, cached = _query_cache.get(cache_key)
+        if found:
+            result_text, telemetry_data = cached
+            _record_search_event(query, telemetry_data)
+            data = {
+                "query": query,
+                "result_count": telemetry_data.result_count,
+                "used_fuzzy": telemetry_data.used_fuzzy,
+                "used_phonetic": telemetry_data.used_phonetic,
+                "used_soft_and": telemetry_data.used_soft_and,
+            }
+            return ToolResponse(
+                result_text, data=data, metadata={"row_count": telemetry_data.result_count, "cache_hit": True}
+            )
+
+        result, telemetry = q.find_wine_with_telemetry(
             con,
             query,
             limit=effective_limit,
@@ -786,12 +1043,132 @@ def find_wine(
             synonyms=_effective_synonyms(),
             fmt=_effective_fmt(format),
         )
+        _query_cache.put(cache_key, (result, telemetry))
+        _record_search_event(query, telemetry)
+        data = {
+            "query": query,
+            "result_count": telemetry.result_count,
+            "used_fuzzy": telemetry.used_fuzzy,
+            "used_phonetic": telemetry.used_phonetic,
+            "used_soft_and": telemetry.used_soft_and,
+        }
+        return ToolResponse(result, data=data, metadata={"row_count": telemetry.result_count, "cache_hit": False})
+    except (QueryError, DataStaleError) as exc:
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def wine_suggestions(query: str, limit: int = 5, meta: dict | None = None) -> str:
+    """Suggest wine names similar to the query (autocomplete / "did you mean").
+
+    Uses Jaro-Winkler similarity to find wine names that are close to the
+    search term. Useful when a search returns no results and you want to
+    offer alternatives to the user.
+
+    Args:
+        query: The search term to find suggestions for.
+        limit: Maximum number of suggestions to return (default 5).
+    """
+    try:
+        con = _get_agent_connection()
+        settings = _load_mcp_settings()
+        threshold = settings.search.suggest_threshold
+        return q.suggest_wines(con, query, limit=limit, threshold=threshold)
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
+def search_stats(window_days: int = 7, limit: int = 20, meta: dict | None = None) -> str:
+    """Show search query statistics from the observability log.
+
+    Returns tables of: top queries, zero-result queries, fuzzy/phonetic
+    rescued queries, and average search latency over the specified window.
+
+    Args:
+        window_days: Number of days to look back (default 7).
+        limit: Maximum rows per table (default 20).
+    """
+    from .observability import get_collector
+
+    collector = get_collector()
+    if collector is None:
+        return "Error: observability not initialised."
+    if collector._db is None:
+        return "Error: log store not available."
+    collector.flush()
+    db = collector._db
+    try:
+        # Top queries
+        top_df = db.execute(
+            f"SELECT normalized_query AS query, COUNT(*) AS count, "
+            f"ROUND(AVG(result_count), 1) AS avg_results "
+            f"FROM search_events "
+            f"WHERE started_at >= now() - INTERVAL '{window_days} days' "
+            f"GROUP BY normalized_query ORDER BY count DESC LIMIT {limit}"
+        ).fetchdf()
+        # Zero-result queries
+        zero_df = db.execute(
+            f"SELECT normalized_query AS query, COUNT(*) AS count "
+            f"FROM search_events "
+            f"WHERE started_at >= now() - INTERVAL '{window_days} days' "
+            f"AND result_count = 0 "
+            f"GROUP BY normalized_query ORDER BY count DESC LIMIT {limit}"
+        ).fetchdf()
+        # Fuzzy/phonetic rescued
+        rescued_df = db.execute(
+            f"SELECT normalized_query AS query, "
+            f"CASE WHEN used_phonetic THEN 'phonetic' "
+            f"WHEN used_fuzzy THEN 'fuzzy' "
+            f"WHEN used_soft_and THEN 'soft-and' END AS rescue_type, "
+            f"result_count "
+            f"FROM search_events "
+            f"WHERE started_at >= now() - INTERVAL '{window_days} days' "
+            f"AND (used_fuzzy OR used_phonetic OR used_soft_and) "
+            f"ORDER BY started_at DESC LIMIT {limit}"
+        ).fetchdf()
+        # Summary stats
+        summary = db.execute(
+            f"SELECT COUNT(*) AS total_searches, "
+            f"ROUND(AVG(duration_ms), 1) AS avg_latency_ms, "
+            f"SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END) AS zero_result_count, "
+            f"SUM(CASE WHEN used_fuzzy THEN 1 ELSE 0 END) AS fuzzy_rescues, "
+            f"SUM(CASE WHEN used_phonetic THEN 1 ELSE 0 END) AS phonetic_rescues "
+            f"FROM search_events "
+            f"WHERE started_at >= now() - INTERVAL '{window_days} days'"
+        ).fetchone()
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    parts = [f"## Search Statistics (last {window_days} days)\n"]
+    if summary:
+        parts.append(
+            f"**Total searches:** {summary[0]} | "
+            f"**Avg latency:** {summary[1]} ms | "
+            f"**Zero-result:** {summary[2]} | "
+            f"**Fuzzy rescues:** {summary[3]} | "
+            f"**Phonetic rescues:** {summary[4]}\n"
+        )
+    if not top_df.empty:
+        parts.append("\n### Top Queries\n")
+        parts.append(_to_md_table(top_df))
+    if not zero_df.empty:
+        parts.append("\n### Zero-Result Queries\n")
+        parts.append(_to_md_table(zero_df))
+    if not rescued_df.empty:
+        parts.append("\n### Rescued Queries (fuzzy/phonetic/soft-and)\n")
+        parts.append(_to_md_table(rescued_df))
+    return "\n".join(parts)
+
+
+def _to_md_table(df) -> str:
+    """Convert a pandas DataFrame to a Markdown table."""
+    from tabulate import tabulate
+
+    return tabulate(df, headers="keys", tablefmt="pipe", showindex=False)
+
+
+@_tool()
 def read_dossier(
     wine_id: int,
     sections: list[str] | None = None,
@@ -819,13 +1196,14 @@ def read_dossier(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def update_dossier(
     wine_id: int,
     section: str,
     content: str,
     agent_name: str = "research",
+    sources: list[str] | None = None,
+    confidence: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Update an agent-owned section in a wine dossier.
@@ -849,15 +1227,24 @@ def update_dossier(
         section: Section key to update (see allowed list above).
         content: Markdown content to write into the section.
         agent_name: Name of the agent making the update (for audit trail).
+        sources: Optional list of source URLs/names used for the research.
+        confidence: Optional confidence level (e.g. "high", "medium", "low").
     """
     try:
-        return _update_dossier(wine_id, section, content, _data_dir(), agent_name)
+        return _update_dossier(
+            wine_id,
+            section,
+            content,
+            _data_dir(),
+            agent_name,
+            sources=sources,
+            confidence=confidence,
+        )
     except (WineNotFoundError, ProtectedSectionError, ValueError) as exc:
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def get_format_siblings(wine_id: int, meta: dict | None = None) -> str:
     """Get format siblings for a wine (e.g. Standard + Magnum of the same wine).
 
@@ -877,13 +1264,52 @@ def get_format_siblings(wine_id: int, meta: dict | None = None) -> str:
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
+def similar_wines(
+    wine_id: int,
+    limit: int = 5,
+    include_gone: bool = False,
+    meta: dict | None = None,
+) -> str:
+    """Find wines similar to a given wine based on structural attributes.
+
+    Uses 6-signal weighted scoring: winery affinity, region/appellation,
+    grape composition overlap, category match, price tier adjacency, and
+    food group overlap. Returns a ranked Markdown table with scores and
+    human-readable match signals explaining why each wine is similar.
+
+    Results are capped at 2 per winery for diversity. Format siblings are
+    excluded (use get_format_siblings for those). Minimum score threshold: 0.15.
+
+    Args:
+        wine_id: The target wine to find similar wines for.
+        limit: Maximum similar wines to return (default 5, max 20).
+        include_gone: Include wines with no bottles stored (default False).
+    """
+    try:
+        from . import similarity as _sim
+
+        con = _get_agent_connection()
+        effective_limit = min(max(limit, 1), 20)
+        return _sim.similar_wines(
+            con,
+            wine_id,
+            _data_dir(),
+            limit=effective_limit,
+            include_gone=include_gone,
+        )
+    except (QueryError, DataStaleError) as exc:
+        return f"Error: {exc}"
+
+
+@_tool()
 def batch_update_dossier(
     wine_ids: list[int],
     section: str,
     content: str,
     agent_name: str = "research",
+    sources: list[str] | None = None,
+    confidence: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Update an agent-owned dossier section for multiple wines at once.
@@ -897,13 +1323,23 @@ def batch_update_dossier(
         section: Section key to update (same as update_dossier).
         content: Markdown content to write into the section.
         agent_name: Name of the agent making the update.
+        sources: Optional list of source URLs/names used for the research.
+        confidence: Optional confidence level (e.g. "high", "medium", "low").
     """
     data_dir = _data_dir()
     results: list[str] = []
     ok_count = 0
     for wid in wine_ids:
         try:
-            _update_dossier(wid, section, content, data_dir, agent_name)
+            _update_dossier(
+                wid,
+                section,
+                content,
+                data_dir,
+                agent_name,
+                sources=sources,
+                confidence=confidence,
+            )
             ok_count += 1
             results.append(f"  ✓ Wine {wid}")
         except (WineNotFoundError, ProtectedSectionError, ValueError) as exc:
@@ -912,8 +1348,7 @@ def batch_update_dossier(
     return summary + "\n" + "\n".join(results)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def reload_data(mode: str = "sync", meta: dict | None = None) -> str:
     """Trigger a reload of the wine cellar data from CSV exports.
 
@@ -936,13 +1371,19 @@ def reload_data(mode: str = "sync", meta: dict | None = None) -> str:
     bottles_gone_csv = os.path.join(raw_dir, settings.paths.bottles_gone_filename)
 
     if not os.path.exists(wines_csv):
-        return f"Error: CSV file not found: {wines_csv}. Export from your cellar app first."
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(f"CSV file not found: {wines_csv}. Export from your cellar app first.")
 
     if not os.path.exists(bottles_csv):
-        return f"Error: CSV file not found: {bottles_csv}. Export from your cellar app first."
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(f"CSV file not found: {bottles_csv}. Export from your cellar app first.")
 
     if not os.path.exists(bottles_gone_csv):
-        return f"Error: CSV file not found: {bottles_gone_csv}. Export from your cellar app first."
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(f"CSV file not found: {bottles_gone_csv}. Export from your cellar app first.")
 
     try:
         # Reconfigure stdout to handle Unicode on Windows (MCP stdio transport
@@ -963,14 +1404,24 @@ def reload_data(mode: str = "sync", meta: dict | None = None) -> str:
             settings=_load_mcp_settings(),
         )
         invalidate_connections()
-        return f"ETL completed ({'passed' if ok else 'failed validation'}). Mode: {mode}."
+        from .mcp_responses import ToolResponse
+
+        text = f"ETL completed ({'passed' if ok else 'failed validation'}). Mode: {mode}."
+        return ToolResponse(text, data={"mode": mode, "ok": ok})
     except (ValueError, FileNotFoundError, UnicodeDecodeError, UnicodeEncodeError, OSError) as exc:
-        return f"Error running ETL: {exc}"
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(f"running ETL: {exc}")
 
 
-@mcp.tool()
-@_log_tool
-def pending_research(limit: int | None = None, section: str | None = None, meta: dict | None = None) -> str:
+@_tool()
+def pending_research(
+    limit: int | None = None,
+    section: str | None = None,
+    include_stale: bool = False,
+    stale_months: int = 6,
+    meta: dict | None = None,
+) -> str:
     """List wines that have pending agent sections to research.
 
     Scans per-vintage wine dossier frontmatter for agent_sections_pending
@@ -986,11 +1437,38 @@ def pending_research(limit: int | None = None, section: str | None = None, meta:
             "food_pairings", "similar_wines", "market_availability").
     """
     effective_limit = limit if limit is not None else _load_mcp_settings().query.pending_limit
-    return _pending_research(_data_dir(), limit=effective_limit, section=section)
+    return _pending_research(
+        _data_dir(),
+        limit=effective_limit,
+        section=section,
+        include_stale=include_stale,
+        stale_months=stale_months,
+    )
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
+def stale_research(
+    months: int = 6,
+    limit: int = 20,
+    section: str | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Find dossier sections where research is older than a threshold.
+
+    Scans populated agent sections for the ``<!-- research-meta: ... -->``
+    comment and reports those with a date older than *months* months.
+    Sections without research metadata are ignored (use ``pending_research``
+    for sections that have never been researched).
+
+    Args:
+        months: Age threshold in months (default 6).
+        limit: Maximum results to return.
+        section: Optional filter — only check this specific section key.
+    """
+    return _stale_research(_data_dir(), months=months, limit=limit, section=section)
+
+
+@_tool()
 def pending_companion_research(limit: int | None = None, meta: dict | None = None) -> str:
     """List tracked wines that have pending companion dossier sections.
 
@@ -1004,8 +1482,103 @@ def pending_companion_research(limit: int | None = None, meta: dict | None = Non
     return _pending_companion(_data_dir(), limit=effective_limit)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
+def research_completeness(
+    wine_id: int | None = None,
+    limit: int = 50,
+    sort: str = "score_asc",
+    min_score: int | None = None,
+    max_score: int | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Get research completeness scores for wines in the cellar.
+
+    Scores range from 0 (no research) to 100 (fully researched, fresh,
+    with food tags and pro ratings). Components:
+    - Section population (50 pts): 8 research sections
+    - Research freshness (20 pts): populated sections with recent metadata
+    - Food data (15 pts): food_tags (10) + food_groups (5)
+    - Pro ratings (15 pts): at least one professional rating
+
+    Queryable via SQL: ``SELECT * FROM wines_completeness ORDER BY completeness_score``.
+
+    Args:
+        wine_id: Optional — return score for a single wine only.
+        limit: Maximum wines to return (default 50).
+        sort: Sort order. "score_asc" (least complete first, default),
+              "score_desc" (most complete first).
+        min_score: Optional minimum score filter (inclusive).
+        max_score: Optional maximum score filter (inclusive).
+    """
+    from .mcp_responses import ToolResponse
+
+    try:
+        con = _get_agent_connection()
+        # Check if view exists
+        views = [
+            r[0]
+            for r in con.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+            ).fetchall()
+        ]
+        if "wines_completeness" not in views:
+            return ToolResponse.error(
+                "Research completeness data not available. Run 'cellarbrain etl' or 'cellarbrain recalc' first."
+            )
+
+        # Build query
+        conditions: list[str] = []
+        if wine_id is not None:
+            conditions.append(f"wine_id = {int(wine_id)}")
+        if min_score is not None:
+            conditions.append(f"completeness_score >= {int(min_score)}")
+        if max_score is not None:
+            conditions.append(f"completeness_score <= {int(max_score)}")
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        order = "completeness_score ASC" if sort == "score_asc" else "completeness_score DESC"
+        sql = f"SELECT * FROM wines_completeness{where} ORDER BY {order} LIMIT {int(limit)}"
+
+        result = con.execute(sql).fetchdf()
+        if result.empty:
+            return ToolResponse("*No wines match the given criteria.*")
+
+        # Format as Markdown table
+        lines = [
+            "| wine_id | Wine | Vintage | Score | Pop | Pend | Fresh | Stale | Tags | Groups | Pro |",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for _, row in result.iterrows():
+            lines.append(
+                f"| {row['wine_id']} "
+                f"| {row['wine_name'] or '—'} "
+                f"| {row['vintage'] or 'NV'} "
+                f"| {row['completeness_score']}% "
+                f"| {row['populated_count']}/8 "
+                f"| {row['pending_count']} "
+                f"| {row['fresh_count']} "
+                f"| {row['stale_count']} "
+                f"| {'✓' if row['has_food_tags'] else '✗'} "
+                f"| {'✓' if row['has_food_groups'] else '✗'} "
+                f"| {'✓' if row['has_pro_ratings'] else '✗'} |"
+            )
+
+        # Add summary
+        avg_score = result["completeness_score"].mean()
+        total = len(result)
+        lines.append("")
+        lines.append(f"**Summary:** {total} wines shown, average score {avg_score:.0f}%")
+
+        text = "\n".join(lines)
+        data = {"wine_count": total, "avg_score": round(float(avg_score), 1)}
+        return ToolResponse(text, data=data)
+    except (QueryError, DataStaleError) as exc:
+        from .mcp_responses import ToolResponse as TR
+
+        return TR.error(str(exc))
+
+
+@_tool()
 def read_companion_dossier(
     tracked_wine_id: int,
     sections: list[str] | None = None,
@@ -1028,12 +1601,14 @@ def read_companion_dossier(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def update_companion_dossier(
     tracked_wine_id: int,
     section: str,
     content: str,
+    agent_name: str = "research",
+    sources: list[str] | None = None,
+    confidence: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Update an agent-owned section in a companion dossier.
@@ -1048,15 +1623,25 @@ def update_companion_dossier(
         tracked_wine_id: The numeric tracked wine ID.
         section: Section key to update (see allowed list above).
         content: Markdown content to write into the section.
+        agent_name: Name of the agent making the update.
+        sources: Optional list of source URLs/names used for the research.
+        confidence: Optional confidence level (e.g. "high", "medium", "low").
     """
     try:
-        return _update_companion(tracked_wine_id, section, content, _data_dir())
+        return _update_companion(
+            tracked_wine_id,
+            section,
+            content,
+            _data_dir(),
+            agent_name=agent_name,
+            sources=sources,
+            confidence=confidence,
+        )
     except (TrackedWineNotFoundError, ProtectedSectionError, ValueError) as exc:
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def list_companion_dossiers(pending_only: bool = False, meta: dict | None = None) -> str:
     """List companion dossiers for tracked wines.
 
@@ -1087,8 +1672,7 @@ def list_companion_dossiers(pending_only: bool = False, meta: dict | None = None
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def log_price(
     tracked_wine_id: int,
     bottle_size_ml: int,
@@ -1141,8 +1725,7 @@ def log_price(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def tracked_wine_prices(
     tracked_wine_id: int,
     vintage: int | None = None,
@@ -1169,8 +1752,7 @@ def tracked_wine_prices(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def price_history(
     tracked_wine_id: int,
     vintage: int | None = None,
@@ -1201,8 +1783,7 @@ def price_history(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def wishlist_alerts(days: int | None = None, format: str | None = None, meta: dict | None = None) -> str:
     """Get current wishlist alerts â€” price drops, new listings, back in stock, etc.
 
@@ -1223,8 +1804,7 @@ def wishlist_alerts(days: int | None = None, format: str | None = None, meta: di
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def search_synonyms(
     action: str = "list",
     key: str = "",
@@ -1286,8 +1866,7 @@ def search_synonyms(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def currency_rates(
     action: str = "list",
     currency: str = "",
@@ -1414,6 +1993,34 @@ def _get_sommelier_engine():
     return _sommelier_engine
 
 
+_hybrid_engine = None
+
+
+def _get_hybrid_engine():
+    """Return a cached HybridPairingEngine bound to the current settings.
+
+    The engine is constructed lazily so that the optional sommelier
+    dependencies are not imported until they are actually needed.  When
+    the sommelier model is not available the engine simply degrades to
+    pure RAG retrieval — see :class:`HybridPairingEngine`.
+    """
+    global _hybrid_engine
+    if _hybrid_engine is None:
+        from .hybrid_pairing import HybridPairingEngine
+        from .sommelier.engine import check_availability
+
+        settings = _load_mcp_settings()
+        engine = None
+        if check_availability(settings.sommelier.model_dir) is None:
+            try:
+                engine = _get_sommelier_engine()
+            except Exception as exc:  # never fail to construct the hybrid engine
+                logger.warning("Sommelier engine init failed: %s", exc)
+                engine = None
+        _hybrid_engine = HybridPairingEngine(engine, settings.sommelier)
+    return _hybrid_engine
+
+
 def warm_sommelier() -> None:
     """Eagerly load the sommelier model, indexes, and food catalogue.
 
@@ -1440,8 +2047,7 @@ def warm_sommelier() -> None:
         logger.warning("Sommelier warm-up skipped: %s", exc)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 async def suggest_wines(food_query: str, limit: int = 10, meta: dict | None = None) -> str:
     """Suggest wines from the cellar that pair with a food description.
 
@@ -1515,8 +2121,7 @@ def _suggest_wines_sync(food_query: str, limit: int) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 async def suggest_foods(wine_id: int, limit: int = 10, meta: dict | None = None) -> str:
     """Suggest dishes that pair well with a wine from the cellar.
 
@@ -1573,8 +2178,7 @@ def _suggest_foods_sync(wine_id: int, limit: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 async def pairing_candidates(
     dish_description: str,
     category: str | None = None,
@@ -1636,7 +2240,8 @@ def _pairing_candidates_sync(
     try:
         con = _get_agent_connection()
         grape_list = [g.strip() for g in grapes.split(",")] if grapes else None
-        results = pairing.retrieve_candidates(
+        hybrid = _get_hybrid_engine()
+        outcome = hybrid.retrieve(
             con,
             dish_description=dish_description,
             category=category,
@@ -1646,13 +2251,15 @@ def _pairing_candidates_sync(
             grapes=grape_list,
             limit=limit,
         )
+        results = outcome.candidates
     except Exception as exc:
         return f"Error: {exc}"
 
     if not results:
         return "No pairing candidates found for this dish profile."
 
-    return pairing.format_table(results, fmt=fmt)
+    table = pairing.format_table(results, fmt=fmt)
+    return f"{table}\n\n{_format_mode_trailer(outcome)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1660,8 +2267,7 @@ def _pairing_candidates_sync(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 async def pair_wine(
     dish: str,
     occasion: str | None = None,
@@ -1694,7 +2300,8 @@ def _pair_wine_sync(dish: str, occasion: str | None, limit: int, fmt: str = "mar
     try:
         con = _get_agent_connection()
         classification = pairing.classify_dish(dish)
-        results = pairing.retrieve_candidates(
+        hybrid = _get_hybrid_engine()
+        outcome = hybrid.retrieve(
             con,
             dish_description=dish,
             category=classification.category,
@@ -1703,13 +2310,27 @@ def _pair_wine_sync(dish: str, occasion: str | None, limit: int, fmt: str = "mar
             cuisine=classification.cuisine,
             limit=max(limit, 5) * 3,  # fetch extra for quality ranking
         )
+        results = outcome.candidates
     except Exception as exc:
         return f"Error: {exc}"
 
     if not results:
         return f'No wines found for "{dish}". Your cellar may not have suitable wines in stock.'
 
-    return pairing.format_explained(results, dish, classification, limit=limit, fmt=fmt)
+    explained = pairing.format_explained(results, dish, classification, limit=limit, fmt=fmt)
+    return f"{explained}\n{_format_mode_trailer(outcome)}"
+
+
+def _format_mode_trailer(outcome) -> str:
+    """Render a one-line mode trailer for hybrid pairing tool output."""
+    if outcome.mode == "hybrid":
+        return (
+            f"_Mode: hybrid (RAG → embedding re-rank, "
+            f"blend={outcome.blend:.2f}, "
+            f"pool={outcome.rag_count}, reranked={outcome.rerank_count})_"
+        )
+    reason = outcome.fallback_reason or "rag_only"
+    return f"_Mode: rag (reason: {reason})_"
 
 
 # ---------------------------------------------------------------------------
@@ -1752,8 +2373,7 @@ def _append_pairing(
     pq.write_table(combined, dataset_path)
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def add_pairing(
     food_text: str,
     wine_text: str,
@@ -1807,8 +2427,7 @@ def add_pairing(
         return f"Error: {exc}"
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def server_stats(period: str = "24h", meta: dict | None = None) -> str:
     """Return usage, latency, and error statistics from the MCP log store.
 
@@ -1888,13 +2507,136 @@ def server_stats(period: str = "24h", meta: dict | None = None) -> str:
         return f"Error: {exc}"
 
 
+@_tool()
+def cache_stats(meta: dict | None = None) -> str:
+    """Return query cache hit/miss statistics.
+
+    Shows current cache utilisation, hit ratio, and eviction counts.
+    The query cache memoises results of cellar_stats and find_wine to
+    avoid redundant computation for repeated identical queries.
+    """
+    from .mcp_responses import ToolResponse
+
+    s = _query_cache.stats()
+    lines = [
+        "## Query Cache Stats\n",
+        "| Metric | Value |",
+        "|:-------|------:|",
+        f"| Enabled | {_query_cache.enabled} |",
+        f"| Entries | {s.size} / {s.max_size} |",
+        f"| Hits | {s.hits} |",
+        f"| Misses | {s.misses} |",
+        f"| Hit ratio | {s.hit_ratio:.1%} |",
+        f"| Evictions | {s.evictions} |",
+        f"| Invalidations | {s.invalidations} |",
+    ]
+    text = "\n".join(lines)
+    data = {
+        "enabled": _query_cache.enabled,
+        "size": s.size,
+        "max_size": s.max_size,
+        "hits": s.hits,
+        "misses": s.misses,
+        "hit_ratio": round(s.hit_ratio, 4),
+        "evictions": s.evictions,
+        "invalidations": s.invalidations,
+    }
+    return ToolResponse(text, data=data)
+
+
+# ---------------------------------------------------------------------------
+# cellar_anomalies — anomaly detection
+# ---------------------------------------------------------------------------
+
+
+@_tool()
+def cellar_anomalies(
+    severity: str | None = None,
+    kinds: str | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Detect unusual patterns in tool usage, latency, errors, and ETL output.
+
+    Runs anomaly detectors against the observability log store and
+    etl_run.parquet, returning any detected anomalies.
+
+    Args:
+        severity: Filter by severity — "info", "warn", or "critical". Default: all.
+        kinds: Comma-separated list of anomaly kinds to include. Default: all.
+            Kinds: call_volume_spike, latency_spike, error_cluster,
+            result_size_drift, etl_mass_delete, etl_partial_export.
+    """
+    from .anomaly import detect_all
+    from .observability import get_collector
+
+    settings = _load_mcp_settings()
+    cfg = settings.anomaly
+
+    if not cfg.enabled:
+        return "Anomaly detection is disabled in configuration."
+
+    # Get log store connection
+    collector = get_collector()
+    con = collector._db if collector is not None else None
+
+    data_dir = settings.paths.data_dir
+
+    try:
+        anomalies = detect_all(
+            con,
+            data_dir,
+            enabled=cfg.enabled,
+            baseline_days=cfg.baseline_days,
+            volume_window_hours=cfg.volume_window_hours,
+            volume_factor=cfg.volume_factor,
+            volume_min_calls=cfg.volume_min_calls,
+            latency_factor=cfg.latency_factor,
+            latency_min_samples=cfg.latency_min_samples,
+            error_window_hours=cfg.error_window_hours,
+            error_cluster_min=cfg.error_cluster_min,
+            drift_pct=cfg.drift_pct,
+            drift_min_samples=cfg.drift_min_samples,
+            etl_baseline_runs=cfg.etl_baseline_runs,
+            etl_delete_min_abs=cfg.etl_delete_min_abs,
+            etl_delete_min_pct=cfg.etl_delete_min_pct,
+        )
+    except Exception as exc:
+        return f"Error: {exc}"
+
+    # Filter by severity
+    if severity:
+        sev = severity.strip().lower()
+        anomalies = [a for a in anomalies if a.severity == sev]
+
+    # Filter by kinds
+    if kinds:
+        kind_set = {k.strip() for k in kinds.split(",")}
+        anomalies = [a for a in anomalies if a.kind in kind_set]
+
+    if not anomalies:
+        return "No anomalies detected."
+
+    # Format as Markdown
+    lines = [f"## Anomalies Detected ({len(anomalies)})\n"]
+    current_sev = None
+    for a in anomalies:
+        if a.severity != current_sev:
+            current_sev = a.severity
+            badge = {"critical": "🔴", "warn": "🟡", "info": "🔵"}.get(a.severity, "")
+            lines.append(f"\n### {badge} {a.severity.upper()}\n")
+            lines.append("| Subject | Message | Observed | Baseline |")
+            lines.append("|:--------|:--------|:---------|:---------|")
+        lines.append(f"| {a.subject} | {a.message} | {a.observed:.1f} | {a.baseline:.1f} |")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # train_sommelier — trigger model training via MCP
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-@_log_tool
+@_tool()
 def train_sommelier(
     epochs: int = 10,
     batch_size: int = 32,
@@ -1917,7 +2659,7 @@ def train_sommelier(
     try:
         from .sommelier.training import train_model
     except ImportError:
-        return "Error: sentence-transformers not installed. Run: pip install cellarbrain[sommelier]"
+        return "Error: ML dependencies not installed. Run: pip install cellarbrain[ml]"
 
     settings = _load_mcp_settings()
     cfg = settings.sommelier
@@ -1984,6 +2726,498 @@ def train_sommelier(
         return "\n".join(lines)
     except Exception as exc:
         return f"Error during training: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Drink-tonight bridge (dashboard sidecar)
+# ---------------------------------------------------------------------------
+
+
+@_tool()
+def get_drink_tonight(meta: dict | None = None) -> str:
+    """Return the wines the user has staged on the dashboard's "Drink Tonight" shortlist.
+
+    The list lives in ``<data_dir>/.drink-tonight.json`` and is mirrored by
+    the dashboard whenever the user adds or removes a wine. Each row joins
+    the wine record with the user-supplied note and timestamp.
+
+    Returns a Markdown table or an empty-state message if the list is empty.
+    """
+    from .dashboard.sidecars import read_drink_tonight
+
+    items = read_drink_tonight(_data_dir())
+    if not items:
+        return "Drink-tonight shortlist is empty."
+
+    con = _get_agent_connection()
+    placeholders = ",".join("?" for _ in items)
+    rows = con.execute(
+        f"""
+        SELECT wine_id, wine_name, vintage, winery_name, category,
+               bottles_stored, drinking_status
+        FROM wines_full WHERE wine_id IN ({placeholders})
+        """,
+        [int(it["wine_id"]) for it in items],
+    ).fetchall()
+    by_id = {r[0]: r for r in rows}
+    meta_by_id = {int(it["wine_id"]): it for it in items}
+
+    lines = [
+        f"# Drink Tonight ({len(items)})",
+        "",
+        "| Wine | Vintage | Producer | Status | Stock | Added | Note |",
+        "|:-----|:-------:|:---------|:-------|------:|:------|:-----|",
+    ]
+    for it in items:
+        wid = int(it["wine_id"])
+        r = by_id.get(wid)
+        m = meta_by_id.get(wid, {})
+        if r is None:
+            lines.append(f"| #{wid} (missing) | — | — | — | — | {m.get('added_at', '')} | {m.get('note') or ''} |")
+            continue
+        lines.append(
+            f"| {r[1]} | {r[2] or '—'} | {r[3] or '—'} | {r[6] or '—'} | "
+            f"{r[5]} | {m.get('added_at', '')} | {m.get('note') or ''} |"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Smart recommendations
+# ---------------------------------------------------------------------------
+
+
+@_tool()
+def recommend_tonight(
+    occasion: str | None = None,
+    cuisine: str | None = None,
+    guests: int | None = None,
+    budget: str | None = None,
+    limit: int = 5,
+    meta: dict | None = None,
+) -> str:
+    """Score and rank cellar wines for tonight's drinking occasion.
+
+    Combines urgency (drinking window proximity), occasion fit (price tier,
+    format, category), cuisine pairing (if specified), freshness (avoid
+    recently-consumed), and diversity (varied wineries/grapes) into a
+    single ranked recommendation.
+
+    Args:
+        occasion: Context -- casual, dinner_party, celebration, romantic,
+                  solo, weeknight, tasting. Affects price/format fit.
+        cuisine: Free-text cuisine or dish (e.g. "Italian", "grilled lamb").
+                 Triggers pairing engine integration.
+        guests: Number of people (affects format preference -- magnum for 5+).
+        budget: Price constraint -- any, under_15, under_30, under_50, special.
+        limit: Number of recommendations (default 5, max 15).
+    """
+    from .recommend import (
+        RecommendParams,
+        RecommendWeights,
+        format_recommendations,
+        recommend,
+    )
+
+    try:
+        cfg = _load_mcp_settings().recommend
+        w = RecommendWeights.from_config(cfg)
+        effective_limit = min(limit, cfg.max_limit)
+
+        params = RecommendParams(
+            occasion=occasion,
+            cuisine=cuisine,
+            guests=guests,
+            budget=budget,
+            limit=effective_limit,
+        )
+        results = recommend(
+            _get_agent_connection(),
+            params,
+            weights=w,
+            data_dir=_data_dir(),
+        )
+        text = format_recommendations(results, params)
+        from .mcp_responses import ToolResponse
+
+        data = {
+            "params": {"occasion": occasion, "cuisine": cuisine, "guests": guests, "budget": budget},
+            "results": [
+                {"wine_id": r.wine_id, "score": round(r.total_score, 3), "wine_name": r.wine_name} for r in results
+            ],
+        }
+        return ToolResponse(text, data=data, metadata={"row_count": len(results)})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def plan_trip(
+    destination: str,
+    include_producers: bool = True,
+    include_gaps: bool = True,
+    limit: int = 20,
+    meta: dict | None = None,
+) -> str:
+    """Generate a wine travel brief for a destination region or country.
+
+    Combines cellar inventory, producer visit suggestions (from dossier
+    research), and regional gap analysis into a single structured document
+    for pre-trip planning.
+
+    Matches the destination against country, region, and subregion fields
+    using accent-insensitive search.  Returns inventory table, highlights,
+    producer profiles, and gaps (subregions/grapes you once owned but no
+    longer have in stock).
+
+    Args:
+        destination: Region, country, or subregion name (e.g. "Piedmont",
+                     "Burgundy", "Italy", "Barolo").
+        include_producers: Extract producer visit suggestions from dossiers.
+        include_gaps: Show regional gaps (subregions/grapes not in stock).
+        limit: Maximum wines to include in the inventory table.
+    """
+    from .mcp_responses import ToolResponse
+    from .travel import build_travel_brief, format_travel_brief
+
+    if not destination or not destination.strip():
+        return ToolResponse.error("destination is required.")
+
+    try:
+        con = _get_agent_connection()
+        brief = build_travel_brief(
+            con,
+            destination.strip(),
+            _data_dir(),
+            include_producers=include_producers,
+            include_gaps=include_gaps,
+            limit=min(limit, 50),
+        )
+        if brief is None:
+            return ToolResponse(
+                f'No wines found matching destination "{destination}". '
+                f"Try a different region, country, or subregion name.",
+                data={"destination": destination, "match": False},
+            )
+        text = format_travel_brief(brief)
+        data = {
+            "destination": brief.destination,
+            "match_level": brief.match_level,
+            "wine_count": len(brief.wines),
+            "total_bottles": brief.total_bottles,
+        }
+        return ToolResponse(text, data=data, metadata={"row_count": len(brief.wines)})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def learning_path(
+    topic: str,
+    lesson_size: int = 4,
+    include_purchases: bool = True,
+    include_dossier_insights: bool = True,
+    meta: dict | None = None,
+) -> str:
+    """Generate a guided wine education path for a topic.
+
+    Maps the user's cellar onto pedagogical frameworks — curated for
+    major regions (Burgundy, Piedmont, Bordeaux, Germany/VDP) and
+    data-driven for others.  Returns a structured learning path with
+    progress tracking, a tasting lesson ordering wines from entry-level
+    to pinnacle, and purchase suggestions to fill educational gaps.
+
+    Args:
+        topic: Region, country, subregion, or grape name
+               (e.g. "Burgundy", "Piedmont", "Nebbiolo").
+        lesson_size: Number of wines in the tasting lesson (2-6).
+        include_purchases: Show purchase gap suggestions.
+        include_dossier_insights: Include producer profile excerpts.
+    """
+    from .education import build_learning_path, format_learning_path
+    from .mcp_responses import ToolResponse
+
+    if not topic or not topic.strip():
+        return ToolResponse.error("topic is required.")
+
+    try:
+        con = _get_agent_connection()
+        path = build_learning_path(
+            con,
+            topic.strip(),
+            _data_dir(),
+            lesson_size=lesson_size,
+            include_purchases=include_purchases,
+            include_dossier_insights=include_dossier_insights,
+        )
+        if path is None:
+            return ToolResponse(
+                f'No wines found matching topic "{topic}". Try a different region, country, or grape name.',
+                data={"topic": topic, "match": False},
+            )
+        text = format_learning_path(path)
+        data = {
+            "topic": path.topic,
+            "framework": path.framework_name,
+            "match_type": path.match_type,
+            "total_wines": path.total_wines,
+            "curriculum_size": len(path.curriculum),
+            "purchase_gaps": len(path.purchase_suggestions),
+        }
+        return ToolResponse(text, data=data, metadata={"row_count": path.total_wines})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def cellar_digest(
+    period: str = "daily",
+    meta: dict | None = None,
+) -> str:
+    """Proactive cellar intelligence brief with urgency warnings and recommendations.
+
+    Returns a formatted digest with: wines past optimal (drink soon), wines
+    newly entering their optimal window, today's top pick, inventory summary,
+    and recent ETL changes.
+
+    Args:
+        period: "daily" (1-day lookback) or "weekly" (7-day lookback).
+    """
+    from .digest import build_digest, format_digest
+
+    if period not in ("daily", "weekly"):
+        return "Error: period must be 'daily' or 'weekly'."
+
+    try:
+        con = _get_connection()
+        result = build_digest(con, _data_dir(), period=period)
+        return format_digest(result)
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+@_tool()
+def wine_of_the_day(meta: dict | None = None) -> str:
+    """Today's deterministic wine pick \u2014 urgency-weighted daily rotation.
+
+    Returns a single wine recommendation that stays the same all day and
+    changes at midnight. The pick is weighted toward wines with drinking-
+    window urgency (past optimal, approaching end of window) while still
+    rotating through regions and grapes over time.
+
+    Use this for a zero-effort daily suggestion answering "what should I
+    open tonight?" before the user even asks.
+    """
+    from .mcp_responses import ToolResponse
+    from .wotd import format_wine_of_the_day, pick_wine_of_the_day
+
+    try:
+        con = _get_connection()
+        pick = pick_wine_of_the_day(con, data_dir=_data_dir())
+        text = format_wine_of_the_day(pick)
+        if pick is None:
+            return ToolResponse(text, metadata={"empty": True})
+        data = {
+            "wine_id": pick.wine_id,
+            "wine_name": pick.wine_name,
+            "vintage": pick.vintage,
+            "winery_name": pick.winery_name,
+            "category": pick.category,
+            "region": pick.region,
+            "primary_grape": pick.primary_grape,
+            "drinking_status": pick.drinking_status,
+            "bottles_stored": pick.bottles_stored,
+            "score": round(pick.score, 3),
+            "reason": pick.reason,
+        }
+        return ToolResponse(text, data=data, metadata={"wine_id": pick.wine_id})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def plan_dinner(
+    courses: str,
+    guests: int = 4,
+    budget: str = "any",
+    style: str = "classic",
+    dinner_time: str | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Plan a complete wine flight for a multi-course dinner party.
+
+    Given a pipe-separated list of courses (in serving order), select one
+    wine per course from the cellar that creates a harmonious progression
+    from light to heavy. Includes preparation timeline with chilling and
+    decanting guidance.
+
+    Args:
+        courses: Pipe-separated course descriptions, e.g.
+            "oysters | risotto ai funghi | lamb rack | cheese plate"
+        guests: Number of diners (default 4).
+        budget: Total budget tier - "any", "under_50", "under_100",
+            "under_150", "under_200", "under_300".
+        style: Pairing style (currently only "classic").
+        dinner_time: Optional time as HH:MM (24h) for timeline.
+    """
+    from .dinner import format_flight_plan, plan_flight
+    from .mcp_responses import ToolResponse
+
+    try:
+        course_list = [c.strip() for c in courses.split("|") if c.strip()]
+        settings = _load_mcp_settings()
+
+        if not course_list:
+            return ToolResponse.error("No courses provided. Separate courses with |")
+
+        if len(course_list) > settings.dinner.max_courses:
+            return ToolResponse.error(
+                f"Too many courses ({len(course_list)}). Maximum is {settings.dinner.max_courses}."
+            )
+
+        # Parse dinner_time to minutes-from-midnight
+        time_minutes: int | None = None
+        if dinner_time:
+            parts = dinner_time.split(":")
+            if len(parts) == 2:
+                time_minutes = int(parts[0]) * 60 + int(parts[1])
+
+        con = _get_connection()
+        engine = _get_hybrid_engine()
+
+        plan = plan_flight(
+            con,
+            engine,
+            course_list,
+            guests=guests,
+            budget=budget,
+            style=style,
+            dinner_time_minutes=time_minutes,
+            pool_size=settings.dinner.pool_size,
+            glasses_per_bottle=settings.dinner.glasses_per_bottle,
+        )
+
+        text = format_flight_plan(plan)
+        data = {
+            "courses": [
+                {
+                    "course_number": p.course_number,
+                    "course_description": p.course_description,
+                    "wine_id": p.wine_id,
+                    "wine_name": p.wine_name,
+                    "vintage": p.vintage,
+                    "bottles_needed": p.bottles_needed,
+                    "serving_temp_c": p.serving_temp_c,
+                    "decant_minutes": p.decant_minutes,
+                }
+                for p in plan.courses
+            ],
+            "total_bottles": plan.total_bottles,
+            "total_cost": plan.total_cost,
+        }
+        return ToolResponse(text, data=data, metadata={"guests": guests})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
+
+
+@_tool()
+def gift_advisor(
+    profile: str,
+    budget: str = "any",
+    occasion: str | None = None,
+    protect_last_bottle: bool = True,
+    limit: int = 3,
+    meta: dict | None = None,
+) -> str:
+    """Recommend wines from the cellar as gifts for a specific recipient.
+
+    Scores wines on six signals: prestige, storytelling, drinkability,
+    recognition, recipient fit, and presentation.  Returns ranked
+    suggestions with gift notes.
+
+    Args:
+        profile: Free-text recipient description,
+                 e.g. "loves bold Italian reds, collector level".
+        budget: Named tier (modest/nice/generous/lavish/extraordinary)
+                or explicit range "80-150".  Default "any".
+        occasion: Optional context: birthday, milestone, thank_you,
+                  host_gift, corporate, romantic, holiday.
+        protect_last_bottle: If True (default), require >= 2 bottles in stock.
+        limit: Number of suggestions (1-10, default 3).
+        meta: Reserved for MCP metadata (ignored).
+    """
+    from .gifting import format_gift_suggestions, suggest_gifts
+    from .mcp_responses import ToolResponse
+
+    try:
+        con = _get_connection()
+        settings = _load_mcp_settings()
+
+        effective_limit = max(1, min(limit, settings.gifting.max_limit))
+        min_bottles = settings.gifting.min_bottles if protect_last_bottle else 1
+
+        plan = suggest_gifts(
+            con=con,
+            profile_text=profile,
+            budget=budget,
+            occasion=occasion,
+            data_dir=settings.data_dir,
+            limit=effective_limit,
+            min_bottles=min_bottles,
+            markup_factor=settings.gifting.markup_factor,
+            famous_regions=frozenset(settings.gifting.famous_regions),
+        )
+
+        text = format_gift_suggestions(plan)
+
+        data = {
+            "profile_summary": plan.profile_summary,
+            "budget_tier": plan.budget_tier,
+            "occasion": plan.occasion,
+            "suggestions": [
+                {
+                    "wine_id": s.wine_id,
+                    "wine_name": s.wine_name,
+                    "vintage": s.vintage,
+                    "winery_name": s.winery_name,
+                    "category": s.category,
+                    "region": s.region,
+                    "classification": s.classification,
+                    "primary_grape": s.primary_grape,
+                    "drinking_status": s.drinking_status,
+                    "bottles_available": s.bottles_available,
+                    "retail_value": s.retail_value,
+                    "value_source": s.value_source,
+                    "gift_score": {
+                        "prestige": s.gift_score.prestige,
+                        "storytelling": s.gift_score.storytelling,
+                        "drinkability": s.gift_score.drinkability,
+                        "recognition": s.gift_score.recognition,
+                        "recipient_fit": s.gift_score.recipient_fit,
+                        "presentation": s.gift_score.presentation,
+                        "total": s.gift_score.total,
+                    },
+                    "gift_note": s.gift_note,
+                }
+                for s in plan.suggestions
+            ],
+            "warnings": plan.warnings,
+        }
+        return ToolResponse(text, data=data, metadata={"profile": profile})
+    except Exception as exc:
+        from .mcp_responses import ToolResponse
+
+        return ToolResponse.error(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -2108,6 +3342,27 @@ def drinking_now() -> str:
         return f"Error: {exc}"
 
 
+@mcp.resource("cellar://recommendations")
+@_log_resource
+def tonight_recommendations() -> str:
+    """Smart recommendations based on urgency and cellar state."""
+    return recommend_tonight()
+
+
+@mcp.resource("cellar://digest")
+@_log_resource
+def cellar_digest_resource() -> str:
+    """Proactive cellar intelligence brief — urgency, newly optimal, top pick, changes."""
+    return cellar_digest()
+
+
+@mcp.resource("drink-tonight://list")
+@_log_resource
+def drink_tonight_list() -> str:
+    """Wines the user has staged on the dashboard's "Drink Tonight" shortlist."""
+    return get_drink_tonight()
+
+
 @mcp.resource("etl://last-run")
 @_log_resource
 def last_etl_run() -> str:
@@ -2219,6 +3474,184 @@ def view_schemas() -> str:
         parts.append(f"| {col_name} | {data_type} | {hint} |")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Tools — Newsletter Promotions
+# ---------------------------------------------------------------------------
+
+
+@_tool()
+def scan_promotions(
+    retailer: str = "",
+    dry_run: bool = False,
+    meta: dict | None = None,
+) -> str:
+    """Scan newsletter emails for wine promotions and extract deals.
+
+    Connects to the configured IMAP server, fetches newsletters from
+    known retailers, and extracts structured promotion data (wine,
+    price, discount, rating). Enhanced matching scores each promotion
+    by cellar relevance: re-buy opportunities, similar wines, and
+    cellar gap fills.
+
+    Args:
+        retailer: Only scan a specific retailer (e.g. "kapweine"). Empty = all.
+        dry_run: If true, scan but do not archive emails or update state.
+    """
+    from .promotions import scan_once
+    from .promotions.report import format_scored_report
+
+    try:
+        settings = _load_mcp_settings()
+        result = scan_once(
+            settings,
+            dry_run=dry_run,
+            retailer_filter=retailer or None,
+        )
+        return format_scored_report(result)
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+@_tool()
+def promotion_matches(
+    months: int = 3,
+    category: str = "",
+    retailer: str = "",
+    min_score: float = 0.0,
+    meta: dict | None = None,
+) -> str:
+    """Query historical promotion matches scored by cellar relevance.
+
+    Returns promotions that matched your cellar in previous scans,
+    filtered by category and recency. Use for month-over-month analysis
+    of which promotions are most relevant to your collection.
+
+    Match categories:
+    - "rebuy": promotions for wines you own, priced below purchase price
+    - "similar": promotions for wines structurally similar to your collection
+    - "gap_fill": promotions covering underrepresented areas in your cellar
+
+    Args:
+        months: How far back to look (default 3 months).
+        category: Filter by match category ("rebuy", "similar", "gap_fill"). Empty = all.
+        retailer: Filter by retailer ID. Empty = all.
+        min_score: Minimum value_score threshold (0.0–1.0). Default 0.0 = all.
+    """
+    from .promotions.persistence import load_matches
+
+    try:
+        data_dir = _data_dir()
+        matches = load_matches(data_dir, months=max(months, 1))
+
+        # Apply filters
+        if category:
+            matches = [m for m in matches if m.get("match_category") == category]
+        if retailer:
+            matches = [m for m in matches if m.get("retailer_id") == retailer]
+        if min_score > 0:
+            matches = [m for m in matches if (m.get("value_score") or 0) >= min_score]
+
+        if not matches:
+            return f"No promotion matches found in the last {months} month(s)."
+
+        # Format as markdown table
+        lines = [
+            f"## Promotion Matches (last {months} month(s))",
+            "",
+            f"**Total:** {len(matches)} matches",
+            "",
+            "| Date | Score | Category | Retailer | Wine | Price | Detail |",
+            "|------|-------|----------|----------|------|-------|--------|",
+        ]
+        for m in matches[:50]:  # cap output
+            scan_time = m.get("scan_time")
+            date_str = scan_time.strftime("%Y-%m-%d") if hasattr(scan_time, "strftime") else "—"
+            score = f"{m.get('value_score', 0):.2f}"
+            cat = m.get("match_category", "—")
+            ret = m.get("retailer_id", "—")
+            wine = m.get("wine_name", "—")
+            price = f"{m.get('currency', 'CHF')} {m.get('sale_price', '—')}"
+            detail = m.get("gap_detail") or m.get("matched_wine_name") or "—"
+            lines.append(f"| {date_str} | {score} | {cat} | {ret} | {wine} | {price} | {detail} |")
+
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+@_tool()
+def promotion_history(
+    months: int = 6,
+    meta: dict | None = None,
+) -> str:
+    """Month-by-month summary of promotion match trends.
+
+    Aggregates historical promotion matches by month, showing counts
+    per category, average value scores, and top retailers. Use for
+    tracking how newsletter relevance evolves over time.
+
+    Args:
+        months: How many months of history to include (default 6).
+    """
+    from .promotions.persistence import load_matches
+
+    try:
+        data_dir = _data_dir()
+        matches = load_matches(data_dir, months=max(months, 1))
+
+        if not matches:
+            return f"No promotion matches found in the last {months} month(s)."
+
+        # Group by month
+        monthly: dict[str, dict] = {}
+        for m in matches:
+            scan_time = m.get("scan_time")
+            if not hasattr(scan_time, "strftime"):
+                continue
+            month_key = scan_time.strftime("%Y-%m")
+            bucket = monthly.setdefault(
+                month_key,
+                {
+                    "total": 0,
+                    "rebuy": 0,
+                    "similar": 0,
+                    "gap_fill": 0,
+                    "scores": [],
+                    "retailers": {},
+                },
+            )
+            bucket["total"] += 1
+            cat = m.get("match_category", "")
+            if cat in ("rebuy", "similar", "gap_fill"):
+                bucket[cat] += 1
+            score = m.get("value_score", 0)
+            if score:
+                bucket["scores"].append(score)
+            ret = m.get("retailer_id", "")
+            if ret:
+                bucket["retailers"][ret] = bucket["retailers"].get(ret, 0) + 1
+
+        # Format
+        lines = [
+            f"## Promotion History (last {months} months)",
+            "",
+            "| Month | Total | Re-buy | Similar | Gap Fill | Avg Score | Top Retailer |",
+            "|-------|-------|--------|---------|----------|-----------|--------------|",
+        ]
+        for month_key in sorted(monthly.keys()):
+            b = monthly[month_key]
+            avg = sum(b["scores"]) / len(b["scores"]) if b["scores"] else 0
+            top_ret = max(b["retailers"], key=b["retailers"].get) if b["retailers"] else "—"
+            lines.append(
+                f"| {month_key} | {b['total']} | {b['rebuy']} | "
+                f"{b['similar']} | {b['gap_fill']} | {avg:.2f} | {top_ret} |"
+            )
+
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Error: {exc}"
 
 
 # ---------------------------------------------------------------------------

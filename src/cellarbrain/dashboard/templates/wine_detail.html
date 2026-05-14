@@ -82,7 +82,14 @@
     <a href="/cellar/{{ wine.wine_id }}?tab=dossier" class="{% if tab == 'dossier' %}active{% endif %}">Dossier</a>
     <a href="/cellar/{{ wine.wine_id }}?tab=bottles" class="{% if tab == 'bottles' %}active{% endif %}">Bottles ({{ bottles|length }})</a>
     <a href="/cellar/{{ wine.wine_id }}?tab=raw" class="{% if tab == 'raw' %}active{% endif %}">Raw MD</a>
+    <span style="margin-left:auto;" data-drink-tonight-slot="{{ wine.wine_id }}">
+        {% with wine_id=wine.wine_id, in_list=False %}
+            {% include "partials/drink_tonight_button.html" %}
+        {% endwith %}
+    </span>
 </div>
+
+{% include "partials/dashboard_notes.html" %}
 
 {% if tab == "dossier" %}
     {% if dossier and dossier.sections %}
@@ -111,7 +118,7 @@
     <table role="grid">
         <thead>
             <tr>
-                <th>ID</th><th>Cellar</th><th>Shelf</th><th>Price</th><th>Status</th>
+                <th>ID</th><th>Cellar</th><th>Shelf</th><th>Price</th><th>Status</th><th></th>
             </tr>
         </thead>
         <tbody>
@@ -122,6 +129,13 @@
                 <td>{{ b.shelf or "—" }}</td>
                 <td>{% if b.price %}CHF {{ "%.2f"|format(b.price) }}{% else %}—{% endif %}</td>
                 <td><span class="badge {% if b.status == 'stored' %}badge-ok{% elif b.status == 'on order' %}badge-warn{% endif %}">{{ b.status }}</span></td>
+                <td>
+                    {% if b.status == 'stored' %}
+                        {% with wine_id=wine.wine_id, bottle_id=b.bottle_id, pending=(b.bottle_id in pending_consumed_ids) %}
+                            {% include "partials/consumed_button.html" %}
+                        {% endwith %}
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -138,4 +152,8 @@
     <p style="color:var(--pico-muted-color); font-style:italic;">No dossier source available.</p>
     {% endif %}
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/drink-tonight.js"></script>
 {% endblock %}

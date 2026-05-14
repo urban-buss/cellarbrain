@@ -99,3 +99,26 @@ The `pairing_candidates` MCP tool wraps `retrieve_candidates()` and returns a Ma
 ## Relationship to Sommelier Model
 
 The RAG engine (`pairing_candidates`) is **always available** and is the primary retrieval tool. The optional sommelier model (`suggest_wines`/`suggest_foods`) provides embedding-based similarity search as a supplementary signal. The agent skill uses `pairing_candidates` first, then optionally enriches with `suggest_wines` if the model is trained.
+
+## Hybrid Retrieval (RAG + Embedding Re-rank)
+
+When the sommelier model is available, the `pairing_candidates` and `pair_wine` MCP tools transparently switch to a hybrid pipeline implemented in `cellarbrain/hybrid_pairing.py`:
+
+1. `pairing.retrieve_candidates(...)` returns up to `sommelier.rerank_pool_size` (default 30) RAG candidates.
+2. The dish description is encoded with the sommelier model. Candidate wines are batch-encoded with the same `build_wine_text()` function used at index-build time.
+3. Each candidate is scored as `blend * embed_similarity + (1 − blend) * normalized_signal_count` where `blend = sommelier.rerank_blend` (default 0.5).
+4. Re-ranked candidates are returned with an extra `embed:0.NN` entry appended to `match_signals`.
+5. Tool output ends with a one-line trailer indicating the mode (`hybrid` or `rag`).
+
+If the sommelier model is missing, disabled, or the embedding step raises, the tool returns the pure-RAG ranking (mode `rag`) so callers never fail. Configuration lives under `[sommelier]` in TOML — see `docs/settings-reference.md`.
+
+## Dinner Party Flight Planning
+
+The `plan_dinner` MCP tool builds on the hybrid pairing engine to plan complete multi-course wine flights. It retrieves candidates for each course independently, then selects wines using a greedy algorithm that enforces:
+
+- **Progression**: wines ordered light → heavy using a computed wine-weight model (1–10 scale)
+- **Deduplication**: no wine or winery repeated across courses
+- **Budget awareness**: total spend respects the chosen budget tier
+- **Preparation timeline**: chilling and decanting guidance with timing
+
+See `cellarbrain/dinner.py` for the implementation and `docs/settings-reference.md` → `DinnerConfig` for configuration.

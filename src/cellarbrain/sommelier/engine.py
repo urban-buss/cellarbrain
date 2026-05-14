@@ -166,3 +166,70 @@ class SommelierEngine:
             self._wine_index = load_index(idx_path)
             self._wine_ids = load_ids(ids_path)
             logger.debug("Wine index loaded: %d entries", len(self._wine_ids))
+
+    # ------------------------------------------------------------------
+    # Hybrid pairing helpers (used by ``hybrid_pairing.HybridPairingEngine``)
+    # ------------------------------------------------------------------
+
+    def embed_text(self, text: str):
+        """Encode a single string into a normalised embedding vector.
+
+        Returns a contiguous ``np.ndarray`` of dtype ``float32`` and
+        shape ``(dim,)``.  Loads the model on first call.
+        """
+        import numpy as np
+
+        self._ensure_model()
+        vec = self._model.encode([text], normalize_embeddings=True)
+        return np.ascontiguousarray(vec[0], dtype=np.float32)
+
+    def embed_wines(
+        self,
+        con,
+        wine_ids: list[int],
+    ) -> tuple[list[int], object]:
+        """Encode wine_ids into normalised embedding vectors.
+
+        Fetches wine metadata in a single SQL round-trip, builds the same
+        wine-text representation used at index-build time, and batch
+        encodes the result.  Returns ``(found_ids, vectors)`` where
+        ``vectors`` is an ``np.ndarray`` of shape ``(len(found_ids), dim)``
+        aligned with ``found_ids``.  Wines absent from ``wines_full`` are
+        silently dropped.
+        """
+        import numpy as np
+
+        from .text_builder import build_wine_text, normalise_category
+
+        if not wine_ids:
+            return [], np.empty((0, 0), dtype=np.float32)
+
+        self._ensure_model()
+        placeholders = ", ".join("?" for _ in wine_ids)
+        rows = con.execute(
+            f"""
+            SELECT wine_id, wine_name, country, region, grapes, category
+            FROM wines_full
+            WHERE wine_id IN ({placeholders})
+            """,
+            list(wine_ids),
+        ).fetchall()
+        meta = {r[0]: r for r in rows}
+        ordered_ids: list[int] = [wid for wid in wine_ids if wid in meta]
+        if not ordered_ids:
+            return [], np.empty((0, 0), dtype=np.float32)
+
+        texts: list[str] = []
+        for wid in ordered_ids:
+            r = meta[wid]
+            texts.append(
+                build_wine_text(
+                    full_name=r[1],
+                    country=r[2],
+                    region=r[3],
+                    grape_summary=r[4],
+                    category=normalise_category(r[5]),
+                )
+            )
+        vectors = self._model.encode(texts, normalize_embeddings=True)
+        return ordered_ids, np.ascontiguousarray(vectors, dtype=np.float32)

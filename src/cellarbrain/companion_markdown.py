@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
+from dataclasses import dataclass
 
 from .markdown import _extract_frontmatter_agent_fields
 from .settings import Settings
@@ -37,6 +38,192 @@ def _extract_agent_sections(content: str) -> dict[str, str]:
         heading = m.group("heading").strip()
         result[heading] = m.group("block")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Vintage comparison helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class VintageStats:
+    """Per-vintage statistics for the comparison matrix."""
+
+    wine_id: int
+    vintage: int | None
+    drinking_status: str | None
+    best_score: float | None
+    best_score_max: float | None
+    best_score_source: str | None  # "pro" | "personal" | None
+    list_price: float | None
+    list_currency: str | None
+    price_per_750ml: float | None
+    bottles_stored: int
+
+
+def _aggregate_vintage_stats(
+    related_wines: list[dict],
+    tastings_by_wine: dict[int, list[dict]],
+    pro_ratings_by_wine: dict[int, list[dict]],
+    bottles_by_wine: dict[int, int],
+) -> list[VintageStats]:
+    """Build per-vintage stats for the comparison matrix."""
+    results: list[VintageStats] = []
+    for w in sorted(related_wines, key=lambda x: x.get("vintage") or 0):
+        wid = w["wine_id"]
+
+        # Best pro rating score
+        pro_best: float | None = None
+        pro_max: float | None = None
+        for pr in pro_ratings_by_wine.get(wid, []):
+            score = pr.get("score")
+            if score is not None and (pro_best is None or score > pro_best):
+                pro_best = score
+                pro_max = pr.get("max_score", 100.0)
+
+        # Best personal tasting score
+        tasting_best: float | None = None
+        tasting_max: float | None = None
+        for t in tastings_by_wine.get(wid, []):
+            score = t.get("score")
+            if score is not None and (tasting_best is None or score > tasting_best):
+                tasting_best = score
+                tasting_max = t.get("max_score", 20.0)
+
+        # Pick best: prefer pro when available
+        if pro_best is not None:
+            best_score = pro_best
+            best_score_max = pro_max
+            best_source = "pro"
+        elif tasting_best is not None:
+            best_score = tasting_best
+            best_score_max = tasting_max
+            best_source = "personal"
+        else:
+            best_score = None
+            best_score_max = None
+            best_source = None
+
+        # Price (from wine row)
+        list_price = w.get("list_price")
+        if list_price is not None:
+            list_price = float(list_price)
+        price_per_750ml = w.get("price_per_750ml")
+        if price_per_750ml is not None:
+            price_per_750ml = float(price_per_750ml)
+
+        results.append(
+            VintageStats(
+                wine_id=wid,
+                vintage=w.get("vintage"),
+                drinking_status=w.get("drinking_status"),
+                best_score=best_score,
+                best_score_max=best_score_max,
+                best_score_source=best_source,
+                list_price=list_price,
+                list_currency=w.get("list_currency"),
+                price_per_750ml=price_per_750ml,
+                bottles_stored=bottles_by_wine.get(wid, 0),
+            )
+        )
+    return results
+
+
+def _select_best_value(stats: list[VintageStats]) -> VintageStats | None:
+    """Find the vintage with the best score/price ratio.
+
+    Requires both a score and a price_per_750ml. Normalises score to 0–1
+    range using best_score_max before comparing.
+    """
+    best: VintageStats | None = None
+    best_ratio: float = 0.0
+    for s in stats:
+        if s.best_score is None or s.price_per_750ml is None or s.price_per_750ml <= 0:
+            continue
+        max_score = s.best_score_max or 100.0
+        normalised = s.best_score / max_score
+        ratio = normalised / s.price_per_750ml
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best = s
+    return best
+
+
+def _suggest_drink_order(stats: list[VintageStats]) -> tuple[list[int | None], list[int | None]]:
+    """Suggest drinking order across vintages.
+
+    Returns (order, past_window) where:
+    - order: vintages to drink in suggested sequence
+    - past_window: vintages that are past their window (separate warning)
+
+    Strategy: optimal/past_optimal first (oldest first), then drinkable
+    (oldest first), then too_young (newest first), unknown at the end.
+    """
+    buckets: dict[str, list[VintageStats]] = {
+        "urgent": [],  # optimal, past_optimal
+        "drinkable": [],
+        "young": [],  # too_young
+        "unknown": [],
+        "past": [],  # past_window
+    }
+    for s in stats:
+        status = s.drinking_status
+        if status in ("optimal", "past_optimal"):
+            buckets["urgent"].append(s)
+        elif status == "drinkable":
+            buckets["drinkable"].append(s)
+        elif status == "too_young":
+            buckets["young"].append(s)
+        elif status == "past_window":
+            buckets["past"].append(s)
+        else:
+            buckets["unknown"].append(s)
+
+    # Sort each bucket
+    buckets["urgent"].sort(key=lambda s: s.vintage or 0)
+    buckets["drinkable"].sort(key=lambda s: s.vintage or 0)
+    buckets["young"].sort(key=lambda s: s.vintage or 0, reverse=True)
+    buckets["unknown"].sort(key=lambda s: s.vintage or 0)
+    buckets["past"].sort(key=lambda s: s.vintage or 0)
+
+    order = [s.vintage for bucket in ("urgent", "drinkable", "young", "unknown") for s in buckets[bucket]]
+    past_window = [s.vintage for s in buckets["past"]]
+    return order, past_window
+
+
+def _vintage_trend(stats: list[VintageStats]) -> str | None:
+    """Determine vintage quality trend from normalised scores.
+
+    Returns "improving", "declining", or "stable" when ≥3 vintages have
+    scores. Uses simple linear regression slope with threshold ±0.01
+    normalised points per year.
+    """
+    points: list[tuple[int, float]] = []
+    for s in stats:
+        if s.best_score is not None and s.vintage is not None and s.vintage > 0:
+            max_score = s.best_score_max or 100.0
+            points.append((s.vintage, s.best_score / max_score))
+
+    if len(points) < 3:
+        return None
+
+    n = len(points)
+    sum_x = sum(p[0] for p in points)
+    sum_y = sum(p[1] for p in points)
+    sum_xy = sum(p[0] * p[1] for p in points)
+    sum_x2 = sum(p[0] ** 2 for p in points)
+
+    denom = n * sum_x2 - sum_x**2
+    if denom == 0:
+        return "stable"
+
+    slope = (n * sum_xy - sum_x * sum_y) / denom
+
+    if slope > 0.01:
+        return "improving"
+    if slope < -0.01:
+        return "declining"
+    return "stable"
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +294,9 @@ def render_companion_dossier(
     appellation: dict | None,
     settings: Settings,
     existing_content: str | None = None,
+    tastings_by_wine: dict[int, list[dict]] | None = None,
+    pro_ratings_by_wine: dict[int, list[dict]] | None = None,
+    bottles_by_wine: dict[int, int] | None = None,
 ) -> str:
     """Render a companion dossier for a tracked wine."""
     preserved = _extract_agent_sections(existing_content) if existing_content else {}
@@ -173,15 +363,65 @@ def render_companion_dossier(
     parts.append(f"# {title} — Companion Dossier\n\n")
     parts.append(f"> {' · '.join(subtitle_parts)}\n\n")
 
-    # -- Vintages overview --
+    # -- Vintage Comparison matrix --
     if vintages:
-        parts.append("## Vintages in Cellar\n\n")
-        parts.append("| Vintage | Wine ID |\n|---|---|\n")
-        for w in sorted(related_wines, key=lambda x: x.get("vintage") or 0):
-            v = w.get("vintage")
-            v_str = str(v) if v is not None else "NV"
-            parts.append(f"| {v_str} | {w['wine_id']} |\n")
+        _tastings = tastings_by_wine or {}
+        _ratings = pro_ratings_by_wine or {}
+        _bottles = bottles_by_wine or {}
+        vstats = _aggregate_vintage_stats(related_wines, _tastings, _ratings, _bottles)
+
+        parts.append("## Vintage Comparison\n\n")
+        parts.append("| Vintage | Status | Score | Price | Bottles | Notes |\n")
+        parts.append("|---|---|---|---|---|---|\n")
+        for s in vstats:
+            v_str = str(s.vintage) if s.vintage else "NV"
+            status = s.drinking_status or "—"
+            if s.best_score is not None:
+                max_s = int(s.best_score_max) if s.best_score_max else 100
+                # Show decimal only if not whole
+                score_val = int(s.best_score) if s.best_score == int(s.best_score) else s.best_score
+                score_str = f"{score_val}/{max_s}"
+            else:
+                score_str = "—"
+            if s.list_price is not None and s.list_currency:
+                price_str = f"{s.list_currency} {s.list_price:.0f}"
+            elif s.list_price is not None:
+                price_str = f"{s.list_price:.0f}"
+            else:
+                price_str = "—"
+            bottles_str = str(s.bottles_stored) if s.bottles_stored > 0 else "—"
+            notes = "—"
+            parts.append(f"| {v_str} | {status} | {score_str} | {price_str} | {bottles_str} | {notes} |\n")
         parts.append("\n")
+
+        # Best value callout
+        best_val = _select_best_value(vstats)
+        if best_val is not None:
+            bv_vintage = str(best_val.vintage) if best_val.vintage else "NV"
+            max_s = int(best_val.best_score_max) if best_val.best_score_max else 100
+            score_val = (
+                int(best_val.best_score) if best_val.best_score == int(best_val.best_score) else best_val.best_score
+            )
+            price_str = (
+                f"{best_val.list_currency} {best_val.list_price:.0f}"
+                if best_val.list_currency and best_val.list_price
+                else f"{best_val.price_per_750ml:.0f}"
+            )
+            parts.append(f"**Best value:** {bv_vintage} (score {score_val}/{max_s}, {price_str})\n\n")
+
+        # Suggested drink order
+        order, past_window = _suggest_drink_order(vstats)
+        if order:
+            order_strs = [str(v) if v else "NV" for v in order]
+            parts.append(f"**Suggested drink order:** {' → '.join(order_strs)}\n\n")
+        if past_window:
+            pw_strs = [str(v) if v else "NV" for v in past_window]
+            parts.append(f"> ⚠️ Past window: {', '.join(pw_strs)}\n\n")
+
+        # Vintage trend
+        trend = _vintage_trend(vstats)
+        if trend:
+            parts.append(f"**Vintage trend:** {trend}\n\n")
 
     # -- Agent sections --
     for sec in companion_sections:
@@ -229,6 +469,27 @@ def generate_companion_dossiers(
         if twid is not None and not w.get("is_deleted"):
             wines_by_tracked.setdefault(twid, []).append(w)
 
+    # Build per-wine-id lookups for tasting, pro_rating, bottle data
+    tastings_by_wine: dict[int, list[dict]] = {}
+    for t in entities.get("tasting", []):
+        wid = t.get("wine_id")
+        if wid is not None:
+            tastings_by_wine.setdefault(wid, []).append(t)
+
+    pro_ratings_by_wine: dict[int, list[dict]] = {}
+    for pr in entities.get("pro_rating", []):
+        wid = pr.get("wine_id")
+        if wid is not None:
+            pro_ratings_by_wine.setdefault(wid, []).append(pr)
+
+    bottles_by_wine: dict[int, int] = {}
+    for b in entities.get("bottle", []):
+        wid = b.get("wine_id")
+        if wid is None:
+            continue
+        if b.get("status") == "stored" and not b.get("is_in_transit"):
+            bottles_by_wine[wid] = bottles_by_wine.get(wid, 0) + 1
+
     subdir = settings.wishlist.wishlist_subdir
     dest_dir = output_dir / "wines" / subdir
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -264,6 +525,9 @@ def generate_companion_dossiers(
             appellation,
             settings,
             existing_content,
+            tastings_by_wine=tastings_by_wine,
+            pro_ratings_by_wine=pro_ratings_by_wine,
+            bottles_by_wine=bottles_by_wine,
         )
         dest.write_text(content, encoding="utf-8")
         written.append(dest)

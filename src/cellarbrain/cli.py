@@ -178,6 +178,7 @@ def run(
     sync_mode: bool = False,
     bottles_gone_csv: str,
     settings: Settings | None = None,
+    no_migrate: bool = False,
 ) -> bool:
     """Execute the ETL pipeline. Returns True if validation passes."""
     if settings is None:
@@ -199,6 +200,17 @@ def run(
             print(f"Pre-ETL backup: {bkp_path.name}")
         except Exception as exc:
             logger.warning("Backup failed (continuing ETL): %s", exc)
+
+    # --- Auto-apply pending schema migrations ---
+    if not no_migrate:
+        from .migrate import CURRENT_VERSION, read_schema_version, run_migrations
+
+        if out.exists() and any(out.glob("*.parquet")):
+            current_schema = read_schema_version(out)
+            if current_schema < CURRENT_VERSION:
+                applied = run_migrations(out)
+                if applied:
+                    print(f"Applied {len(applied)} pending schema migration(s)")
 
     now = datetime.now(UTC).replace(tzinfo=None)
     run_id = incremental.next_run_id(out)
@@ -389,6 +401,12 @@ def run(
         else:
             print("\nSommelier model not found — skipping wine index rebuild.")
 
+    # --- Compute research completeness scores ---
+    from .dossier_ops import write_completeness_parquet
+
+    comp_path = write_completeness_parquet(out)
+    print(f"\n  research_completeness: {comp_path}")
+
     # --- Validate ---
     print("\nRunning validation...")
     result = val.validate(out)
@@ -526,6 +544,12 @@ def _subcommand_main(argv: list[str]) -> None:
     etl.add_argument("bottles_gone_csv")
     etl.add_argument("-o", "--output", default=None)
     etl.add_argument("--sync", action="store_true", default=False)
+    etl.add_argument(
+        "--no-migrate",
+        action="store_true",
+        default=False,
+        help="Skip automatic schema migrations before ETL",
+    )
 
     # --- validate ---
     sub.add_parser("validate", help="Validate Parquet output")
@@ -656,6 +680,11 @@ def _subcommand_main(argv: list[str]) -> None:
     )
     ingest.add_argument("--status", action="store_true", help="Show ingest daemon status from log database")
 
+    # --- promotions ---
+    promo = sub.add_parser("promotions", help="Scan newsletters for wine promotions")
+    promo.add_argument("--dry-run", action="store_true", help="Scan but do not archive or update state")
+    promo.add_argument("--retailer", type=str, default=None, help="Only scan a specific retailer (e.g. kapweine)")
+
     # --- backup ---
     bkp_parser = sub.add_parser("backup", help="Create a backup of the data directory")
     bkp_parser.add_argument("--backup-dir", default=None, help="Backup destination (default from config)")
@@ -679,6 +708,56 @@ def _subcommand_main(argv: list[str]) -> None:
         help="Run only specific checks (parquet, schema, dossier, sommelier, currency, etl, backup, disk, integrity)",
     )
 
+    # --- digest ---
+    digest_parser = sub.add_parser("digest", help="Generate a cellar intelligence digest")
+    digest_parser.add_argument(
+        "--period",
+        choices=["daily", "weekly"],
+        default="daily",
+        help="Lookback period (default: daily)",
+    )
+
+    # --- learn ---
+    learn_parser = sub.add_parser("learn", help="Generate a guided wine education path")
+    learn_parser.add_argument("topic", help="Region, country, or grape to study (e.g. 'Burgundy')")
+    learn_parser.add_argument(
+        "--lesson-size",
+        type=int,
+        default=4,
+        help="Number of wines per tasting lesson (2-6, default: 4)",
+    )
+    learn_parser.add_argument(
+        "--no-purchases",
+        action="store_true",
+        help="Omit purchase gap suggestions",
+    )
+    learn_parser.add_argument(
+        "--no-insights",
+        action="store_true",
+        help="Omit dossier insights",
+    )
+
+    # --- migrate ---
+    mig_parser = sub.add_parser("migrate", help="Apply pending schema migrations to Parquet files")
+    mig_parser.add_argument("--dry-run", action="store_true", help="Show pending migrations without applying")
+    mig_parser.add_argument("--status", action="store_true", help="Show current schema version and pending count")
+
+    # --- dashboard-prune ---
+    sub.add_parser(
+        "dashboard-prune",
+        help="Prune stale consumed-pending entries from the dashboard sidecar",
+    )
+
+    # --- anomalies ---
+    anom = sub.add_parser("anomalies", help="Detect anomalies in observability data and ETL output")
+    anom.add_argument(
+        "--severity",
+        choices=["info", "warn", "critical"],
+        default=None,
+        help="Filter by severity level",
+    )
+    anom.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON (for scripting)")
+
     # --- info ---
     info_parser = sub.add_parser("info", help="Show installation and configuration diagnostics")
     info_parser.add_argument("--json", action="store_true", help="Output as JSON (for scripting)")
@@ -692,6 +771,22 @@ def _subcommand_main(argv: list[str]) -> None:
         "-t", "--target", default=None, help="Target directory (default: ~/.openclaw/skills/cellarbrain/)"
     )
     skills_parser.add_argument("--force", action="store_true", default=False, help="Overwrite existing skill files")
+
+    # --- gift ---
+    gift_parser = sub.add_parser("gift", help="Recommend wines from the cellar as gifts")
+    gift_parser.add_argument("profile", help="Free-text recipient description, e.g. 'loves bold Italian reds'")
+    gift_parser.add_argument(
+        "--budget", default="any", help="Budget tier (modest/nice/generous/lavish/extraordinary) or range '80-150'"
+    )
+    gift_parser.add_argument(
+        "--occasion",
+        default=None,
+        help="Gift occasion: birthday, milestone, thank_you, host_gift, corporate, romantic, holiday",
+    )
+    gift_parser.add_argument("--limit", type=int, default=3, help="Number of suggestions (default: 3)")
+    gift_parser.add_argument(
+        "--allow-last-bottle", action="store_true", default=False, help="Include wines with only 1 bottle in stock"
+    )
 
     # --- service ---
     svc = sub.add_parser("service", help="Manage macOS launchd services (ingest, dashboard)")
@@ -767,11 +862,18 @@ def _subcommand_main(argv: list[str]) -> None:
         "logs": _cmd_logs,
         "dashboard": _cmd_dashboard,
         "ingest": _cmd_ingest,
+        "promotions": _cmd_promotions,
         "backup": _cmd_backup,
         "restore": _cmd_restore,
         "doctor": _cmd_doctor,
+        "digest": _cmd_digest,
+        "learn": _cmd_learn,
+        "migrate": _cmd_migrate,
+        "dashboard-prune": _cmd_dashboard_prune,
+        "anomalies": _cmd_anomalies,
         "info": _cmd_info,
         "install-skills": _cmd_install_skills,
+        "gift": _cmd_gift,
         "service": _cmd_service,
     }
     handler = handlers[args.command]
@@ -787,8 +889,187 @@ def _cmd_etl(args: argparse.Namespace, settings: Settings) -> None:
         sync_mode=args.sync,
         bottles_gone_csv=args.bottles_gone_csv,
         settings=settings,
+        no_migrate=args.no_migrate,
     )
+    if ok:
+        _prune_dashboard_sidecars(output)
     sys.exit(0 if ok else 1)
+
+
+def _prune_dashboard_sidecars(data_dir: str) -> None:
+    """Remove resolved entries from dashboard sidecars after a successful ETL run."""
+    from . import query as q
+    from .dashboard import sidecars
+
+    try:
+        con = q.get_agent_connection(data_dir)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("dashboard-prune: could not open agent connection: %s", exc)
+        return
+    try:
+        pruned = sidecars.prune_consumed_after_etl(data_dir, con)
+        if pruned:
+            logger.info("dashboard-prune: removed %d resolved consumed-pending entries", len(pruned))
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _cmd_migrate(args: argparse.Namespace, settings: Settings) -> None:
+    """Apply pending schema migrations to Parquet files."""
+    from .migrate import CURRENT_VERSION, pending_migrations, read_schema_version, run_migrations
+
+    out = pathlib.Path(args.data_dir if args.data_dir else settings.paths.data_dir)
+
+    if not out.exists() or not any(out.glob("*.parquet")):
+        print("Data directory does not exist or has no Parquet files — run etl first.", file=sys.stderr)
+        sys.exit(1)
+
+    current = read_schema_version(out)
+
+    if args.status:
+        pending = pending_migrations(current)
+        print(f"Schema version: {current} (target: {CURRENT_VERSION})")
+        if pending:
+            print(f"Pending migrations: {len(pending)}")
+            for step in pending:
+                print(f"  v{step.from_version} → v{step.to_version}: {step.description}")
+        else:
+            print("No pending migrations.")
+        return
+
+    if current >= CURRENT_VERSION:
+        print(f"Schema is up to date (version {current}).")
+        return
+
+    if args.dry_run:
+        pending = pending_migrations(current)
+        print(f"Would apply {len(pending)} migration(s):")
+        for step in pending:
+            print(f"  v{step.from_version} → v{step.to_version}: {step.description}")
+            if step.entities:
+                print(f"    Affects: {', '.join(step.entities)}")
+        return
+
+    # Create pre-migration backup
+    from .backup import create_backup
+
+    try:
+        bkp = create_backup(
+            out,
+            settings.backup.backup_dir,
+            include_sommelier=False,
+            include_logs=False,
+            max_backups=settings.backup.max_backups,
+        )
+        print(f"Pre-migration backup: {bkp.name}")
+    except Exception as exc:
+        logger.warning("Backup failed (continuing migration): %s", exc)
+
+    applied = run_migrations(out)
+    print(f"Applied {len(applied)} migration(s):")
+    for step in applied:
+        print(f"  v{step.from_version} → v{step.to_version}: {step.description}")
+    print(f"\nSchema version is now {CURRENT_VERSION}.")
+
+
+def _cmd_dashboard_prune(args: argparse.Namespace, settings: Settings) -> None:
+    """Manually prune resolved entries from dashboard sidecars."""
+    from . import query as q
+    from .dashboard import sidecars
+
+    data_dir = settings.paths.data_dir
+    con = q.get_agent_connection(data_dir)
+    try:
+        pruned = sidecars.prune_consumed_after_etl(data_dir, con)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if pruned:
+        print(f"Pruned {len(pruned)} resolved consumed-pending entries: {pruned}")
+    else:
+        print("No stale consumed-pending entries to prune.")
+
+
+def _cmd_anomalies(args: argparse.Namespace, settings: Settings) -> None:
+    """Detect and report anomalies in observability data and ETL output."""
+    import duckdb
+
+    from .anomaly import detect_all
+
+    cfg = settings.anomaly
+    data_dir = settings.paths.data_dir
+
+    # Open log store (read-only)
+    db_path = settings.logging.log_db
+    if db_path is None:
+        db_path = str(pathlib.Path(data_dir) / "logs" / "cellarbrain-logs.duckdb")
+
+    con = None
+    if pathlib.Path(db_path).exists():
+        con = duckdb.connect(db_path, read_only=True)
+
+    try:
+        anomalies = detect_all(
+            con,
+            data_dir,
+            enabled=cfg.enabled,
+            baseline_days=cfg.baseline_days,
+            volume_window_hours=cfg.volume_window_hours,
+            volume_factor=cfg.volume_factor,
+            volume_min_calls=cfg.volume_min_calls,
+            latency_factor=cfg.latency_factor,
+            latency_min_samples=cfg.latency_min_samples,
+            error_window_hours=cfg.error_window_hours,
+            error_cluster_min=cfg.error_cluster_min,
+            drift_pct=cfg.drift_pct,
+            drift_min_samples=cfg.drift_min_samples,
+            etl_baseline_runs=cfg.etl_baseline_runs,
+            etl_delete_min_abs=cfg.etl_delete_min_abs,
+            etl_delete_min_pct=cfg.etl_delete_min_pct,
+        )
+    finally:
+        if con is not None:
+            con.close()
+
+    # Filter by severity
+    if args.severity:
+        anomalies = [a for a in anomalies if a.severity == args.severity]
+
+    if args.json_output:
+        import json
+
+        data = [
+            {
+                "kind": a.kind,
+                "severity": a.severity,
+                "subject": a.subject,
+                "message": a.message,
+                "metric": a.metric,
+                "baseline": a.baseline,
+                "observed": a.observed,
+                "detected_at": a.detected_at.isoformat(),
+                "evidence": a.evidence,
+            }
+            for a in anomalies
+        ]
+        print(json.dumps(data, indent=2))
+        return
+
+    if not anomalies:
+        print("No anomalies detected.")
+        return
+
+    severity_badge = {"critical": "CRIT", "warn": "WARN", "info": "INFO"}
+    print(f"{'Sev':<6} {'Kind':<22} {'Subject':<25} {'Message'}")
+    print("-" * 90)
+    for a in anomalies:
+        badge = severity_badge.get(a.severity, "?")
+        print(f"{badge:<6} {a.kind:<22} {a.subject:<25} {a.message}")
 
 
 def _cmd_validate(args: argparse.Namespace, settings: Settings) -> None:
@@ -1017,6 +1298,12 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
             )
             if comp_paths:
                 print(f"Regenerated {len(comp_paths)} companion dossier(s)")
+
+    # Recompute research completeness scores
+    from .dossier_ops import write_completeness_parquet
+
+    write_completeness_parquet(out)
+    print("Recomputed research completeness scores")
 
     print(f"Recalc complete: {wine_changes} wine(s), {bottle_changes} bottle(s), {cellar_changes} cellar(s) updated")
 
@@ -1288,15 +1575,9 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
 
 def _cmd_dashboard(args: argparse.Namespace, settings: Settings) -> None:
     """Start the web explorer dashboard."""
-    try:
-        from .dashboard import create_app
-    except ImportError:
-        print("Dashboard dependencies not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[dashboard]", file=sys.stderr)
-        sys.exit(1)
-
     import uvicorn
 
+    from .dashboard import create_app
     from .observability import _discover_log_files
 
     # Ensure at least one log-store file exists so the dashboard can start
@@ -1332,6 +1613,7 @@ def _cmd_dashboard(args: argparse.Namespace, settings: Settings) -> None:
         log_db_path=settings.logging.log_db,
         data_dir=data_dir,
         dashboard_config=settings.dashboard,
+        anomaly_config=settings.anomaly,
     )
     host = "127.0.0.1"
     port = args.port
@@ -1370,6 +1652,38 @@ def _cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
     else:
         is_ok = report.ok
     sys.exit(0 if is_ok else 1)
+
+
+def _cmd_digest(args: argparse.Namespace, settings: Settings) -> None:
+    """Generate and print a cellar intelligence digest."""
+    from . import query as q
+    from .digest import build_digest, format_digest
+
+    data_dir = pathlib.Path(settings.paths.data_dir)
+    con = q.connect(data_dir)
+    result = build_digest(con, data_dir, period=args.period)
+    print(format_digest(result))
+
+
+def _cmd_learn(args: argparse.Namespace, settings: Settings) -> None:
+    """Generate and print a guided wine education path."""
+    from . import query as q
+    from .education import build_learning_path, format_learning_path
+
+    data_dir = pathlib.Path(settings.paths.data_dir)
+    con = q.connect(data_dir)
+    path = build_learning_path(
+        con,
+        args.topic,
+        data_dir,
+        lesson_size=args.lesson_size,
+        include_purchases=not args.no_purchases,
+        include_dossier_insights=not args.no_insights,
+    )
+    if path is None:
+        print(f'No wines found matching "{args.topic}".')
+        sys.exit(1)
+    print(format_learning_path(path))
 
 
 def _cmd_backup(args: argparse.Namespace, settings: Settings) -> None:
@@ -1430,12 +1744,7 @@ def _cmd_restore(args: argparse.Namespace, settings: Settings) -> None:
 
 def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
     """Start the email ingestion daemon or run a single poll cycle."""
-    try:
-        from .email_poll import IngestDaemon, poll_once, reap_orphans, reap_stale
-    except ImportError:
-        print("Ingest dependencies not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
-        sys.exit(1)
+    from .email_poll import IngestDaemon, poll_once, reap_orphans, reap_stale
 
     config = settings.ingest
 
@@ -1482,6 +1791,20 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> None:
         pass
 
 
+def _cmd_promotions(args: argparse.Namespace, settings: Settings) -> None:
+    """Scan newsletters for wine promotions."""
+    from .promotions import scan_once
+    from .promotions.report import format_report
+
+    result = scan_once(
+        settings,
+        dry_run=getattr(args, "dry_run", False),
+        retailer_filter=getattr(args, "retailer", None),
+    )
+    print(format_report(result))
+    sys.exit(0 if not result.errors else 1)
+
+
 def _ingest_setup() -> None:
     """Interactive credential storage for the ingest daemon."""
     from .email_poll.credentials import store_credentials
@@ -1497,14 +1820,9 @@ def _ingest_setup() -> None:
         print("Error: password is required.", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        store_credentials(user, password)
-        print(f"\nCredentials stored for '{user}'.")
-        print("You can now run: cellarbrain ingest")
-    except ImportError:
-        print("Error: 'keyring' package not installed.", file=sys.stderr)
-        print("Run: pip install cellarbrain[ingest]", file=sys.stderr)
-        sys.exit(1)
+    store_credentials(user, password)
+    print(f"\nCredentials stored for '{user}'.")
+    print("You can now run: cellarbrain ingest")
 
 
 def _ingest_status(settings: Settings) -> None:
@@ -1614,6 +1932,26 @@ def _cmd_install_skills(args: argparse.Namespace, settings: Settings) -> None:
             print(f"  {name}")
     else:
         print(f"All skills already present in {target} (use --force to overwrite)")
+
+
+def _cmd_gift(args: argparse.Namespace, settings: Settings) -> None:
+    """Recommend wines from the cellar as gifts."""
+    from . import query as q
+    from .gifting import format_gift_suggestions, suggest_gifts
+
+    con = q.get_connection(settings.paths.data_dir)
+    plan = suggest_gifts(
+        con=con,
+        profile_text=args.profile,
+        budget=args.budget,
+        occasion=args.occasion,
+        data_dir=settings.paths.data_dir,
+        limit=max(1, min(args.limit, settings.gifting.max_limit)),
+        min_bottles=1 if args.allow_last_bottle else settings.gifting.min_bottles,
+        markup_factor=settings.gifting.markup_factor,
+        famous_regions=frozenset(settings.gifting.famous_regions),
+    )
+    print(format_gift_suggestions(plan))
 
 
 # ---------------------------------------------------------------------------
@@ -1784,8 +2122,13 @@ def _rebuild_wine_index(model, data_dir: pathlib.Path, wine_dir: pathlib.Path, s
 
 
 def _cmd_train_model(args: argparse.Namespace, settings: Settings) -> None:
-    from .sommelier.seed import ensure_pairing_dataset
-    from .sommelier.training import train_model
+    try:
+        from .sommelier.seed import ensure_pairing_dataset
+        from .sommelier.training import train_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
     output = args.output or cfg.model_dir
@@ -1821,8 +2164,13 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
     training for a few epochs on the full pairing dataset.  Then rebuilds
     both FAISS indexes.
     """
-    from .sommelier.seed import ensure_pairing_dataset
-    from .sommelier.training import train_model
+    try:
+        from .sommelier.seed import ensure_pairing_dataset
+        from .sommelier.training import train_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
 
@@ -1873,8 +2221,13 @@ def _cmd_retrain_model(args: argparse.Namespace, settings: Settings) -> None:
 
 
 def _cmd_rebuild_indexes(args: argparse.Namespace, settings: Settings) -> None:
-    from .sommelier.index import build_index
-    from .sommelier.model import load_model
+    try:
+        from .sommelier.index import build_index
+        from .sommelier.model import load_model
+    except ImportError:
+        print("ML dependencies not installed.", file=sys.stderr)
+        print("Run: pip install cellarbrain[ml]", file=sys.stderr)
+        sys.exit(1)
 
     cfg = settings.sommelier
     model = load_model(cfg.model_dir)

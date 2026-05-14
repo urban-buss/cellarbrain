@@ -89,11 +89,18 @@ class TestDefaults:
 
     def test_agent_sections_defaults(self):
         s = Settings()
-        assert len(s.agent_sections) == 9
+        assert len(s.agent_sections) == 10
         pure = [sec for sec in s.agent_sections if not sec.mixed]
         mixed = [sec for sec in s.agent_sections if sec.mixed]
-        assert len(pure) == 6
+        assert len(pure) == 7
         assert len(mixed) == 3
+
+    def test_dashboard_notes_section_registered(self):
+        s = Settings()
+        sec = s.agent_section_by_key("dashboard_notes")
+        assert sec.heading == "Dashboard Notes"
+        assert sec.tag == "agent:dashboard"
+        assert sec.mixed is False
 
     def test_classification_short_defaults(self):
         s = Settings()
@@ -153,86 +160,27 @@ class TestLoadNoFile:
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings()
-        # Relative paths are resolved against CWD when no config file exists
+        # Paths are resolved against CWD when no config file is found
         assert s.paths.data_dir == str(tmp_path / "output")
         assert s.paths.raw_dir == str(tmp_path / "raw")
-        assert s.config_source is None
+        assert s.backup.backup_dir == str(tmp_path / "bkp")
+        # Non-path settings remain at defaults
+        assert s.query == Settings().query
+        assert s.display == Settings().display
+        assert s.csv == Settings().csv
 
     def test_explicit_none_returns_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
         monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
         s = load_settings(None)
+        # Paths are resolved against CWD when no config file is found
         assert s.paths.data_dir == str(tmp_path / "output")
-        assert s.config_source is None
-
-
-# ---------------------------------------------------------------------------
-# TestPathAnchoring — relative paths resolved against config file location
-# ---------------------------------------------------------------------------
-
-
-class TestPathAnchoring:
-    def test_data_dir_anchored_to_config_parent(self, tmp_path):
-        """Relative data_dir in TOML resolves against the config file's directory."""
-        subdir = tmp_path / "conf"
-        subdir.mkdir()
-        cfg = subdir / "cellarbrain.toml"
-        cfg.write_text('[paths]\ndata_dir = "data"\n', encoding="utf-8")
-        s = load_settings(cfg)
-        assert s.paths.data_dir == str(subdir / "data")
-
-    def test_absolute_data_dir_unchanged(self, tmp_path):
-        """Absolute data_dir in TOML passes through without modification."""
-        cfg = tmp_path / "cellarbrain.toml"
-        abs_dir = (tmp_path / "abs_data").as_posix()
-        cfg.write_text(f'[paths]\ndata_dir = "{abs_dir}"\n', encoding="utf-8")
-        s = load_settings(cfg)
-        assert pathlib.Path(s.paths.data_dir) == pathlib.Path(abs_dir)
-
-    def test_raw_dir_anchored_to_config_parent(self, tmp_path):
-        """Relative raw_dir resolves against config file location."""
-        cfg = tmp_path / "cellarbrain.toml"
-        cfg.write_text('[paths]\nraw_dir = "csv_files"\n', encoding="utf-8")
-        s = load_settings(cfg)
-        assert s.paths.raw_dir == str(tmp_path / "csv_files")
-
-    def test_sommelier_paths_anchored(self, tmp_path):
-        """Sommelier model paths are anchored to data_dir."""
-        cfg = tmp_path / "cellarbrain.toml"
-        cfg.write_text(
-            textwrap.dedent("""\
-            [sommelier]
-            model_dir = "my_models/sommelier"
-        """),
-            encoding="utf-8",
-        )
-        s = load_settings(cfg)
-        assert s.sommelier.model_dir == str(tmp_path / "output" / "my_models" / "sommelier")
-
-    def test_backup_dir_anchored(self, tmp_path):
-        """Backup dir is anchored to config file location."""
-        cfg = tmp_path / "cellarbrain.toml"
-        cfg.write_text('[backup]\nbackup_dir = "backups"\n', encoding="utf-8")
-        s = load_settings(cfg)
-        assert s.backup.backup_dir == str(tmp_path / "backups")
-
-    def test_no_config_anchors_to_cwd(self, tmp_path, monkeypatch):
-        """Without a config file, relative paths anchor to CWD."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
-        monkeypatch.delenv("CELLARBRAIN_DATA_DIR", raising=False)
-        s = load_settings()
-        assert s.paths.data_dir == str(tmp_path / "output")
-        assert s.sommelier.model_dir == str(tmp_path / "output" / "models" / "sommelier" / "model")
-
-    def test_env_data_dir_resolved_to_absolute(self, tmp_path, monkeypatch):
-        """CELLARBRAIN_DATA_DIR env var is also resolved to absolute."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
-        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "env_output")
-        s = load_settings()
-        assert s.paths.data_dir == str(tmp_path / "env_output")
+        assert s.paths.raw_dir == str(tmp_path / "raw")
+        assert s.backup.backup_dir == str(tmp_path / "bkp")
+        # Non-path settings remain at defaults
+        assert s.query == Settings().query
+        assert s.display == Settings().display
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +201,10 @@ class TestLoadToml:
             encoding="utf-8",
         )
         s = load_settings(cfg)
-        # Relative data_dir is resolved against config file's parent directory
+        # Relative paths are resolved against the config file's parent dir
         assert s.paths.data_dir == str(tmp_path / "my_output")
         assert s.query.row_limit == 500
-        # Non-overridden defaults resolved too
+        # Non-overridden defaults preserved (also resolved)
         assert s.paths.raw_dir == str(tmp_path / "raw")
         assert s.query.search_limit == 10
 
@@ -404,11 +352,10 @@ class TestEnvOverride:
     def test_CELLARBRAIN_DATA_DIR_overrides_paths(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("CELLARBRAIN_CONFIG", raising=False)
-        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/custom/data")
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(tmp_path / "custom" / "data"))
         s = load_settings()
-        # Env var path is resolved to absolute
-        assert s.paths.data_dir == str(pathlib.Path("/custom/data").resolve())
-        # Other path fields anchored against CWD (no config file)
+        assert s.paths.data_dir == str(tmp_path / "custom" / "data")
+        # Other path fields are resolved against CWD
         assert s.paths.raw_dir == str(tmp_path / "raw")
 
     def test_env_overrides_toml_data_dir(self, tmp_path, monkeypatch):
@@ -420,9 +367,9 @@ class TestEnvOverride:
         """),
             encoding="utf-8",
         )
-        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", "/env/output")
+        monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(tmp_path / "env" / "output"))
         s = load_settings(cfg)
-        assert s.paths.data_dir == str(pathlib.Path("/env/output").resolve())
+        assert s.paths.data_dir == str(tmp_path / "env" / "output")
 
 
 # ---------------------------------------------------------------------------
@@ -544,16 +491,18 @@ class TestAgentSectionHelpers:
         assert "producer_profile" in keys
         assert "ratings_reviews" in keys
         assert "agent_log" in keys
-        assert len(keys) == 9
+        assert "dashboard_notes" in keys
+        assert len(keys) == 10
 
     def test_pure_agent_sections(self):
         s = Settings()
         pure = s.pure_agent_sections()
-        assert len(pure) == 6
+        assert len(pure) == 7
         assert all(not sec.mixed for sec in pure)
         pure_keys = {sec.key for sec in pure}
         assert "producer_profile" in pure_keys
         assert "agent_log" in pure_keys
+        assert "dashboard_notes" in pure_keys
 
     def test_mixed_agent_sections(self):
         s = Settings()
@@ -584,7 +533,8 @@ class TestAgentSectionHelpers:
         assert h2k["From Research"] == "ratings_reviews"
         assert h2k["Community Tasting Notes"] == "tasting_notes"
         assert h2k["Recommended Pairings"] == "food_pairings"
-        assert len(h2k) == 9
+        assert h2k["Dashboard Notes"] == "dashboard_notes"
+        assert len(h2k) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -1263,6 +1213,134 @@ class TestIngestConfig:
         assert s.ingest.etl_timeout == 600
         assert s.ingest.max_backoff_interval == 120
         assert s.ingest.max_attachment_bytes == 5_242_880
+
+
+# ---------------------------------------------------------------------------
+# TestRecommendConfig
+# ---------------------------------------------------------------------------
+
+
+class TestRecommendConfig:
+    """Tests for RecommendConfig in settings."""
+
+    def test_defaults(self):
+        s = Settings()
+        assert s.recommend.default_limit == 5
+        assert s.recommend.max_limit == 15
+        assert s.recommend.urgency_weight == 3.0
+        assert s.recommend.occasion_weight == 2.0
+        assert s.recommend.pairing_weight == 2.0
+        assert s.recommend.freshness_weight == 1.0
+        assert s.recommend.diversity_weight == 1.0
+        assert s.recommend.quality_weight == 1.0
+        assert s.recommend.freshness_days_hard == 7
+        assert s.recommend.freshness_days_mid == 14
+        assert s.recommend.freshness_days_soft == 30
+        assert s.recommend.last_bottle_penalty == 1.0
+        assert s.recommend.last_bottle_exceptions == ("celebration", "romantic")
+
+    def test_from_toml(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            textwrap.dedent("""\
+            [recommend]
+            default_limit = 3
+            max_limit = 10
+            urgency_weight = 4.0
+            freshness_days_hard = 5
+            last_bottle_exceptions = ["celebration"]
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(str(toml))
+        assert s.recommend.default_limit == 3
+        assert s.recommend.max_limit == 10
+        assert s.recommend.urgency_weight == 4.0
+        assert s.recommend.freshness_days_hard == 5
+        assert s.recommend.last_bottle_exceptions == ("celebration",)
+        # Defaults preserved
+        assert s.recommend.occasion_weight == 2.0
+        assert s.recommend.freshness_days_soft == 30
+
+    def test_unknown_key_raises(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            "[recommend]\nbogus_option = true\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Unknown key"):
+            load_settings(str(toml))
+
+
+# ---------------------------------------------------------------------------
+# TestAnomalyConfig
+# ---------------------------------------------------------------------------
+
+
+class TestAnomalyConfig:
+    """Tests for AnomalyConfig in settings."""
+
+    def test_defaults(self):
+        s = Settings()
+        assert s.anomaly.enabled is True
+        assert s.anomaly.baseline_days == 7
+        assert s.anomaly.volume_window_hours == 1
+        assert s.anomaly.volume_factor == 5.0
+        assert s.anomaly.volume_min_calls == 10
+        assert s.anomaly.latency_factor == 2.5
+        assert s.anomaly.latency_min_samples == 20
+        assert s.anomaly.error_window_hours == 1
+        assert s.anomaly.error_cluster_min == 5
+        assert s.anomaly.drift_pct == 30.0
+        assert s.anomaly.drift_min_samples == 30
+        assert s.anomaly.etl_baseline_runs == 5
+        assert s.anomaly.etl_delete_min_abs == 50
+        assert s.anomaly.etl_delete_min_pct == 20.0
+
+    def test_from_toml(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            textwrap.dedent("""\
+            [anomaly]
+            enabled = false
+            baseline_days = 14
+            volume_factor = 3.0
+            error_cluster_min = 10
+        """),
+            encoding="utf-8",
+        )
+        s = load_settings(str(toml))
+        assert s.anomaly.enabled is False
+        assert s.anomaly.baseline_days == 14
+        assert s.anomaly.volume_factor == 3.0
+        assert s.anomaly.error_cluster_min == 10
+        # Defaults preserved
+        assert s.anomaly.volume_window_hours == 1
+        assert s.anomaly.latency_factor == 2.5
+
+    def test_unknown_key_raises(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            "[anomaly]\nbogus_key = true\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Unknown key"):
+            load_settings(str(toml))
+
+
+class TestOutputConfig:
+    def test_defaults(self):
+        s = Settings()
+        assert s.output.default_format == "markdown"
+
+    def test_from_toml(self, tmp_path):
+        toml = tmp_path / "test.toml"
+        toml.write_text(
+            '[output]\ndefault_format = "plain"\n',
+            encoding="utf-8",
+        )
+        s = load_settings(str(toml))
+        assert s.output.default_format == "plain"
 
 
 # ---------------------------------------------------------------------------

@@ -13,10 +13,13 @@ from cellarbrain.search import (
     _CONCEPT_EXPANSIONS,
     _SEARCH_COLS,
     _SYSTEM_CONCEPTS,
+    SearchTelemetry,
     _extract_intents,
     _normalise_query_tokens,
     find_wine,
+    find_wine_with_telemetry,
     format_siblings,
+    suggest_wines,
 )
 from dataset_factory import (
     _now,
@@ -2921,3 +2924,128 @@ class TestFormatSiblings:
         con = get_agent_connection(format_dir)
         rows = con.execute("SELECT wine_id FROM format_groups ORDER BY wine_id").fetchall()
         assert [r[0] for r in rows] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy / phonetic / suggestion tests
+# ---------------------------------------------------------------------------
+
+
+class TestFuzzyExtensions:
+    """Tests for extended fuzzy matching across more columns."""
+
+    def test_fuzzy_matches_country(self, data_dir):
+        """Fuzzy match on country name."""
+        con = get_connection(data_dir)
+        result = find_wine(con, "Spaim", fuzzy=True)
+        # Should match "Spain" via Jaro-Winkler
+        assert "Reserva Especial" in result or "Bodega" in result
+
+    def test_fuzzy_matches_region(self, data_dir):
+        """Fuzzy match on region column."""
+        con = get_connection(data_dir)
+        result = find_wine(con, "Rioa", fuzzy=True)
+        assert "Reserva Especial" in result or "Bodega" in result
+
+    def test_implicit_auto_fuzzy_on_zero_results(self, data_dir):
+        """Auto-fuzzy kicks in when strict + soft-AND return zero results."""
+        con = get_connection(data_dir)
+        # "Chteau" is a typo of "Château" — should be rescued by auto-fuzzy
+        result = find_wine(con, "Chteau Test")
+        # Should still find the wine due to auto-fuzzy
+        assert "Château Test" in result or "Cuvée Alpha" in result
+
+
+class TestSuggestions:
+    """Tests for the suggest_wines autocomplete feature."""
+
+    def test_suggest_returns_results(self, data_dir):
+        """suggest_wines returns similar wine names."""
+        con = get_connection(data_dir)
+        # full_name is "Château Test Cuvée Alpha 2020" — use close match
+        result = suggest_wines(con, "Chateau Test Cuvee Alpha 2020", threshold=0.70)
+        assert "Château Test" in result or "Cuvée Alpha" in result
+
+    def test_suggest_short_query_returns_message(self, data_dir):
+        """Queries shorter than 4 chars return an appropriate message."""
+        con = get_connection(data_dir)
+        result = suggest_wines(con, "Cu")
+        # Short queries skip suggestion logic
+        assert "No suggestions" in result or result.strip() == ""
+
+    def test_suggest_no_match(self, data_dir):
+        """A completely unrelated query returns no suggestions."""
+        con = get_connection(data_dir)
+        result = suggest_wines(con, "Zyxwvutsrqp")
+        assert "No suggestions" in result or "0 suggestions" in result.lower() or result.strip() == ""
+
+
+class TestFindWineWithTelemetry:
+    """Tests for find_wine_with_telemetry returning structured metrics."""
+
+    def test_returns_tuple(self, data_dir):
+        """Returns (result_text, SearchTelemetry) tuple."""
+        con = get_connection(data_dir)
+        result, telemetry = find_wine_with_telemetry(con, "Château Test")
+        assert isinstance(result, str)
+        assert isinstance(telemetry, SearchTelemetry)
+
+    def test_telemetry_counts_results(self, data_dir):
+        """Telemetry reports correct result count."""
+        con = get_connection(data_dir)
+        _, telemetry = find_wine_with_telemetry(con, "Château Test")
+        assert telemetry.result_count > 0
+
+    def test_telemetry_fuzzy_flag(self, data_dir):
+        """Telemetry marks used_fuzzy when fuzzy matching is triggered."""
+        con = get_connection(data_dir)
+        _, telemetry = find_wine_with_telemetry(con, "Chteau Tset", fuzzy=True)
+        assert telemetry.used_fuzzy is True
+
+
+# ---------------------------------------------------------------------------
+# TestSearchFallbackChain
+# ---------------------------------------------------------------------------
+
+
+class TestSearchFallbackChain:
+    """Verify the 3-tier fallback: strict → auto-fuzzy → suggestions."""
+
+    def test_exact_match_no_fallback(self, data_dir):
+        """Exact match returns results without fuzzy or suggestions."""
+        con = get_connection(data_dir)
+        result, telemetry = find_wine_with_telemetry(con, "Château Test")
+        assert telemetry.result_count > 0
+        assert telemetry.used_fuzzy is False
+
+    def test_typo_triggers_soft_and_or_fuzzy(self, data_dir):
+        """A partial typo triggers soft-AND or auto-fuzzy fallback."""
+        con = get_connection(data_dir)
+        result, telemetry = find_wine_with_telemetry(con, "Chteau Test")
+        assert telemetry.result_count > 0
+        # Either soft-AND or fuzzy should recover the result
+        assert telemetry.used_soft_and or telemetry.used_fuzzy
+
+    def test_nonsense_query_returns_no_wines(self, data_dir):
+        """A completely unrelated query falls through all tiers."""
+        con = get_connection(data_dir)
+        result = find_wine(con, "Zyxwvutsrqponmlk")
+        assert "No wines found" in result
+
+    def test_fallback_chain_completes_within_time(self, data_dir):
+        """Full fallback chain (all 3 tiers) completes in <2 seconds."""
+        import time
+
+        con = get_connection(data_dir)
+        start = time.perf_counter()
+        find_wine(con, "Zyxwvutsrqponmlk")
+        elapsed = time.perf_counter() - start
+        assert elapsed < 2.0, f"Fallback chain took {elapsed:.2f}s — too slow"
+
+    def test_suggestions_offered_on_no_match(self, data_dir):
+        """When no results found, suggest_wines provides alternatives."""
+        con = get_connection(data_dir)
+        # A query close enough to existing wines to get suggestions
+        result = suggest_wines(con, "Chateau Tset Cuvee")
+        # Should either get a suggestion or "No suggestions" — no crash
+        assert isinstance(result, str)

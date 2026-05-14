@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -123,6 +124,7 @@ def server():
         obs._collector = None
 
     mcp_server._mcp_settings = None  # force re-read from env
+    mcp_server._hybrid_engine = None  # reset cached hybrid engine
     mcp_server.invalidate_connections()
     yield mcp_server
 
@@ -594,6 +596,96 @@ class TestPendingResearchTool:
         # Should return pending wines or "No wines" — either is valid
         assert "wine_id" in result or "No wines" in result
 
+    def test_include_stale_parameter(self, server):
+        result = server.pending_research(include_stale=True, stale_months=6)
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# TestStaleResearchTool
+# ---------------------------------------------------------------------------
+
+
+class TestStaleResearchTool:
+    def test_returns_result(self, server):
+        result = server.stale_research()
+        assert "No stale research" in result or "wine_id" in result
+
+    def test_months_parameter(self, server):
+        result = server.stale_research(months=1)
+        assert isinstance(result, str)
+
+    def test_section_filter(self, server):
+        result = server.stale_research(section="producer_profile")
+        assert isinstance(result, str)
+
+    def test_limit_parameter(self, server):
+        result = server.stale_research(limit=5)
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# TestResearchCompletenessTool
+# ---------------------------------------------------------------------------
+
+
+class TestResearchCompletenessTool:
+    def test_returns_result(self, server, data_dir):
+        # Generate completeness parquet so the view exists
+        from cellarbrain.dossier_ops import write_completeness_parquet
+
+        write_completeness_parquet(data_dir)
+        server.invalidate_connections()
+        result = server.research_completeness()
+        assert "wine_id" in result or "not available" in result
+
+    def test_single_wine(self, server, data_dir):
+        from cellarbrain.dossier_ops import write_completeness_parquet
+
+        write_completeness_parquet(data_dir)
+        server.invalidate_connections()
+        result = server.research_completeness(wine_id=1)
+        assert isinstance(result, str)
+
+    def test_limit_parameter(self, server, data_dir):
+        from cellarbrain.dossier_ops import write_completeness_parquet
+
+        write_completeness_parquet(data_dir)
+        server.invalidate_connections()
+        result = server.research_completeness(limit=1)
+        assert isinstance(result, str)
+
+    def test_score_range_filter(self, server, data_dir):
+        from cellarbrain.dossier_ops import write_completeness_parquet
+
+        write_completeness_parquet(data_dir)
+        server.invalidate_connections()
+        result = server.research_completeness(min_score=0, max_score=50)
+        assert isinstance(result, str)
+
+    def test_no_parquet_returns_error(self, server):
+        """Without completeness parquet, returns error message."""
+        server.invalidate_connections()
+        result = server.research_completeness()
+        assert "not available" in result or "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# TestUpdateDossierSources
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateDossierSources:
+    def test_sources_and_confidence_params(self, server):
+        result = server.update_dossier(
+            wine_id=1,
+            section="producer_profile",
+            content="Test content from sources.",
+            sources=["wine-searcher.com"],
+            confidence="high",
+        )
+        assert "Updated" in result or "Error" in result
+
 
 # ---------------------------------------------------------------------------
 # TestPrompts
@@ -946,6 +1038,67 @@ class TestMetaParameter:
 
 
 # ---------------------------------------------------------------------------
+# TestToolRegistration
+# ---------------------------------------------------------------------------
+
+
+class TestToolRegistration:
+    """Verify _tool() decorator produces correct tool metadata."""
+
+    EXPECTED_TOOLS = {
+        "query_cellar",
+        "cellar_stats",
+        "cellar_churn",
+        "cellar_info",
+        "find_wine",
+        "wine_suggestions",
+        "read_dossier",
+        "update_dossier",
+        "reload_data",
+        "pending_research",
+        "suggest_wines",
+        "suggest_foods",
+        "pair_wine",
+        "add_pairing",
+        "server_stats",
+        "cache_stats",
+        "log_price",
+        "tracked_wine_prices",
+        "price_history",
+        "currency_rates",
+    }
+
+    def test_all_expected_tools_registered(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        tool_names = {t.name for t in tools}
+        missing = self.EXPECTED_TOOLS - tool_names
+        assert not missing, f"Missing tools: {missing}"
+
+    def test_meta_optional_in_input_schema(self, server):
+        """meta parameter must be optional (default None) so clients can ignore it."""
+        tools = asyncio.run(server.mcp.list_tools())
+        for tool in tools:
+            if not tool.inputSchema or "properties" not in tool.inputSchema:
+                continue
+            if "meta" in tool.inputSchema["properties"]:
+                required = tool.inputSchema.get("required", [])
+                assert "meta" not in required, (
+                    f"Tool {tool.name} has 'meta' as required — it must be optional for backward compat"
+                )
+
+    def test_tools_have_descriptions(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        for tool in tools:
+            assert tool.description, f"Tool {tool.name} has no description"
+            assert len(tool.description) > 10, f"Tool {tool.name} description too short"
+
+    def test_no_duplicate_tool_names(self, server):
+        tools = asyncio.run(server.mcp.list_tools())
+        names = [t.name for t in tools]
+        assert len(names) == len(set(names)), "Duplicate tool registrations found"
+
+
+# ---------------------------------------------------------------------------
 # TestSchemaResource
 # ---------------------------------------------------------------------------
 
@@ -990,6 +1143,7 @@ class TestSommelierErrors:
         """Reset engine cache and point model_dir to a nonexistent path."""
         server._sommelier_engine = None
         server._food_catalogue_meta = None
+        server._hybrid_engine = None
         original = server._load_mcp_settings
 
         def _patched():
@@ -1010,6 +1164,7 @@ class TestSommelierErrors:
         server._mcp_settings = None
         server._sommelier_engine = None
         server._food_catalogue_meta = None
+        server._hybrid_engine = None
 
     def test_suggest_wines_returns_not_trained(self, server):
         result = asyncio.run(server.suggest_wines(food_query="grilled lamb"))
@@ -1087,6 +1242,26 @@ class TestPairWine:
         if "Top Pairing Recommendations" in result:
             # Count wine_id occurrences — should be at most 2
             assert result.count("wine_id:") <= 2
+
+    def test_mode_trailer_rag_when_model_missing(self, server):
+        """The pair_wine output includes a Mode trailer (hybrid or rag)."""
+        result = asyncio.run(server.pair_wine(dish="grilled steak"))
+        if "Top Pairing Recommendations" in result:
+            assert "_Mode: " in result
+            assert ("rag" in result.split("_Mode: ", 1)[1].split("_")[0]) or (
+                "hybrid" in result.split("_Mode: ", 1)[1].split("_")[0]
+            )
+
+    def test_pairing_candidates_mode_trailer(self, server):
+        result = asyncio.run(
+            server.pairing_candidates(
+                dish_description="grilled steak",
+                protein="red_meat",
+                category="red",
+            )
+        )
+        if "| Rank |" in result:
+            assert "_Mode:" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1298,3 +1473,647 @@ class TestTrainSommelierTool:
         finally:
             server._load_mcp_settings = original
             server._mcp_settings = None
+
+
+# ---------------------------------------------------------------------------
+# TestGetDrinkTonightTool (Phase D - dashboard sidecar bridge)
+# ---------------------------------------------------------------------------
+
+
+class TestGetDrinkTonightTool:
+    def test_empty_returns_message(self, server):
+        result = server.get_drink_tonight()
+        assert "empty" in result.lower()
+
+    def test_populated_lists_wines(self, server, data_dir):
+        from cellarbrain.dashboard.sidecars import add_drink_tonight
+
+        add_drink_tonight(str(data_dir), wine_id=1, note="for friday")
+        result = server.get_drink_tonight()
+        assert "Drink Tonight" in result
+        assert "Test Cuv" in result
+        assert "for friday" in result
+
+    def test_resource_mirrors_tool(self, server, data_dir):
+        from cellarbrain.dashboard.sidecars import add_drink_tonight
+
+        add_drink_tonight(str(data_dir), wine_id=1)
+        from cellarbrain.mcp_server import drink_tonight_list
+
+        out = drink_tonight_list()
+        assert "Drink Tonight" in out
+
+    def test_missing_wine_id_renders_placeholder(self, server, data_dir):
+        from cellarbrain.dashboard.sidecars import add_drink_tonight
+
+        add_drink_tonight(str(data_dir), wine_id=99999)
+        result = server.get_drink_tonight()
+        assert "99999" in result
+        assert "missing" in result
+
+
+# ---------------------------------------------------------------------------
+# TestSuggestWinesTool
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestWinesTool:
+    def test_returns_suggestions(self, server):
+        result = server.wine_suggestions("Cuv")
+        # May return suggestions or no-suggestions message
+        assert isinstance(result, str)
+
+    def test_short_query(self, server):
+        result = server.wine_suggestions("Cu")
+        assert isinstance(result, str)
+
+    def test_no_match_query(self, server):
+        result = server.wine_suggestions("Zyxwvutsrqponm")
+        assert "Error" not in result
+
+
+# ---------------------------------------------------------------------------
+# TestSearchStatsTool
+# ---------------------------------------------------------------------------
+
+
+class TestSearchStatsTool:
+    def test_returns_stats_or_error(self, server):
+        """search_stats requires observability — returns error if not init'd."""
+        result = server.search_stats()
+        # Without observability init, returns error
+        assert isinstance(result, str)
+
+    def test_with_observability(self, server, tmp_path, monkeypatch):
+        """search_stats returns stats when observability is active."""
+        from cellarbrain import observability
+        from cellarbrain.observability import SearchEvent, init_observability
+        from cellarbrain.settings import LoggingConfig
+
+        # Reset global collector to allow re-init
+        monkeypatch.setattr(observability, "_collector", None)
+
+        config = LoggingConfig(log_db=str(tmp_path / "search_test.duckdb"))
+        init_observability(config, str(tmp_path))
+
+        from datetime import UTC, datetime
+
+        from cellarbrain.observability import get_collector
+
+        collector = get_collector()
+        event = SearchEvent(
+            event_id="test-001",
+            session_id=collector.session_id,
+            turn_id=collector.turn_id,
+            query="test query",
+            normalized_query="test query",
+            result_count=5,
+            intent_matched=False,
+            used_soft_and=False,
+            used_fuzzy=False,
+            used_phonetic=False,
+            used_suggestions=False,
+            started_at=datetime.now(UTC),
+            duration_ms=10.0,
+            client_id=None,
+        )
+        collector.record_search(event)
+        collector.flush()
+
+        result = server.search_stats(window_days=30)
+        assert "Search Statistics" in result
+        assert "Total searches" in result
+        collector.close()
+
+
+# ---------------------------------------------------------------------------
+# TestPlanTripTool
+# ---------------------------------------------------------------------------
+
+
+class TestPlanTripTool:
+    def test_returns_travel_brief(self, server):
+        result = server.plan_trip(destination="France")
+        assert isinstance(result, str)
+        assert "Wine Travel Brief" in result or "No wines found" in result
+
+    def test_no_match_returns_message(self, server):
+        result = server.plan_trip(destination="Narnia")
+        assert "No wines found" in result
+
+    def test_empty_destination_returns_error(self, server):
+        result = server.plan_trip(destination="")
+        assert "Error" in result
+
+    def test_accepts_meta(self, server):
+        result = server.plan_trip(destination="France", meta={"agent_name": "test"})
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# TestCellarAnomaliesTool
+# ---------------------------------------------------------------------------
+
+
+class TestCellarAnomaliesTool:
+    def test_returns_no_anomalies_on_empty(self, server):
+        result = server.cellar_anomalies()
+        # Either "No anomalies" or an error about log store — both acceptable
+        assert isinstance(result, str)
+
+    def test_severity_filter(self, server):
+        result = server.cellar_anomalies(severity="critical")
+        assert isinstance(result, str)
+
+    def test_kinds_filter(self, server):
+        result = server.cellar_anomalies(kinds="call_volume_spike,latency_spike")
+        assert isinstance(result, str)
+
+    def test_accepts_meta(self, server):
+        result = server.cellar_anomalies(meta={"agent_name": "test"})
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# TestToolResponseStructuredOutput
+# ---------------------------------------------------------------------------
+
+
+class TestToolResponseStructuredOutput:
+    """Verify that migrated tools return ToolResponse with structured data."""
+
+    def test_query_cellar_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.query_cellar("SELECT wine_name FROM wines")
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+        assert "columns" in result.data
+        assert "rows" in result.data
+        assert "row_count" in result.data
+        assert result.data["row_count"] >= 1
+
+    def test_query_cellar_error_is_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.query_cellar("DROP TABLE wines")
+        assert isinstance(result, ToolResponse)
+        assert result.startswith("Error:")
+        assert "error" in result.data
+
+    def test_cellar_stats_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.cellar_stats()
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+        assert "group_by" in result.data
+        assert result.data["group_by"] is None  # default no grouping
+
+    def test_cellar_stats_grouped_has_group_by(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.cellar_stats(group_by="country")
+        assert isinstance(result, ToolResponse)
+        assert result.data["group_by"] == "country"
+
+    def test_find_wine_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.find_wine("Cuvée")
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+        assert "query" in result.data
+        assert result.data["query"] == "Cuvée"
+        assert result.data["result_count"] >= 1
+
+    def test_find_wine_no_match_has_zero_count(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.find_wine("NonexistentXYZ")
+        assert isinstance(result, ToolResponse)
+        assert result.data["result_count"] == 0
+
+    def test_cellar_info_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.cellar_info()
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+        assert "version" in result.data
+        assert "data_dir" in result.data
+        assert "currency" in result.data
+
+    def test_reload_data_error_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        # Without CSV files in raw/, reload_data returns an error ToolResponse
+        result = server.reload_data()
+        assert isinstance(result, ToolResponse)
+        assert result.startswith("Error:")
+        assert result.has_structured_content
+        assert "error" in result.data
+
+    def test_non_migrated_tool_returns_plain_str(self, server):
+        """Tools not yet migrated still return plain str (not ToolResponse)."""
+        # wine_detail is not migrated — returns plain str
+        result = server.wine_detail(wine_id=1)
+        # It should still be a valid string
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestCellarDigestTool
+# ---------------------------------------------------------------------------
+
+
+class TestCellarDigestTool:
+    def test_daily_digest_returns_string(self, server):
+        result = server.cellar_digest(period="daily")
+        assert isinstance(result, str)
+        assert "Cellar Digest" in result
+
+    def test_weekly_digest_returns_string(self, server):
+        result = server.cellar_digest(period="weekly")
+        assert isinstance(result, str)
+        assert "Weekly Cellar Digest" in result
+
+    def test_invalid_period_returns_error(self, server):
+        result = server.cellar_digest(period="monthly")
+        assert "Error" in result
+
+    def test_digest_contains_inventory(self, server):
+        result = server.cellar_digest(period="daily")
+        # Should contain some digest content (header + at least one section)
+        assert "Cellar Digest" in result
+
+
+# ---------------------------------------------------------------------------
+# TestWineOfTheDayTool
+# ---------------------------------------------------------------------------
+
+
+class TestWineOfTheDayTool:
+    def test_returns_pick(self, server):
+        result = server.wine_of_the_day()
+        assert isinstance(result, str)
+        assert "Wine of the Day" in result
+
+    def test_deterministic(self, server):
+        result1 = server.wine_of_the_day()
+        result2 = server.wine_of_the_day()
+        assert result1 == result2
+
+    def test_contains_wine_from_dataset(self, server):
+        result = server.wine_of_the_day()
+        # The test dataset has "Test Cuvée" from "Château MCP"
+        assert "Test" in result or "Wine of the Day" in result
+
+
+# ---------------------------------------------------------------------------
+# TestConsumptionVelocityTool
+# ---------------------------------------------------------------------------
+
+
+class TestConsumptionVelocityTool:
+    def test_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.consumption_velocity()
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+
+    def test_structured_data_keys(self, server):
+        result = server.consumption_velocity()
+        expected_keys = {
+            "months",
+            "avg_acquired_per_month",
+            "avg_consumed_per_month",
+            "net_growth_per_month",
+            "current_bottles",
+            "projected_12m",
+            "lookback_months",
+        }
+        assert expected_keys <= set(result.data.keys())
+
+    def test_default_months_is_6(self, server):
+        result = server.consumption_velocity()
+        assert result.data["lookback_months"] == 6
+
+    def test_custom_months(self, server):
+        result = server.consumption_velocity(months=3)
+        assert result.data["lookback_months"] == 3
+
+    def test_invalid_months_returns_error(self, server):
+        result = server.consumption_velocity(months=0)
+        assert result.startswith("Error:")
+
+    def test_excessive_months_returns_error(self, server):
+        result = server.consumption_velocity(months=100)
+        assert result.startswith("Error:")
+
+    def test_markdown_contains_header(self, server):
+        result = server.consumption_velocity()
+        assert "Consumption Velocity" in result
+
+
+# ---------------------------------------------------------------------------
+# TestCellarGapsTool
+# ---------------------------------------------------------------------------
+
+
+class TestCellarGapsTool:
+    """Tests for the cellar_gaps MCP tool."""
+
+    def test_returns_tool_response(self, server):
+        from cellarbrain.mcp_responses import ToolResponse
+
+        result = server.cellar_gaps()
+        assert isinstance(result, ToolResponse)
+        assert result.has_structured_content
+
+    def test_structured_data_keys(self, server):
+        result = server.cellar_gaps()
+        expected_keys = {"dimension", "months", "region_gaps", "grape_gaps", "price_tier_gaps", "vintage_gaps"}
+        assert expected_keys <= set(result.data.keys())
+
+    def test_default_returns_all_dimensions(self, server):
+        result = server.cellar_gaps()
+        assert "Region Gaps" in result
+        assert "Grape Gaps" in result
+        assert "Price Tier Gaps" in result
+        assert "Vintage Gaps" in result
+
+    def test_single_dimension(self, server):
+        result = server.cellar_gaps(dimension="region")
+        assert "Region Gaps" in result
+        assert "Grape Gaps" not in result
+
+    def test_invalid_dimension_returns_error(self, server):
+        result = server.cellar_gaps(dimension="invalid")
+        assert result.startswith("Error:")
+
+    def test_invalid_months_returns_error(self, server):
+        result = server.cellar_gaps(months=0)
+        assert result.startswith("Error:")
+
+    def test_excessive_months_returns_error(self, server):
+        result = server.cellar_gaps(months=100)
+        assert result.startswith("Error:")
+
+    def test_custom_months(self, server):
+        result = server.cellar_gaps(months=3)
+        assert result.data["months"] == 3
+
+    def test_metadata_includes_params(self, server):
+        result = server.cellar_gaps(dimension="grape", months=6)
+        assert result.metadata["dimension"] == "grape"
+        assert result.metadata["months"] == 6
+
+
+# ---------------------------------------------------------------------------
+# TestPromotionMatchesTool — QW-5 historical match queries
+# ---------------------------------------------------------------------------
+
+
+class TestPromotionMatchesTool:
+    """Tests for the promotion_matches MCP tool."""
+
+    def _seed_matches(self, data_dir):
+        """Write test promotion_match data to Parquet."""
+        from datetime import datetime, timedelta
+        from decimal import Decimal
+
+        from cellarbrain import writer
+
+        now = datetime.now(UTC)
+        rows = [
+            {
+                "match_id": 1,
+                "scan_time": now - timedelta(days=5),
+                "retailer_id": "kapweine",
+                "wine_name": "Chenin Blanc",
+                "producer": "Carinus",
+                "vintage": 2022,
+                "sale_price": Decimal("17.90"),
+                "currency": "CHF",
+                "original_price": Decimal("29.00"),
+                "discount_pct": 38.0,
+                "match_type": "fuzzy",
+                "match_category": "rebuy",
+                "confidence": 0.85,
+                "wine_id": 1,
+                "matched_wine_name": "Chenin Blanc Cellar",
+                "bottles_owned": 3,
+                "reference_price": Decimal("29.00"),
+                "discount_vs_reference": 38.3,
+                "similar_to_wine_id": None,
+                "similarity_score": None,
+                "value_score": 0.88,
+                "gap_dimension": None,
+                "gap_detail": None,
+            },
+            {
+                "match_id": 2,
+                "scan_time": now - timedelta(days=3),
+                "retailer_id": "testshop",
+                "wine_name": "Barolo",
+                "producer": "Test",
+                "vintage": 2019,
+                "sale_price": Decimal("45.00"),
+                "currency": "CHF",
+                "original_price": None,
+                "discount_pct": None,
+                "match_type": "gap_fill",
+                "match_category": "gap_fill",
+                "confidence": 0.5,
+                "wine_id": None,
+                "matched_wine_name": None,
+                "bottles_owned": 0,
+                "reference_price": None,
+                "discount_vs_reference": None,
+                "similar_to_wine_id": None,
+                "similarity_score": None,
+                "value_score": 0.6,
+                "gap_dimension": "region",
+                "gap_detail": "Only 0 bottles of Piemonte",
+            },
+        ]
+        writer.write_partitioned_parquet("promotion_match", rows, data_dir, partition_field="scan_time")
+
+    def test_returns_table(self, server, data_dir):
+        self._seed_matches(data_dir)
+        result = server.promotion_matches(months=12)
+        assert "Promotion Matches" in result
+        assert "Chenin Blanc" in result
+
+    def test_filter_by_category(self, server, data_dir):
+        self._seed_matches(data_dir)
+        result = server.promotion_matches(months=12, category="gap_fill")
+        assert "Barolo" in result
+        assert "Chenin Blanc" not in result
+
+    def test_filter_by_min_score(self, server, data_dir):
+        self._seed_matches(data_dir)
+        result = server.promotion_matches(months=12, min_score=0.7)
+        assert "Chenin Blanc" in result
+        assert "Barolo" not in result
+
+    def test_empty_results(self, server, data_dir):
+        # No seeded data
+        result = server.promotion_matches(months=1)
+        assert "No promotion matches" in result
+
+
+# ---------------------------------------------------------------------------
+# TestPromotionHistoryTool — QW-5 month-by-month trends
+# ---------------------------------------------------------------------------
+
+
+class TestPromotionHistoryTool:
+    """Tests for the promotion_history MCP tool."""
+
+    def _seed_matches(self, data_dir):
+        """Write promotion_match data spanning multiple months."""
+        from datetime import datetime, timedelta
+        from decimal import Decimal
+
+        from cellarbrain import writer
+
+        now = datetime.now(UTC)
+        rows = [
+            {
+                "match_id": 1,
+                "scan_time": now - timedelta(days=35),
+                "retailer_id": "kapweine",
+                "wine_name": "Wine A",
+                "producer": "Producer A",
+                "vintage": 2020,
+                "sale_price": Decimal("20.00"),
+                "currency": "CHF",
+                "original_price": None,
+                "discount_pct": None,
+                "match_type": "fuzzy",
+                "match_category": "rebuy",
+                "confidence": 0.9,
+                "wine_id": 1,
+                "matched_wine_name": "Wine A Cellar",
+                "bottles_owned": 2,
+                "reference_price": Decimal("30.00"),
+                "discount_vs_reference": 33.3,
+                "similar_to_wine_id": None,
+                "similarity_score": None,
+                "value_score": 0.85,
+                "gap_dimension": None,
+                "gap_detail": None,
+            },
+            {
+                "match_id": 2,
+                "scan_time": now - timedelta(days=3),
+                "retailer_id": "testshop",
+                "wine_name": "Wine B",
+                "producer": "Producer B",
+                "vintage": 2021,
+                "sale_price": Decimal("35.00"),
+                "currency": "CHF",
+                "original_price": None,
+                "discount_pct": None,
+                "match_type": "similar",
+                "match_category": "similar",
+                "confidence": 0.6,
+                "wine_id": None,
+                "matched_wine_name": "Wine B Similar",
+                "bottles_owned": 0,
+                "reference_price": None,
+                "discount_vs_reference": None,
+                "similar_to_wine_id": 5,
+                "similarity_score": 0.55,
+                "value_score": 0.5,
+                "gap_dimension": None,
+                "gap_detail": None,
+            },
+        ]
+        writer.write_partitioned_parquet("promotion_match", rows, data_dir, partition_field="scan_time")
+
+    def test_returns_monthly_summary(self, server, data_dir):
+        self._seed_matches(data_dir)
+        result = server.promotion_history(months=12)
+        assert "Promotion History" in result
+        # The months will be based on current date - just check structure
+        assert "Month" in result
+
+    def test_category_counts(self, server, data_dir):
+        self._seed_matches(data_dir)
+        result = server.promotion_history(months=12)
+        # Both months should appear with category info
+        assert "Month" in result
+        assert "Re-buy" in result
+
+    def test_empty_history(self, server, data_dir):
+        result = server.promotion_history(months=1)
+        assert "No promotion matches" in result
+
+
+# ---------------------------------------------------------------------------
+# TestStructuredOutputValidation — regression for issue #007
+# ---------------------------------------------------------------------------
+
+
+class TestStructuredOutputValidation:
+    """Ensure tools don't fail MCP output Pydantic validation (issue #007).
+
+    MCP library >=1.27 auto-generates output models from return annotations.
+    Our tools return CallToolResult with custom structuredContent which doesn't
+    match the auto-generated ``{"result": ...}`` schema.  Setting
+    ``structured_output=False`` disables this validation.
+    """
+
+    def test_tools_have_no_output_schema(self):
+        """All registered tools must have output_schema=None (structured_output=False)."""
+        from cellarbrain.mcp_server import mcp
+
+        tools = mcp._tool_manager._tools
+        assert len(tools) > 0, "No tools registered"
+        for name, tool in tools.items():
+            assert tool.fn_metadata.output_schema is None, (
+                f"Tool {name!r} has an output_schema — will cause Pydantic "
+                f"validation errors on the MCP wire. Set structured_output=False."
+            )
+
+    def test_cellar_stats_wire_conversion(self, server):
+        """cellar_stats returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        result = server.cellar_stats()
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent
+
+    def test_find_wine_wire_conversion(self, server):
+        """find_wine returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        result = server.find_wine(query="Test")
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent
+
+    def test_reload_data_error_wire_conversion(self, server):
+        """reload_data error path returns valid CallToolResult through wire wrapper."""
+        from mcp.types import CallToolResult
+
+        from cellarbrain.mcp_responses import to_call_tool_result
+
+        # Will error because CSV files don't exist
+        result = server.reload_data()
+        wire = to_call_tool_result(result)
+        assert isinstance(wire, CallToolResult)
+        assert wire.structuredContent is not None
+        assert "data" in wire.structuredContent

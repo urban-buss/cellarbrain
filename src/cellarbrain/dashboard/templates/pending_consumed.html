@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Pending Consumed — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Pending Consumed Bottles{% endblock %}
+
+{% block content %}
+<p style="font-size:0.9rem; color:var(--pico-muted-color);">
+    {{ count }} bottle{{ '' if count == 1 else 's' }} marked consumed in the dashboard.
+    Each entry will disappear automatically after the next ETL run imports the
+    matching <code>bottles-gone</code> row from Vinocell.
+</p>
+
+{% if rows %}
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            <th>Bottle</th><th>Wine</th><th>Vintage</th><th>Producer</th>
+            <th>Cellar / Shelf</th><th>Marked at</th><th>Note</th><th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td class="mono">{{ r.bottle_id }}</td>
+            <td><a href="/cellar/{{ r.wine_id }}">{{ r.wine_name }}</a></td>
+            <td>{{ r.vintage or "—" }}</td>
+            <td>{{ r.winery_name or "—" }}</td>
+            <td>{{ r.cellar_name or "—" }} / {{ r.shelf or "—" }}</td>
+            <td class="mono" style="font-size:0.75rem;">{{ r.marked_at or "—" }}</td>
+            <td>{{ r.note or "" }}</td>
+            <td>
+                <button type="button" class="outline secondary"
+                        style="font-size:0.7rem; padding:0.1rem 0.4rem;"
+                        hx-post="/cellar/{{ r.wine_id }}/bottles/{{ r.bottle_id }}/consumed/undo"
+                        hx-target="closest tr" hx-swap="outerHTML">
+                    Undo
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% else %}
+<p style="color:var(--pico-muted-color); font-style:italic;">
+    Nothing pending. Marked-consumed bottles will appear here.
+</p>
+{% endif %}
+{% endblock %}

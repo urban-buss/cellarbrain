@@ -1,0 +1,24 @@
+{# Inline editor for the dashboard_notes section. #}
+<div id="dashboard-notes-editor" class="dashboard-notes-editor"
+     style="border:1px solid var(--pico-muted-border-color); border-radius:6px; padding:0.75rem; margin-bottom:1rem;">
+    <header style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+        <strong style="font-size:0.85rem;">Quick Notes</strong>
+        {% if saved %}
+        <span class="badge badge-ok" style="font-size:0.7rem;">Saved</span>
+        {% endif %}
+    </header>
+    <form hx-post="/cellar/{{ wine_id }}/notes"
+          hx-target="#dashboard-notes-editor"
+          hx-swap="outerHTML">
+        <textarea name="note" rows="3" placeholder="Tasting impressions, where you served it, ageing thoughts…"
+                  style="font-size:0.85rem; margin-bottom:0.5rem;">{{ dashboard_notes }}</textarea>
+        <div style="display:flex; justify-content:flex-end; gap:0.5rem;">
+            <button type="submit" class="contrast" style="font-size:0.75rem; padding:0.2rem 0.6rem;">
+                Save note
+            </button>
+        </div>
+    </form>
+    <small style="color:var(--pico-muted-color); font-size:0.7rem;">
+        Stored in the dossier&apos;s <code>Dashboard Notes</code> section. Survives ETL runs.
+    </small>
+</div>

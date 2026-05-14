@@ -1,0 +1,226 @@
+# Learning Frameworks — pedagogical hierarchies for wine education
+#
+# Each top-level key defines a framework.  The tool matches a user's
+# topic string against ``match_regions`` / ``match_country`` (case-
+# insensitive).  When no curated framework matches, the engine falls
+# back to data-driven hierarchy inference from the cellar contents.
+#
+# Level numbering starts at 1 (entry-level) and increases toward the
+# pinnacle of the hierarchy.  ``match_classifications`` and
+# ``match_subregions`` are lists matched against the ``classification``
+# and ``subregion`` columns of ``wines_full``.
+
+# ── Burgundy ────────────────────────────────────────────────────────
+[burgundy]
+name = "Burgundy (Côte d'Or)"
+match_regions = ["Burgundy"]
+match_country = "France"
+description = "The world's benchmark for terroir-driven Pinot Noir & Chardonnay"
+key_grapes = ["Pinot Noir", "Chardonnay"]
+
+[[burgundy.levels]]
+level = 1
+name = "Regional (Bourgogne)"
+description = "Broad regional blends — the entry point"
+match_classifications = []
+match_subregions = []
+match_subregion_contains = "Bourgogne"
+key_lesson = "Set the baseline: pure Pinot/Chardonnay without village character"
+contrast_prompt = "Notice the simplicity — this is your reference point for what village terroir adds"
+
+[[burgundy.levels]]
+level = 2
+name = "Village"
+description = "Named village wines — each with distinct personality"
+match_classifications = []
+match_subregions = [
+    "Gevrey-Chambertin", "Chambolle-Musigny", "Morey-Saint-Denis",
+    "Vosne-Romanée", "Nuits-Saint-Georges",
+    "Pommard", "Volnay", "Beaune",
+    "Meursault", "Puligny-Montrachet", "Chassagne-Montrachet",
+    "Marsannay", "Fixin", "Santenay",
+]
+match_subregion_contains = ""
+key_lesson = "Each village has a signature — compare structure (north) vs. elegance (south)"
+contrast_prompt = "Compare tannin texture and fruit profile between villages"
+
+[[burgundy.levels]]
+level = 3
+name = "Premier Cru"
+description = "Named vineyard sites of recognised quality"
+match_classifications = ["1er Cru"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "A single vineyard speaks louder than a village — notice the precision"
+contrast_prompt = "How does a Premier Cru differ from its village counterpart? More concentrated? More complex? Different fruit profile?"
+
+[[burgundy.levels]]
+level = 4
+name = "Grand Cru"
+description = "The pinnacle — individual vineyards of exceptional terroir"
+match_classifications = ["Grand Cru"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Power and finesse combined — why these few hectares command the highest prices"
+contrast_prompt = "Intensity without heaviness — can you feel the mineral backbone that distinguishes Grand Cru?"
+
+
+# ── Piedmont ────────────────────────────────────────────────────────
+[piedmont]
+name = "Piedmont (Nebbiolo Country)"
+match_regions = ["Piedmont"]
+match_country = "Italy"
+description = "Nebbiolo's home — from everyday to monumental, all from one grape"
+key_grapes = ["Nebbiolo", "Barbera", "Dolcetto"]
+
+[[piedmont.levels]]
+level = 1
+name = "Langhe & DOC"
+description = "Regional Nebbiolo and everyday reds"
+match_classifications = []
+match_subregions = []
+match_subregion_contains = "Langhe"
+key_lesson = "Nebbiolo's approachable side — fruit-forward, shorter aging"
+contrast_prompt = "Notice Nebbiolo's characteristic pale colour and high tannin even at this entry level"
+
+[[piedmont.levels]]
+level = 2
+name = "Barbaresco"
+description = "Elegant, earlier-drinking Nebbiolo from lighter soils"
+match_classifications = []
+match_subregions = ["Barbaresco"]
+match_subregion_contains = ""
+key_lesson = "Elegance and accessibility — Barbaresco shows Nebbiolo's graceful side"
+contrast_prompt = "More floral, lighter tannins than Barolo — compare the approachability"
+
+[[piedmont.levels]]
+level = 3
+name = "Barolo"
+description = "Structured, age-worthy Nebbiolo — 'the wine of kings'"
+match_classifications = []
+match_subregions = ["Barolo"]
+match_subregion_contains = ""
+key_lesson = "Power and complexity — why Barolo needs time and how terroir shapes Nebbiolo differently"
+contrast_prompt = "Compare the tannin structure and aromatic complexity vs. Barbaresco — notice tar, roses, and dried herbs"
+
+[[piedmont.levels]]
+level = 4
+name = "Riserva & Single Cru"
+description = "Extended aging from top vineyard sites"
+match_classifications = ["DOCG Riserva", "Riserva"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "How extended aging transforms Nebbiolo — tertiary aromas emerge"
+contrast_prompt = "Leather, truffle, dried flowers — how aging has evolved the primary fruit"
+
+
+# ── Bordeaux ────────────────────────────────────────────────────────
+[bordeaux]
+name = "Bordeaux (Left & Right Bank)"
+match_regions = ["Bordeaux"]
+match_country = "France"
+description = "The world's most famous blended reds — Cabernet vs. Merlot, terroir vs. château"
+key_grapes = ["Cabernet Sauvignon", "Merlot", "Cabernet Franc"]
+
+[[bordeaux.levels]]
+level = 1
+name = "Regional & Supérieur"
+description = "Entry-level Bordeaux and Bordeaux Supérieur"
+match_classifications = []
+match_subregions = []
+match_subregion_contains = "Bordeaux"
+key_lesson = "The regional benchmark — what does 'Bordeaux' taste like before appellations complicate things?"
+contrast_prompt = "Notice the classic blend structure: Cabernet tannin + Merlot softness + cedar and dark fruit"
+
+[[bordeaux.levels]]
+level = 2
+name = "Appellation Communale"
+description = "Named commune wines — Médoc, Saint-Émilion, Pomerol, Graves"
+match_classifications = []
+match_subregions = [
+    "Haut-Médoc", "Margaux", "Saint-Julien", "Pauillac", "Saint-Estèphe",
+    "Pessac-Léognan", "Graves",
+    "Saint-Émilion", "Pomerol", "Fronsac",
+    "Sauternes", "Barsac",
+]
+match_subregion_contains = ""
+key_lesson = "Left Bank (Cabernet-dominant, gravel) vs. Right Bank (Merlot-dominant, clay/limestone)"
+contrast_prompt = "Compare a Pauillac with a Saint-Émilion — feel how the dominant grape changes the wine's personality"
+
+[[bordeaux.levels]]
+level = 3
+name = "Cru Classé"
+description = "Classified growths — the 1855 hierarchy and Saint-Émilion classifications"
+match_classifications = [
+    "1er Grand Cru Classé", "1er Grand Cru Classé A",
+    "2ème Grand Cru Classé", "3ème Grand Cru Classé",
+    "4ème Grand Cru Classé", "5ème Grand Cru Classé",
+    "Grand Cru Classé", "Cru Classé",
+    "Cru Bourgeois", "Cru Bourgeois Supérieur", "Cru Bourgeois Exceptionnel",
+]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Classification reflects terroir potential and winemaking investment — what changes at this level?"
+contrast_prompt = "More depth, more new oak influence, longer finish — how does classification translate to the glass?"
+
+[[bordeaux.levels]]
+level = 4
+name = "First Growths & Top Estates"
+description = "The pinnacle — Premiers Grands Crus Classés and iconic properties"
+match_classifications = [
+    "1er Grand Cru Classé", "1er Grand Cru Classé A",
+    "1er Cru Supérieur",
+]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Legendary terroir + meticulous winemaking — the ultimate expression of Bordeaux"
+contrast_prompt = "Precision, complexity, and incredible length — what separates a First Growth from a Fifth?"
+
+
+# ── Germany (VDP) ───────────────────────────────────────────────────
+[germany_vdp]
+name = "Germany (VDP Classification)"
+match_regions = ["Mosel", "Rheingau", "Pfalz", "Nahe", "Rheinhessen", "Franken", "Baden", "Württemberg"]
+match_country = "Germany"
+description = "Riesling's homeland — from everyday to world-class, classified by vineyard prestige"
+key_grapes = ["Riesling", "Spätburgunder", "Silvaner"]
+
+[[germany_vdp.levels]]
+level = 1
+name = "Gutswein (Estate Wine)"
+description = "Entry-level estate wines — the regional baseline"
+match_classifications = ["VDP.Gutswein"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Pure, straightforward Riesling — the grape's personality without vineyard influence"
+contrast_prompt = "Clean acidity, primary fruit — this is your benchmark for what terroir adds at higher levels"
+
+[[germany_vdp.levels]]
+level = 2
+name = "Ortswein (Village Wine)"
+description = "Village-level wines showing local character"
+match_classifications = ["VDP.Ortswein", "Ortswein"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Village identity begins — each town has its own soil and microclimate"
+contrast_prompt = "Compare a Mosel Ortswein with a Rheingau — notice how the river valley shapes the wine"
+
+[[germany_vdp.levels]]
+level = 3
+name = "Erste Lage (Premier Cru)"
+description = "Premier vineyard sites — classified terroir"
+match_classifications = ["VDP.Erste Lage", "Erste Lage", "VDP.Aus Ersten Lagen"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "Terroir specificity increases — the vineyard's geology shows through"
+contrast_prompt = "More mineral complexity, more texture — how does a single site differ from a village blend?"
+
+[[germany_vdp.levels]]
+level = 4
+name = "Große Lage (Grand Cru)"
+description = "Grand vineyard sites — Germany's finest terroir"
+match_classifications = ["VDP.Große Lage", "VDP.Großes Gewächs", "Großes Gewächs"]
+match_subregions = []
+match_subregion_contains = ""
+key_lesson = "The pinnacle of German wine — where Riesling reaches its most profound expression"
+contrast_prompt = "Stunning depth and precision — how does slate vs. limestone vs. volcanic soil shape the Grand Cru?"

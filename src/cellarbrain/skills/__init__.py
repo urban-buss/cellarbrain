@@ -22,6 +22,8 @@ SKILL_NAMES: list[str] = [
     "drinking-window",
     "price-scan",
     "manage",
+    "digest",
+    "wine-of-the-day",
 ]
 
 

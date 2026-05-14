@@ -41,6 +41,7 @@ raw/*.csv → vinocell_reader → parsers / vinocell_parsers → classify_wines 
 | `cli` | Subcommand router: `etl`, `validate`, `query`, `stats`, `dossier`, `mcp`, `recalc`, `wishlist`, `logs`. Legacy compat for flat args. |
 | `log` | Configure stdlib logging: stderr handler + optional `RotatingFileHandler`. `JsonFormatter` for structured JSON log lines. Suppress noisy third-party loggers. |
 | `observability` | Structured event capture for MCP tool/resource/prompt invocations. `ToolEvent` dataclass, `EventCollector` with session/turn tracking, buffered DuckDB log store (per-subsystem files), auto-pruning. Multi-file reader (`open_log_reader`) merges all log stores for queries and the dashboard. |
+| `anomaly` | Read-only anomaly detection over the observability log store and ETL run history. Detects call-volume spikes, latency spikes, error clusters, tool-mix drift, and ETL anomalies (mass deletes, zero output). Configurable via `AnomalyConfig`. |
 | `dashboard` | Starlette web app for browsing observability data, cellar contents, SQL playground, and MCP tool workbench. Sub-modules: `app` (routes), `queries` (obs query functions), `cellar_queries` (cellar view queries), `workbench` (tool introspection + execution), `dossier_render` (Markdown→HTML). Templates use HTMX + Pico CSS + Chart.js. |
 | `email_poll` | IMAP polling daemon for automated Vinocell CSV ingestion. Sub-modules: `grouping` (batch detection, pure functions), `placement` (snapshot + flush), `imap` (IMAP client wrapper), `credentials` (keyring + env var resolution), `etl_runner` (subprocess ETL invocation). Optional dependency: `imapclient`, `keyring`. |
 
@@ -94,6 +95,19 @@ The `pairing` module (`src/cellarbrain/pairing.py`) provides SQL-based retrieval
 Five strategies run in parallel: category matching, grape affinity, food_tag keyword search, food_group membership, and regional affinity. Results are merged by `wine_id` and ranked by signal count (number of strategies that matched). See `docs/food-pairing.md` for full details.
 
 The `pairing_candidates` MCP tool wraps `retrieve_candidates()` and is the **primary retrieval tool** for the food-pairing skill. The dashboard exposes the same functionality at `/pairing`.
+
+## Smart Recommendations
+
+The `recommend` module (`src/cellarbrain/recommend.py`) scores cellar wines for tonight's drinking occasion using a multi-factor engine:
+
+1. **Urgency** — wines past their drinking window or approaching end-of-optimal score highest.
+2. **Occasion** — price tier and category matching against occasion profiles (casual, celebration, etc.).
+3. **Pairing** — integrates RAG signals from `pairing.retrieve_candidates` when a cuisine/dish is provided.
+4. **Freshness** — penalises recently consumed wines (configurable hard/mid/soft day windows).
+5. **Diversity** — greedy re-ranking that rewards unseen wineries and grapes within a batch.
+6. **Quality** — critic score bonus, favorite boost, last-bottle caution.
+
+Exposed via the `recommend_tonight` MCP tool, the `cellar://recommendations` resource, and the `/recommend` dashboard page.
 
 ## Sommelier Module
 

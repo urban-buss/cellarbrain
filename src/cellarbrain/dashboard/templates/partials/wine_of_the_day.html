@@ -1,0 +1,20 @@
+{% if wotd %}
+<div style="background:var(--pico-card-background-color); border:1px solid var(--pico-muted-border-color); border-radius:8px; padding:1rem 1.2rem; margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+        <span style="font-size:1.3rem;">🍷</span>
+        <strong style="font-size:0.95rem;">Wine of the Day</strong>
+    </div>
+    <div style="margin-bottom:0.4rem;">
+        <a href="/cellar/{{ wotd.wine_id }}" style="font-weight:bold; font-size:1.05rem;">{{ wotd.wine_name }}</a>
+        <span style="color:var(--pico-muted-color); font-size:0.85rem;">{{ wotd.vintage or 'NV' }}</span>
+    </div>
+    <div style="font-size:0.85rem; color:var(--pico-muted-color); margin-bottom:0.4rem;">
+        {{ wotd.winery_name }}{% if wotd.region %} · {{ wotd.region }}{% endif %}{% if wotd.primary_grape %} · {{ wotd.primary_grape }}{% endif %}
+    </div>
+    {% if wotd.drinking_status %}
+    <span class="badge {% if wotd.drinking_status == 'optimal' %}badge-ok{% elif wotd.drinking_status == 'past_optimal' %}badge-error{% endif %}" style="font-size:0.75rem;">{{ wotd.drinking_status|replace("_", " ")|title }}</span>
+    {% endif %}
+    <span style="font-size:0.8rem; color:var(--pico-muted-color); margin-left:0.5rem;">{{ wotd.bottles_stored }} bottle{{ 's' if wotd.bottles_stored != 1 }}</span>
+    <p style="font-size:0.85rem; margin-top:0.5rem; margin-bottom:0; font-style:italic; color:var(--pico-muted-color);">{{ wotd.reason }}</p>
+</div>
+{% endif %}

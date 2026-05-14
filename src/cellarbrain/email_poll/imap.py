@@ -189,6 +189,56 @@ class ImapClient:
             self._client.add_flags(uids, [b"\\Seen"])
             logger.info("Marked %d messages as read (UIDs: %s)", len(uids), uids)
 
+    def search_all(
+        self,
+        sender_filter: str = "",
+        since: datetime | None = None,
+        exclude_keywords: list[bytes] | None = None,
+    ) -> list[int]:
+        """Search for ALL messages matching filters (regardless of Seen/Unseen).
+
+        Parameters
+        ----------
+        sender_filter
+            Optional FROM filter.
+        since
+            Optional SINCE date filter (IMAP date, not exact datetime).
+        exclude_keywords
+            Optional list of IMAP keywords to exclude via ``UNKEYWORD``.
+            Used to skip messages already flagged as processed.
+
+        Returns a list of IMAP UIDs.
+        """
+        criteria: list = ["ALL"]
+        if sender_filter:
+            criteria.extend(["FROM", sender_filter])
+        if since:
+            criteria.extend(["SINCE", since.date()])
+        if exclude_keywords:
+            for kw in exclude_keywords:
+                criteria.extend(["UNKEYWORD", kw])
+
+        uids = self._client.search(criteria)
+        logger.debug("IMAP SEARCH ALL returned %d UIDs", len(uids))
+        return list(uids)
+
+    def fetch_raw(self, uids: list[int]) -> dict[int, bytes]:
+        """Fetch raw RFC822 message bytes for given UIDs.
+
+        Returns a dict mapping UID → raw bytes.
+        """
+        if not uids:
+            return {}
+
+        raw_responses = self._client.fetch(uids, ["BODY.PEEK[]"])
+        result: dict[int, bytes] = {}
+        for uid, data in raw_responses.items():
+            rfc822 = data.get(b"BODY[]") or data.get(b"RFC822", b"")
+            if rfc822:
+                result[int(uid)] = rfc822
+        logger.debug("Fetched %d raw messages from %d UIDs", len(result), len(uids))
+        return result
+
     def mark_processed(self, uids: list[int], color: str = "orange") -> None:
         """Mark messages as read and apply an Apple Mail color flag.
 

@@ -394,7 +394,6 @@ cellarbrain ingest --reap-orphans --dry-run
 
 ### Prerequisites
 
-- Install ingest dependencies: `pip install cellarbrain[ingest]`
 - Configure `[ingest]` section in `cellarbrain.toml` (see [Settings Reference](settings-reference.md#ingestconfig))
 - Store IMAP credentials via `cellarbrain ingest --setup` or set `CELLARBRAIN_IMAP_USER` and `CELLARBRAIN_IMAP_PASSWORD` environment variables
 
@@ -427,6 +426,47 @@ A template plist is provided in `setup/reference/launchd-template.md`. Copy it t
 </details>
 
 See also the [detailed design](../analysis/email-ingestion/02-detailed-design.md#9-macos-deployment-launchd) for background.
+
+---
+
+## `cellarbrain migrate`
+
+Apply pending schema migrations to evolve on-disk Parquet files without a full ETL re-run. Migrations are forward-only and versioned.
+
+```bash
+# Apply all pending migrations
+cellarbrain migrate
+
+# Show pending migrations without applying
+cellarbrain migrate --status
+
+# Preview what would change without modifying files
+cellarbrain migrate --dry-run
+```
+
+| Flag | Description |
+|------|-------------|
+| `--status` | Show current schema version and list pending migrations, then exit |
+| `--dry-run` | List migrations that would be applied without modifying any files |
+
+### How It Works
+
+1. Reads `schema_version.json` from the data directory (version 0 if missing)
+2. Compares against the code’s `CURRENT_VERSION` to find pending steps
+3. Creates a timestamped backup before applying (unless `--dry-run`)
+4. Applies each migration in sequence, updating the version file after each step
+5. If a migration fails, the version stays at the last successfully applied step
+
+### Auto-Migration
+
+The ETL pipeline (`cellarbrain etl`) automatically applies pending migrations before running transforms. A warning is also logged at MCP server startup if the schema is outdated.
+
+### Version File
+
+The `schema_version.json` file in the data directory tracks:
+- Current version number
+- Timestamp of last migration
+- Full history of applied migrations with timestamps
 
 ---
 
@@ -486,6 +526,7 @@ cellarbrain service logs --stderr     # show stderr log instead
 | `--follow`, `-f` | Follow log output (like `tail -f`) |
 | `--stderr` | Show the stderr log instead of stdout |
 
+
 ---
 
 ## `cellarbrain info`
@@ -531,3 +572,34 @@ cellarbrain info --modules
 ### Complementary to `doctor`
 
 `cellarbrain info` answers *"where is everything and how do I connect?"* while `cellarbrain doctor` answers *"is my data healthy?"*. Use `info` for setup verification and `doctor` for ongoing health checks.
+
+---
+
+## `cellarbrain digest`
+
+Generate a proactive cellar intelligence brief.
+
+```bash
+cellarbrain digest              # daily digest (1-day lookback)
+cellarbrain digest --period weekly  # weekly digest (7-day lookback)
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--period` | `daily` | Lookback period: `daily` or `weekly` |
+
+### Output Sections
+
+- **Inventory** — total wines, bottles, and value
+- **Drink Soon** — wines past their optimal window (up to 5)
+- **Newly Optimal** — wines entering their optimal window this year
+- **Today's Pick** — smart recommendation from the scoring engine
+- **Last ETL Run** — timestamp, mode, and change counts
+- **Promotions** — recent promotion matches (if installed)
+
+### Scheduling
+
+See `setup/operations/scheduled-digest.md` for cron, launchd, and Task Scheduler examples.
+

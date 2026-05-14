@@ -9,7 +9,7 @@ git clone https://github.com/urban-buss/cellarbrain
 cd cellarbrain
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev,research]"
+pip install -e ".[dev]"
 ```
 
 ## Running tests

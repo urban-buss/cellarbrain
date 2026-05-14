@@ -141,6 +141,18 @@ def _check_parquet_existence(data_dir: pathlib.Path, report: DoctorReport) -> No
 
 def _check_schema_conformance(data_dir: pathlib.Path, report: DoctorReport) -> None:
     """Compare on-disk Parquet schemas against writer.SCHEMAS."""
+    from .migrate import CURRENT_VERSION, read_schema_version
+
+    # Check schema version
+    current = read_schema_version(data_dir)
+    if current < CURRENT_VERSION:
+        report.add(
+            "schema_version",
+            Severity.WARN,
+            f"Schema version {current} < {CURRENT_VERSION} — pending migrations",
+            remedy="Run `cellarbrain migrate` to apply pending schema changes.",
+        )
+
     mismatches = []
     for table_name, expected_schema in SCHEMAS.items():
         if table_name == "price_observation":

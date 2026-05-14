@@ -104,13 +104,11 @@ Users update: `brew update && brew upgrade cellarbrain`
 
 ## Optional Extras
 
-The base formula installs core dependencies only. For extras:
+The base formula installs core dependencies only. For the ML extra:
 
 ```bash
 CELLARBRAIN_VENV=$(brew --prefix cellarbrain)/libexec
-$CELLARBRAIN_VENV/bin/pip install "cellarbrain[sommelier]"
-$CELLARBRAIN_VENV/bin/pip install "cellarbrain[dashboard]"
-$CELLARBRAIN_VENV/bin/pip install "cellarbrain[ingest]"
+$CELLARBRAIN_VENV/bin/pip install "cellarbrain[ml]"
 ```
 
 ## Next Steps

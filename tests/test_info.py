@@ -88,17 +88,13 @@ class TestDetectInstallType:
 class TestCheckExtras:
     def test_returns_all_groups(self):
         result = _check_extras()
-        assert "sommelier" in result
-        assert "dashboard" in result
-        assert "ingest" in result
-        assert "research" in result
+        assert "ml" in result
         for status in result.values():
             assert isinstance(status, ExtraStatus)
 
     def test_installed_extra_has_packages(self):
         result = _check_extras()
-        # At least research (httpx) should be installed in dev
-        # Don't hardcode — just check structure
+        # Check structure — if ml is installed it should have packages
         for status in result.values():
             if status.installed:
                 assert len(status.packages) > 0

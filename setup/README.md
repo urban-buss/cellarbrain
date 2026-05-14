@@ -7,7 +7,7 @@ Cellarbrain setup, development, deployment, and operations documentation.
 ```bash
 git clone https://github.com/urban-buss/cellarbrain.git && cd cellarbrain
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[research,sommelier,dashboard,ingest]"
+pip install -e "."
 cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output
 cellarbrain validate && cellarbrain stats
 ```
@@ -50,6 +50,7 @@ See [Quick Start](getting-started/quick-start.md) for the full walkthrough.
 | [Sommelier](modules/sommelier.md) | ML food-wine pairing model and indexes |
 | [Email Ingest](modules/email-ingest.md) | IMAP polling, credentials, launchd daemon |
 | [Agent Skills](modules/agent-skills.md) | Skill architecture and available skills |
+| [iOS Prompt-Book](modules/ios-prompt-book.md) | Apple Notes, Text Replacements, Shortcuts for iMessage |
 
 > **Service management:** Use `cellarbrain service install` to register daemons (ingest, dashboard) as macOS launchd services. See [CLI reference](../docs/cli-reference.md#cellarbrain-service).
 

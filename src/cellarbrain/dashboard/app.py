@@ -286,6 +286,80 @@ async def live(request: Request) -> HTMLResponse:
     return _TEMPLATES.TemplateResponse(request, "live.html")
 
 
+# ---- Anomaly detection routes ---------------------------------------------
+
+
+async def anomalies_page(request: Request) -> HTMLResponse:
+    """Full anomalies page showing all detected anomalies."""
+    from cellarbrain.anomaly import detect_all
+
+    cfg = request.app.state.anomaly_config
+    con = request.app.state.log_db
+    data_dir = request.app.state.data_dir or ""
+
+    async with request.app.state.db_lock:
+        detected = detect_all(
+            con,
+            data_dir,
+            enabled=cfg.enabled,
+            baseline_days=cfg.baseline_days,
+            volume_window_hours=cfg.volume_window_hours,
+            volume_factor=cfg.volume_factor,
+            volume_min_calls=cfg.volume_min_calls,
+            latency_factor=cfg.latency_factor,
+            latency_min_samples=cfg.latency_min_samples,
+            error_window_hours=cfg.error_window_hours,
+            error_cluster_min=cfg.error_cluster_min,
+            drift_pct=cfg.drift_pct,
+            drift_min_samples=cfg.drift_min_samples,
+            etl_baseline_runs=cfg.etl_baseline_runs,
+            etl_delete_min_abs=cfg.etl_delete_min_abs,
+            etl_delete_min_pct=cfg.etl_delete_min_pct,
+        )
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "anomalies.html",
+        context={"anomalies": detected},
+    )
+
+
+async def anomalies_banner(request: Request) -> HTMLResponse:
+    """Return a small banner partial if critical/warn anomalies exist."""
+    from cellarbrain.anomaly import detect_all
+
+    cfg = request.app.state.anomaly_config
+    con = request.app.state.log_db
+    data_dir = request.app.state.data_dir or ""
+
+    async with request.app.state.db_lock:
+        detected = detect_all(
+            con,
+            data_dir,
+            enabled=cfg.enabled,
+            baseline_days=cfg.baseline_days,
+            volume_window_hours=cfg.volume_window_hours,
+            volume_factor=cfg.volume_factor,
+            volume_min_calls=cfg.volume_min_calls,
+            latency_factor=cfg.latency_factor,
+            latency_min_samples=cfg.latency_min_samples,
+            error_window_hours=cfg.error_window_hours,
+            error_cluster_min=cfg.error_cluster_min,
+            drift_pct=cfg.drift_pct,
+            drift_min_samples=cfg.drift_min_samples,
+            etl_baseline_runs=cfg.etl_baseline_runs,
+            etl_delete_min_abs=cfg.etl_delete_min_abs,
+            etl_delete_min_pct=cfg.etl_delete_min_pct,
+        )
+
+    critical = [a for a in detected if a.severity == "critical"]
+    warnings = [a for a in detected if a.severity == "warn"]
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/anomaly_banner.html",
+        context={"critical": critical, "warnings": warnings},
+    )
+
+
 # ---- Ingest routes --------------------------------------------------------
 
 
@@ -366,6 +440,8 @@ async def cellar(request: Request) -> HTMLResponse:
     )
     filters = cellar_q.get_filter_options(con)
     quick_stats = cellar_q.get_quick_stats(con)
+    wotd = cellar_q.get_wine_of_the_day(con) if not _wants_partial(request) else None
+    velocity = cellar_q.get_consumption_velocity(con) if not _wants_partial(request) else None
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     template = "partials/wine_rows.html" if _wants_partial(request) else "cellar.html"
@@ -380,6 +456,8 @@ async def cellar(request: Request) -> HTMLResponse:
             "total_pages": total_pages,
             "filters": filters,
             "quick_stats": quick_stats,
+            "wotd": wotd,
+            "velocity": velocity,
             "q": q or "",
             "category": category or "",
             "region": region or "",
@@ -420,17 +498,34 @@ async def wine_detail(request: Request) -> HTMLResponse:
 
     # Resolve and render dossier
     dossier_data = None
+    dashboard_notes = ""
     data_dir = request.app.state.data_dir
     if data_dir:
         try:
-            from cellarbrain.dossier_ops import resolve_dossier_path
+            from cellarbrain.dossier_ops import (
+                read_agent_section_content,
+                resolve_dossier_path,
+            )
 
             from .dossier_render import render_dossier
 
             dossier_path = resolve_dossier_path(wine_id, data_dir)
             dossier_data = render_dossier(dossier_path)
+            try:
+                dashboard_notes = read_agent_section_content(wine_id, "dashboard_notes", data_dir)
+            except Exception:
+                dashboard_notes = ""
         except Exception:
             pass  # Dossier rendering is best-effort
+
+    pending_consumed_ids: set[int] = set()
+    if data_dir:
+        try:
+            from .sidecars import read_consumed_pending
+
+            pending_consumed_ids = {int(it["bottle_id"]) for it in read_consumed_pending(data_dir)}
+        except Exception:
+            pass
 
     tab = request.query_params.get("tab", "dossier")
 
@@ -442,8 +537,457 @@ async def wine_detail(request: Request) -> HTMLResponse:
             "bottles": bottles,
             "format_siblings": format_siblings,
             "dossier": dossier_data,
+            "dashboard_notes": dashboard_notes,
+            "pending_consumed_ids": pending_consumed_ids,
             "tab": tab,
         },
+    )
+
+
+# ---- Phase B/C/D: Interactive cellar actions ------------------------------
+
+
+async def _read_form(request: Request) -> dict:
+    """Read a form payload as a plain dict (single-value)."""
+    form = await request.form()
+    return {k: (v if isinstance(v, str) else "") for k, v in form.items()}
+
+
+async def wine_notes_save(request: Request) -> HTMLResponse:
+    """POST /cellar/{wine_id:int}/notes — save the dashboard_notes section."""
+    wine_id = int(request.path_params["wine_id"])
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return PlainTextResponse("Cellar data not available.", status_code=503)
+
+    payload = await _read_form(request)
+    note = (payload.get("note") or "").strip()
+
+    from cellarbrain.dossier_ops import (
+        ProtectedSectionError,
+        WineNotFoundError,
+        read_agent_section_content,
+        update_dossier,
+    )
+
+    try:
+        if note:
+            update_dossier(
+                wine_id,
+                "dashboard_notes",
+                note + "\n",
+                data_dir,
+                agent_name="dashboard",
+            )
+            saved_value = note
+        else:
+            # Empty submission — reset section to placeholder by writing the sentinel.
+            update_dossier(
+                wine_id,
+                "dashboard_notes",
+                "*Not yet researched. Pending agent action.*\n",
+                data_dir,
+                agent_name="dashboard",
+            )
+            saved_value = ""
+    except (WineNotFoundError, ProtectedSectionError) as exc:
+        return PlainTextResponse(f"Error: {exc}", status_code=400)
+    except Exception as exc:  # pragma: no cover — defensive
+        _log.warning("notes save failed for wine %d: %s", wine_id, exc)
+        return PlainTextResponse(f"Error: {exc}", status_code=500)
+
+    # Re-read so we render whatever is canonical on disk.
+    try:
+        saved_value = read_agent_section_content(wine_id, "dashboard_notes", data_dir)
+    except Exception:
+        pass
+
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/dashboard_notes.html",
+        context={
+            "wine_id": wine_id,
+            "dashboard_notes": saved_value,
+            "saved": True,
+        },
+    )
+
+
+async def wine_notes_partial(request: Request) -> HTMLResponse:
+    """GET /cellar/{wine_id:int}/notes — return the editor fragment."""
+    wine_id = int(request.path_params["wine_id"])
+    data_dir = request.app.state.data_dir
+    note = ""
+    if data_dir:
+        try:
+            from cellarbrain.dossier_ops import read_agent_section_content
+
+            note = read_agent_section_content(wine_id, "dashboard_notes", data_dir)
+        except Exception:
+            note = ""
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/dashboard_notes.html",
+        context={
+            "wine_id": wine_id,
+            "dashboard_notes": note,
+            "saved": False,
+        },
+    )
+
+
+async def bottle_mark_consumed(request: Request) -> HTMLResponse:
+    """POST /cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed.
+
+    Adds the bottle to the consumed-pending sidecar and returns an updated
+    button fragment. The bottle is NOT removed from Parquet — that happens
+    only when the user re-exports Vinocell and the next ETL imports the
+    matching ``bottles-gone`` row.
+    """
+    wine_id = int(request.path_params["wine_id"])
+    bottle_id = int(request.path_params["bottle_id"])
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return PlainTextResponse("Cellar data not available.", status_code=503)
+
+    payload = await _read_form(request)
+    note = (payload.get("note") or "").strip() or None
+
+    from .sidecars import add_consumed_pending
+
+    add_consumed_pending(data_dir, bottle_id=bottle_id, wine_id=wine_id, note=note)
+
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/consumed_button.html",
+        context={
+            "wine_id": wine_id,
+            "bottle_id": bottle_id,
+            "pending": True,
+        },
+    )
+
+
+async def bottle_unmark_consumed(request: Request) -> HTMLResponse:
+    """POST /cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed/undo."""
+    wine_id = int(request.path_params["wine_id"])
+    bottle_id = int(request.path_params["bottle_id"])
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return PlainTextResponse("Cellar data not available.", status_code=503)
+
+    from .sidecars import remove_consumed_pending
+
+    remove_consumed_pending(data_dir, bottle_id=bottle_id)
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/consumed_button.html",
+        context={
+            "wine_id": wine_id,
+            "bottle_id": bottle_id,
+            "pending": False,
+        },
+    )
+
+
+async def reminders_banner(request: Request) -> HTMLResponse:
+    """GET /reminders — banner fragment listing pending consumed entries."""
+    data_dir = request.app.state.data_dir
+    items: list[dict] = []
+    if data_dir:
+        try:
+            from .sidecars import read_consumed_pending
+
+            items = read_consumed_pending(data_dir)
+        except Exception:
+            items = []
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/reminder_banner.html",
+        context={"pending": items, "count": len(items)},
+    )
+
+
+async def pending_consumed_page(request: Request) -> HTMLResponse:
+    """GET /pending-consumed — full page listing pending consumed bottles."""
+    data_dir = request.app.state.data_dir
+    rows: list[dict] = []
+    if data_dir:
+        try:
+            from .sidecars import read_consumed_pending
+
+            items = read_consumed_pending(data_dir)
+        except Exception:
+            items = []
+        if items:
+            con = request.app.state.cellar_con
+            if con is not None:
+                rows = cellar_q.get_pending_consumed_details(con, [int(it["bottle_id"]) for it in items])
+                # merge marked_at + note from sidecar
+                meta = {int(it["bottle_id"]): it for it in items}
+                for r in rows:
+                    m = meta.get(int(r["bottle_id"]))
+                    if m:
+                        r["marked_at"] = m.get("marked_at")
+                        r["note"] = m.get("note")
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "pending_consumed.html",
+        context={"rows": rows, "count": len(rows)},
+    )
+
+
+async def drink_tonight_page(request: Request) -> HTMLResponse:
+    """GET /drink-tonight — list of wines staged for tonight."""
+    data_dir = request.app.state.data_dir
+    items: list[dict] = []
+    rows: list[dict] = []
+    if data_dir:
+        try:
+            from .sidecars import read_drink_tonight
+
+            items = read_drink_tonight(data_dir)
+        except Exception:
+            items = []
+        if items:
+            con = request.app.state.cellar_con
+            if con is not None:
+                rows = cellar_q.get_wines_by_ids(con, [int(it["wine_id"]) for it in items])
+                meta = {int(it["wine_id"]): it for it in items}
+                for r in rows:
+                    m = meta.get(int(r["wine_id"]))
+                    if m:
+                        r["added_at"] = m.get("added_at")
+                        r["note"] = m.get("note")
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "drink_tonight.html",
+        context={"rows": rows, "count": len(rows)},
+    )
+
+
+async def drink_tonight_sync(request: Request) -> JSONResponse:
+    """POST /drink-tonight — replace the full server-side list.
+
+    Accepts JSON body ``{"items": [{"wine_id": int, "added_at"?: str,
+    "note"?: str}]}`` and returns the normalised list.
+    """
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return JSONResponse({"error": "Cellar data not available."}, status_code=503)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    items = body.get("items") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        items = []
+
+    from .sidecars import write_drink_tonight
+
+    saved = write_drink_tonight(data_dir, items)
+    return JSONResponse({"items": saved, "count": len(saved)})
+
+
+async def drink_tonight_get(request: Request) -> JSONResponse:
+    """GET /drink-tonight.json — server-side mirror of the list."""
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return JSONResponse({"items": [], "count": 0})
+    from .sidecars import read_drink_tonight
+
+    items = read_drink_tonight(data_dir)
+    return JSONResponse({"items": items, "count": len(items)})
+
+
+async def drink_tonight_add(request: Request) -> HTMLResponse:
+    """POST /drink-tonight/add — append a wine, return updated button fragment."""
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return PlainTextResponse("Cellar data not available.", status_code=503)
+
+    payload = await _read_form(request)
+    try:
+        wine_id = int(payload.get("wine_id", ""))
+    except ValueError:
+        return PlainTextResponse("Invalid wine_id", status_code=400)
+    note = (payload.get("note") or "").strip() or None
+
+    from .sidecars import add_drink_tonight
+
+    add_drink_tonight(data_dir, wine_id=wine_id, note=note)
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/drink_tonight_button.html",
+        context={"wine_id": wine_id, "in_list": True},
+    )
+
+
+async def drink_tonight_remove(request: Request) -> HTMLResponse:
+    """POST /drink-tonight/remove — drop a wine, return updated button fragment."""
+    data_dir = request.app.state.data_dir
+    if not data_dir:
+        return PlainTextResponse("Cellar data not available.", status_code=503)
+
+    payload = await _read_form(request)
+    try:
+        wine_id = int(payload.get("wine_id", ""))
+    except ValueError:
+        return PlainTextResponse("Invalid wine_id", status_code=400)
+
+    from .sidecars import remove_drink_tonight
+
+    remove_drink_tonight(data_dir, wine_id=wine_id)
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/drink_tonight_button.html",
+        context={"wine_id": wine_id, "in_list": False},
+    )
+
+
+# ---- Smart Recommendations -----------------------------------------------
+
+
+async def recommend_page(request: Request) -> HTMLResponse:
+    """GET /recommend — form + results page for smart recommendations."""
+    from ..recommend import BUDGETS, OCCASIONS
+
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "recommend.html",
+        context={
+            "occasions": list(OCCASIONS.keys()),
+            "budgets": list(BUDGETS.keys()),
+            "results": [],
+            "count": 0,
+        },
+    )
+
+
+async def recommend_run(request: Request) -> HTMLResponse:
+    """POST /recommend — score wines and return results fragment."""
+    from ..recommend import (
+        BUDGETS,
+        OCCASIONS,
+        RecommendParams,
+        recommend,
+    )
+
+    con = request.app.state.cellar_con
+    if con is None:
+        return _TEMPLATES.TemplateResponse(
+            request,
+            "partials/recommend_results.html",
+            context={"results": [], "count": 0, "error": "Cellar data not available."},
+        )
+
+    payload = await _read_form(request)
+    occasion = payload.get("occasion") or None
+    cuisine = payload.get("cuisine") or None
+    budget = payload.get("budget") or None
+    try:
+        guests = int(payload.get("guests", "")) if payload.get("guests") else None
+    except ValueError:
+        guests = None
+    try:
+        limit = int(payload.get("limit", "5"))
+    except ValueError:
+        limit = 5
+    limit = min(max(limit, 1), 15)
+
+    params = RecommendParams(
+        occasion=occasion,
+        cuisine=cuisine,
+        guests=guests,
+        budget=budget,
+        limit=limit,
+    )
+    data_dir = request.app.state.data_dir
+    results = recommend(con, params, data_dir=data_dir)
+
+    # Check which wines are already on the drink-tonight list
+    drink_tonight_ids: set[int] = set()
+    if data_dir:
+        try:
+            from .sidecars import read_drink_tonight
+
+            for item in read_drink_tonight(data_dir):
+                try:
+                    drink_tonight_ids.add(int(item["wine_id"]))
+                except (KeyError, ValueError, TypeError):
+                    pass
+        except Exception:
+            pass
+
+    result_dicts = []
+    for rec in results:
+        result_dicts.append(
+            {
+                "wine_id": rec.wine_id,
+                "wine_name": rec.wine_name,
+                "vintage": rec.vintage,
+                "winery_name": rec.winery_name,
+                "category": rec.category,
+                "drinking_status": rec.drinking_status,
+                "total_score": rec.total_score,
+                "reason": rec.reason,
+                "in_list": rec.wine_id in drink_tonight_ids,
+            }
+        )
+
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "partials/recommend_results.html",
+        context={
+            "results": result_dicts,
+            "count": len(result_dicts),
+            "error": None,
+            "occasions": list(OCCASIONS.keys()),
+            "budgets": list(BUDGETS.keys()),
+        },
+    )
+
+
+# ---- Phase E: Drinking-window timeline ------------------------------------
+
+
+async def drinking_timeline_page(request: Request) -> HTMLResponse:
+    """GET /drinking/timeline — Chart.js floating-bar drinking-window timeline."""
+    con = request.app.state.cellar_con
+    if con is None:
+        return _TEMPLATES.TemplateResponse(
+            request,
+            "error.html",
+            context={"message": "Cellar data not available."},
+            status_code=503,
+        )
+    rows = cellar_q.get_drinking_window_dataset(con)
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "drinking_timeline.html",
+        context={"rows": rows, "count": len(rows)},
+    )
+
+
+# ---- Phase F: Cellar heatmap ----------------------------------------------
+
+
+async def cellar_heatmap_page(request: Request) -> HTMLResponse:
+    """GET /cellars/heatmap — server-rendered SVG-grid coloured by status."""
+    con = request.app.state.cellar_con
+    if con is None:
+        return _TEMPLATES.TemplateResponse(
+            request,
+            "error.html",
+            context={"message": "Cellar data not available."},
+            status_code=503,
+        )
+    cellars = cellar_q.get_heatmap_layout(con)
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "heatmap.html",
+        context={"cellars": cellars},
     )
 
 
@@ -1062,8 +1606,9 @@ def build_app(
     log_db_path: str | None,
     data_dir: str | None = None,
     dashboard_config: DashboardConfig | None = None,
+    anomaly_config=None,
 ) -> Starlette:
-    from cellarbrain.settings import DashboardConfig
+    from cellarbrain.settings import AnomalyConfig, DashboardConfig
 
     app = Starlette(
         lifespan=_lifespan,
@@ -1079,12 +1624,37 @@ def build_app(
             Route("/sessions/{session_id}/{turn_id}", turn_events),
             Route("/latency", latency),
             Route("/live", live),
+            Route("/anomalies", anomalies_page),
+            Route("/anomalies/banner", anomalies_banner),
             Route("/ingest", ingest_page),
             # Cellar browser
             Route("/cellar", cellar),
             Route("/cellar/{wine_id:int}", wine_detail),
+            Route("/cellar/{wine_id:int}/notes", wine_notes_partial, methods=["GET"]),
+            Route("/cellar/{wine_id:int}/notes", wine_notes_save, methods=["POST"]),
+            Route(
+                "/cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed",
+                bottle_mark_consumed,
+                methods=["POST"],
+            ),
+            Route(
+                "/cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed/undo",
+                bottle_unmark_consumed,
+                methods=["POST"],
+            ),
+            Route("/reminders", reminders_banner, methods=["GET"]),
+            Route("/pending-consumed", pending_consumed_page, methods=["GET"]),
+            Route("/drink-tonight", drink_tonight_page, methods=["GET"]),
+            Route("/drink-tonight", drink_tonight_sync, methods=["POST"]),
+            Route("/drink-tonight.json", drink_tonight_get, methods=["GET"]),
+            Route("/drink-tonight/add", drink_tonight_add, methods=["POST"]),
+            Route("/drink-tonight/remove", drink_tonight_remove, methods=["POST"]),
+            Route("/recommend", recommend_page, methods=["GET"]),
+            Route("/recommend", recommend_run, methods=["POST"]),
             Route("/bottles", cellar_bottles),
             Route("/drinking", drinking),
+            Route("/drinking/timeline", drinking_timeline_page),
+            Route("/cellars/heatmap", cellar_heatmap_page),
             Route("/pairing", pairing_page, methods=["GET", "POST"]),
             Route("/sql", sql_playground, methods=["GET", "POST"]),
             Route("/stats", stats),
@@ -1108,4 +1678,5 @@ def build_app(
     app.state.log_db_path = log_db_path
     app.state.data_dir = data_dir
     app.state.settings = dashboard_config or DashboardConfig()
+    app.state.anomaly_config = anomaly_config or AnomalyConfig()
     return app

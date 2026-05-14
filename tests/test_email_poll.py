@@ -559,6 +559,34 @@ class TestImapMarkProcessed:
         mock_client.add_flags.assert_called_once_with([20, 21], [b"\\Seen"])
         mock_client.set_flags.assert_not_called()
 
+    def test_search_all_exclude_keywords(self):
+        """exclude_keywords adds UNKEYWORD criteria to IMAP SEARCH."""
+        imap, mock_client = self._make_imap()
+        mock_client.search.return_value = [1, 2, 3]
+        result = imap.search_all(exclude_keywords=[b"$MailFlagBit1"])
+        assert result == [1, 2, 3]
+        criteria = mock_client.search.call_args[0][0]
+        assert "UNKEYWORD" in criteria
+        assert b"$MailFlagBit1" in criteria
+
+    def test_search_all_multiple_exclude_keywords(self):
+        """Multiple exclude keywords each add a separate UNKEYWORD entry."""
+        imap, mock_client = self._make_imap()
+        mock_client.search.return_value = [5]
+        imap.search_all(exclude_keywords=[b"$MailFlagBit0", b"$MailFlagBit1"])
+        criteria = mock_client.search.call_args[0][0]
+        assert criteria.count("UNKEYWORD") == 2
+        assert b"$MailFlagBit0" in criteria
+        assert b"$MailFlagBit1" in criteria
+
+    def test_search_all_no_exclude_keywords(self):
+        """No exclude_keywords means no UNKEYWORD in criteria."""
+        imap, mock_client = self._make_imap()
+        mock_client.search.return_value = [10]
+        imap.search_all()
+        criteria = mock_client.search.call_args[0][0]
+        assert "UNKEYWORD" not in criteria
+
 
 # ---------------------------------------------------------------------------
 # TestPollOnceImapAbort

@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% set active_nav = "timeline" %}
+{% block title %}Drinking Window Timeline — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Drinking Window Timeline{% endblock %}
+
+{% block content %}
+<style>
+    #timeline-wrap { position: relative; height: 600px; margin-bottom: 1.5rem; overflow:auto; }
+</style>
+
+{% if rows %}
+<p style="font-size:0.9rem; color:var(--pico-muted-color); margin-bottom:0.5rem;">
+    {{ count }} stored wine{{ '' if count == 1 else 's' }} with a defined drinking window.
+    Each bar runs from <code>drink_from</code> to <code>drink_until</code>; the
+    inner darker band is the optimal range. The vertical line marks today.
+</p>
+
+<div id="timeline-wrap">
+    <canvas id="drinking-timeline"></canvas>
+</div>
+
+<details>
+    <summary style="font-size:0.85rem;">Show table view</summary>
+    <figure style="margin-top:0.5rem;">
+    <table role="grid">
+        <thead>
+            <tr>
+                <th>Wine</th><th>Vintage</th><th>Producer</th><th>Status</th>
+                <th>Drink</th><th>Optimal</th><th>Stock</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td><a href="/cellar/{{ r.wine_id }}">{{ r.wine_name }}</a></td>
+                <td>{{ r.vintage or "—" }}</td>
+                <td>{{ r.winery_name or "—" }}</td>
+                <td>{{ r.drinking_status or "—" }}</td>
+                <td class="mono" style="font-size:0.75rem;">{{ r.drink_from }}–{{ r.drink_until }}</td>
+                <td class="mono" style="font-size:0.75rem;">
+                    {{ r.optimal_from or "?" }}–{{ r.optimal_until or "?" }}
+                </td>
+                <td>{{ r.bottles_stored }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </figure>
+</details>
+{% else %}
+<p style="color:var(--pico-muted-color); font-style:italic;">
+    No wines have a defined drinking window with stored stock.
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if rows %}
+<script>
+(function(){
+    const rows = {{ rows | tojson }};
+    const today = new Date().getFullYear();
+    const labels = rows.map(r => `${r.wine_name} (${r.vintage || '—'})`);
+    const drinkBars = rows.map(r => [r.drink_from, r.drink_until]);
+    const optimalBars = rows.map(r => {
+        if (r.optimal_from && r.optimal_until) return [r.optimal_from, r.optimal_until];
+        return null;
+    });
+    const colourFor = (status) => ({
+        optimal: '#22c55e', drinkable: '#eab308',
+        past_optimal: '#f97316', too_young: '#3b82f6',
+        too_old: '#dc2626'
+    }[status] || '#9ca3af');
+    const drinkColours = rows.map(r => colourFor(r.drinking_status) + '55');
+    const optimalColours = rows.map(r => colourFor(r.drinking_status));
+
+    const ctx = document.getElementById('drinking-timeline').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Drink window',
+                    data: drinkBars,
+                    backgroundColor: drinkColours,
+                    borderColor: optimalColours,
+                    borderWidth: 1,
+                    borderSkipped: false,
+                    barThickness: 12,
+                },
+                {
+                    label: 'Optimal',
+                    data: optimalBars,
+                    backgroundColor: optimalColours,
+                    borderWidth: 0,
+                    barThickness: 8,
+                },
+            ],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'linear',
+                    position: 'top',
+                    title: { display: true, text: 'Year' },
+                    ticks: { stepSize: 1 },
+                },
+                y: { ticks: { autoSkip: false, font: { size: 10 } } },
+            },
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const v = ctx.raw;
+                            if (!v) return '';
+                            return `${ctx.dataset.label}: ${v[0]}–${v[1]}`;
+                        }
+                    }
+                }
+            }
+        },
+        plugins: [{
+            id: 'todayLine',
+            afterDraw: function(chart){
+                const xScale = chart.scales.x;
+                if (!xScale) return;
+                const x = xScale.getPixelForValue(today);
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(x, chart.chartArea.top);
+                ctx.lineTo(x, chart.chartArea.bottom);
+                ctx.stroke();
+                ctx.fillStyle = '#ef4444';
+                ctx.font = '11px sans-serif';
+                ctx.fillText('Today (' + today + ')', x + 4, chart.chartArea.top + 12);
+                ctx.restore();
+            }
+        }]
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

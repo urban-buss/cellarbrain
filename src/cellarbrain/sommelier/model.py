@@ -22,7 +22,6 @@ def load_model(model_dir: str | Path):
         from sentence_transformers import SentenceTransformer
     except ImportError:
         raise ImportError(
-            "sentence-transformers is required for the sommelier module. "
-            "Install with: pip install cellarbrain[sommelier]"
+            "sentence-transformers is required for the sommelier module. Install with: pip install cellarbrain[ml]"
         ) from None
     return SentenceTransformer(str(model_path))

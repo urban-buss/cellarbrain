@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% set active_nav = "heatmap" %}
+{% block title %}Cellar Heatmap — Cellarbrain Explorer{% endblock %}
+{% block page_title %}Cellar Heatmap{% endblock %}
+
+{% block content %}
+<style>
+    .heatmap-cellar { margin-bottom: 1.5rem; }
+    .heatmap-cellar h3 { font-size: 1rem; margin-bottom: 0.4rem; }
+    .heatmap-shelf { display:flex; align-items:center; gap:0.4rem; margin-bottom: 0.3rem; }
+    .heatmap-shelf-label {
+        width: 90px; font-size:0.75rem; color: var(--pico-muted-color);
+        font-family: monospace; flex-shrink: 0;
+    }
+    .heatmap-cell {
+        width: 22px; height: 22px;
+        border-radius: 3px;
+        border: 1px solid rgba(0,0,0,0.08);
+        display:inline-block; cursor: pointer;
+        transition: transform 0.1s;
+    }
+    .heatmap-cell:hover { transform: scale(1.4); border-color: var(--pico-primary); z-index: 1; position: relative; }
+    .heatmap-cell.optimal { background: #22c55e; }
+    .heatmap-cell.drinkable { background: #eab308; }
+    .heatmap-cell.past_optimal { background: #f97316; }
+    .heatmap-cell.too_young { background: #3b82f6; }
+    .heatmap-cell.too_old { background: #dc2626; }
+    .heatmap-cell.unknown { background: #cbd5e1; }
+    .heatmap-cell.no_window { background: #94a3b8; }
+    .heatmap-legend { display:flex; gap:1rem; font-size:0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .heatmap-legend span { display:flex; align-items:center; gap:0.3rem; }
+    .heatmap-legend .swatch { width:14px; height:14px; border-radius:2px; }
+</style>
+
+{% if cellars %}
+<div class="heatmap-legend">
+    <span><span class="swatch" style="background:#22c55e"></span>optimal</span>
+    <span><span class="swatch" style="background:#eab308"></span>drinkable</span>
+    <span><span class="swatch" style="background:#f97316"></span>past optimal</span>
+    <span><span class="swatch" style="background:#3b82f6"></span>too young</span>
+    <span><span class="swatch" style="background:#dc2626"></span>too old</span>
+    <span><span class="swatch" style="background:#94a3b8"></span>no window</span>
+</div>
+
+{% for c in cellars %}
+<section class="heatmap-cellar">
+    <h3>{{ c.cellar_name }}</h3>
+    {% for s in c.shelves %}
+    <div class="heatmap-shelf">
+        <span class="heatmap-shelf-label">{{ s.shelf }}</span>
+        {% for b in s.bottles %}
+        <a href="/cellar/{{ b.wine_id }}"
+           class="heatmap-cell {{ b.drinking_status or 'no_window' }}"
+           title="{{ b.wine_name }} ({{ b.vintage or '—' }}) — {{ (b.drinking_status or 'no window')|replace('_', ' ') }}"></a>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</section>
+{% endfor %}
+{% else %}
+<p style="color:var(--pico-muted-color); font-style:italic;">No stored bottles to display.</p>
+{% endif %}
+{% endblock %}

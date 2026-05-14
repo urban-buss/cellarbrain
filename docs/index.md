@@ -7,6 +7,7 @@ Reference documentation for the Cellarbrain wine-cellar toolkit. Each page is st
 | Topic | File | When to read |
 |-------|------|-------------|
 | Setup guide | [setup-guide.md](setup-guide.md) | Installing, configuring, and running Cellarbrain for the first time |
+| Upgrading | [upgrading.md](upgrading.md) | Migrating from v0.2.x to v0.3.x |
 | System architecture | [architecture.md](architecture.md) | Understanding the pipeline and module responsibilities |
 | Entity model & schemas | [entity-model.md](entity-model.md) | Adding columns, checking types, understanding relationships |
 | Field mapping (CSV → target) | [field-mapping.md](field-mapping.md) | Adding fields, fixing parsers, understanding source→target transforms |

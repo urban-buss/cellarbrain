@@ -35,7 +35,7 @@ def ensure_pairing_dataset(target: Path) -> None:
         raise FileNotFoundError(
             f"Bundled seed pairing dataset not found at {seed}. "
             "The cellarbrain package may be incomplete — reinstall with: "
-            "pip install cellarbrain[sommelier]"
+            "pip install cellarbrain[ml]"
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(seed), target)

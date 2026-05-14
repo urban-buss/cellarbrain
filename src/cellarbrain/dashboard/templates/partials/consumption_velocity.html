@@ -1,0 +1,43 @@
+{% if velocity %}
+<div style="background:var(--pico-card-background-color); border:1px solid var(--pico-muted-border-color); border-radius:8px; padding:1rem 1.2rem; margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.8rem;">
+        <span style="font-size:1.3rem;">📊</span>
+        <strong style="font-size:0.95rem;">Consumption Velocity</strong>
+        <span style="font-size:0.75rem; color:var(--pico-muted-color); margin-left:auto;">last {{ velocity.labels|length }} months</span>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.8rem; margin-bottom:1rem;">
+        <div style="text-align:center;">
+            <div style="font-size:1.1rem; font-weight:bold; color:var(--pico-primary);">{{ velocity.avg_consumed }}</div>
+            <div style="font-size:0.72rem; color:var(--pico-muted-color);">consumed/mo</div>
+        </div>
+        <div style="text-align:center;">
+            <div style="font-size:1.1rem; font-weight:bold; color:#10b981;">{{ velocity.avg_acquired }}</div>
+            <div style="font-size:0.72rem; color:var(--pico-muted-color);">acquired/mo</div>
+        </div>
+        <div style="text-align:center;">
+            <div style="font-size:1.1rem; font-weight:bold; color:{% if velocity.net_growth >= 0 %}#f59e0b{% else %}#ef4444{% endif %};">
+                {% if velocity.net_growth >= 0 %}+{% endif %}{{ velocity.net_growth }}
+            </div>
+            <div style="font-size:0.72rem; color:var(--pico-muted-color);">net/mo</div>
+        </div>
+        <div style="text-align:center;">
+            <div style="font-size:1.1rem; font-weight:bold;">~{{ velocity.projected_12m }}</div>
+            <div style="font-size:0.72rem; color:var(--pico-muted-color);">in 12 months</div>
+        </div>
+    </div>
+
+    <div style="height:120px;">
+        <canvas id="velocityChart"></canvas>
+    </div>
+</div>
+
+<script>
+(function() {
+    var labels = {{ velocity.labels | tojson }};
+    var acquired = {{ velocity.acquired | tojson }};
+    var consumed = {{ velocity.consumed | tojson }};
+    renderVelocityChart('velocityChart', labels, acquired, consumed);
+})();
+</script>
+{% endif %}

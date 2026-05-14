@@ -771,3 +771,17 @@ class TestWorkbenchExecution:
             },
         )
         assert r.status_code == 200
+
+
+# ---- Anomaly route tests ---------------------------------------------------
+
+
+class TestAnomalyRoutes:
+    def test_anomalies_page_returns_200(self, dashboard_client):
+        r = dashboard_client.get("/anomalies")
+        assert r.status_code == 200
+        assert "Anomalies" in r.text
+
+    def test_anomalies_banner_returns_200(self, dashboard_client):
+        r = dashboard_client.get("/anomalies/banner")
+        assert r.status_code == 200

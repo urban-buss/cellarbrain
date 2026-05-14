@@ -41,7 +41,7 @@ def train_model(
         from sentence_transformers.sentence_transformer.losses import CosineSimilarityLoss
     except ImportError:
         raise ImportError(
-            "sentence-transformers is required for model training. Install with: pip install cellarbrain[sommelier]"
+            "sentence-transformers is required for model training. Install with: pip install cellarbrain[ml]"
         ) from None
 
     from torch.utils.data import DataLoader
