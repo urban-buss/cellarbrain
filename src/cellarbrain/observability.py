@@ -590,6 +590,76 @@ def _discover_log_files(data_dir: str) -> list[Path]:
     return files
 
 
+def _get_table_columns(
+    con: duckdb.DuckDBPyConnection,
+    alias: str,
+    table: str,
+) -> list[str]:
+    """Return column names for a table in an attached database, or [] if missing."""
+    try:
+        rows = con.execute(f"DESCRIBE {alias}.{table}").fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
+def _view_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
+    """Check if a view exists in the connection's default schema."""
+    try:
+        con.execute(f"SELECT 1 FROM {name} LIMIT 0")
+        return True
+    except Exception:
+        return False
+
+
+def _create_union_view(
+    con: duckdb.DuckDBPyConnection,
+    aliases: list[str],
+    table: str,
+    *,
+    optional: bool = False,
+) -> None:
+    """Create a UNION ALL view that handles differing column sets.
+
+    When *optional* is True, tables that don't exist in a given database are
+    silently skipped.  Missing columns are filled with NULL.
+    """
+    # Gather columns per alias and compute the superset
+    alias_columns: list[tuple[str, list[str]]] = []
+    for alias in aliases:
+        cols = _get_table_columns(con, alias, table)
+        if cols:
+            alias_columns.append((alias, cols))
+
+    if not alias_columns:
+        if optional:
+            return
+        raise FileNotFoundError(f"Table '{table}' not found in any attached log database")
+
+    # Superset of columns preserving first-seen order
+    all_columns: list[str] = []
+    seen: set[str] = set()
+    for _, cols in alias_columns:
+        for col in cols:
+            if col not in seen:
+                all_columns.append(col)
+                seen.add(col)
+
+    # Build SELECT for each alias, using NULL for missing columns
+    parts: list[str] = []
+    for alias, cols in alias_columns:
+        col_set = set(cols)
+        select_exprs = []
+        for col in all_columns:
+            if col in col_set:
+                select_exprs.append(f'"{col}"')
+            else:
+                select_exprs.append(f'NULL AS "{col}"')
+        parts.append(f"SELECT {', '.join(select_exprs)} FROM {alias}.{table}")
+
+    con.execute(f"CREATE VIEW {table} AS " + " UNION ALL ".join(parts))
+
+
 def open_log_reader(
     data_dir: str,
     log_db: str | None = None,
@@ -629,26 +699,14 @@ def open_log_reader(
         con.execute(f"ATTACH '{f}' AS {alias} (READ_ONLY)")
         aliases.append(alias)
 
-    # Build UNION ALL view for tool_events
-    tool_parts = []
-    for alias in aliases:
-        tool_parts.append(f"SELECT * FROM {alias}.tool_events")
-    con.execute("CREATE VIEW tool_events AS " + " UNION ALL ".join(tool_parts))
+    # Build UNION ALL view for tool_events (handles schema mismatches)
+    _create_union_view(con, aliases, "tool_events")
 
     # Build UNION ALL view for ingest_events (table may not exist in all files)
-    ingest_parts = []
-    for alias in aliases:
-        try:
-            con.execute(f"SELECT 1 FROM {alias}.ingest_events LIMIT 0")
-            ingest_parts.append(f"SELECT * FROM {alias}.ingest_events")
-        except Exception:
-            pass
-    if ingest_parts:
-        con.execute("CREATE VIEW ingest_events AS " + " UNION ALL ".join(ingest_parts))
-    else:
+    _create_union_view(con, aliases, "ingest_events", optional=True)
+
+    if not _view_exists(con, "ingest_events"):
         # Create an empty view so callers don't need to check
         con.execute(f"CREATE VIEW ingest_events AS SELECT * FROM {aliases[0]}.tool_events WHERE 1=0")
-
-    return con
 
     return con

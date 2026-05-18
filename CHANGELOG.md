@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-05-18
+
+### Fixed
+- **Dashboard startup crash on log DB schema mismatch** — `open_log_reader()` now introspects
+  each attached log table's columns via `DESCRIBE`, computes the superset of column names, and
+  generates explicit SELECT lists using `NULL` for missing columns. This allows v0.2.x and v0.3.0
+  log databases to coexist without `BinderException` crashes. (issue #010)
+
 ## [0.3.0a2] — 2026-06-03
 
 ### Added

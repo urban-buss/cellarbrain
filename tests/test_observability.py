@@ -1103,3 +1103,70 @@ class TestOpenLogReader:
         count = con.execute("SELECT COUNT(*) FROM ingest_events").fetchone()[0]
         assert count == 1
         con.close()
+
+    def test_schema_mismatch_columns_filled_with_null(self, tmp_path):
+        """Reader handles log DBs with differing column counts (issue #010)."""
+        import duckdb
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        # Old-format DB: 17 columns (missing data_size, metadata_keys, cache_hit)
+        old_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(old_db))
+        c1.execute(
+            "CREATE TABLE tool_events ("
+            "event_id VARCHAR, session_id VARCHAR, turn_id VARCHAR, "
+            "event_type VARCHAR, name VARCHAR, started_at TIMESTAMPTZ, "
+            "ended_at TIMESTAMPTZ, duration_ms DOUBLE, status VARCHAR, "
+            "request_id VARCHAR, parameters VARCHAR, error_type VARCHAR, "
+            "error_message VARCHAR, result_size INTEGER, agent_name VARCHAR, "
+            "trace_id VARCHAR, client_id VARCHAR)"
+        )
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        # New-format DB: 20 columns (includes data_size, metadata_keys, cache_hit)
+        new_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(new_db))
+        c2.execute(
+            "CREATE TABLE tool_events ("
+            "event_id VARCHAR, session_id VARCHAR, turn_id VARCHAR, "
+            "event_type VARCHAR, name VARCHAR, started_at TIMESTAMPTZ, "
+            "ended_at TIMESTAMPTZ, duration_ms DOUBLE, status VARCHAR, "
+            "request_id VARCHAR, parameters VARCHAR, error_type VARCHAR, "
+            "error_message VARCHAR, result_size INTEGER, agent_name VARCHAR, "
+            "trace_id VARCHAR, client_id VARCHAR, "
+            "data_size INTEGER, metadata_keys VARCHAR, cache_hit BOOLEAN)"
+        )
+        c2.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 42, 'k', true)",
+            ["e2", "s2", "t2", "tool", "find_wine", now, now, 20.0, "ok"],
+        )
+        c2.close()
+
+        # Should NOT raise BinderException
+        con = open_log_reader(str(tmp_path))
+        count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+        assert count == 2
+
+        # Old row has NULLs for the new columns
+        row = con.execute(
+            "SELECT data_size, metadata_keys, cache_hit FROM tool_events WHERE event_id = 'e1'"
+        ).fetchone()
+        assert row == (None, None, None)
+
+        # New row retains its values
+        row = con.execute(
+            "SELECT data_size, metadata_keys, cache_hit FROM tool_events WHERE event_id = 'e2'"
+        ).fetchone()
+        assert row == (42, "k", True)
+
+        con.close()
