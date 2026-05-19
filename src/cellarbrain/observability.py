@@ -660,9 +660,40 @@ def _create_union_view(
     con.execute(f"CREATE VIEW {table} AS " + " UNION ALL ".join(parts))
 
 
+def _is_lock_error(exc: Exception) -> bool:
+    """Return True if *exc* indicates a DuckDB file-lock or config conflict."""
+    msg = str(exc).lower()
+    return "lock" in msg or "different configuration" in msg
+
+
+def _copy_locked_file(src: Path, temp_copies: list[Path] | None) -> Path | None:
+    """Copy a locked DuckDB file to a temp dir for read-only access.
+
+    Returns the path to the copy, or None if copying fails.
+    Appends the temp directory to *temp_copies* for later cleanup.
+    """
+    import shutil
+    import tempfile
+
+    try:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="cellarbrain-log-"))
+        dst = tmp_dir / src.name
+        shutil.copy2(src, dst)
+        if temp_copies is not None:
+            temp_copies.append(tmp_dir)
+        logger.debug("Copied locked log file to temp: %s -> %s", src, dst)
+        return dst
+    except Exception as exc:
+        logger.debug("Failed to copy locked log file %s: %s", src, exc)
+        return None
+
+
 def open_log_reader(
     data_dir: str,
     log_db: str | None = None,
+    *,
+    skipped_files: list[str] | None = None,
+    temp_copies: list[Path] | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Open a read-only connection that merges all log-store files.
 
@@ -671,7 +702,13 @@ def open_log_reader(
     files (plus the legacy ``cellarbrain-logs.duckdb``) and creates in-memory
     UNION ALL views over ``tool_events`` and ``ingest_events``.
 
-    Raises ``FileNotFoundError`` when no log-store files exist.
+    Files locked by another process (e.g. the ingest daemon) are accessed via
+    a temporary copy (snapshot).  If copying also fails, the file is skipped.
+    Pass *skipped_files* to collect paths of files that could not be attached,
+    and *temp_copies* to receive temp directories that the caller should clean
+    up when the connection is closed.
+
+    Raises ``FileNotFoundError`` when no usable log-store files exist.
     """
     import duckdb
 
@@ -689,15 +726,52 @@ def open_log_reader(
         )
 
     if len(files) == 1:
-        return duckdb.connect(str(files[0]), read_only=True)
+        try:
+            return duckdb.connect(str(files[0]), read_only=True)
+        except Exception as exc:
+            if _is_lock_error(exc):
+                # Try copy-on-read
+                copied = _copy_locked_file(files[0], temp_copies)
+                if copied is not None:
+                    try:
+                        return duckdb.connect(str(copied), read_only=True)
+                    except Exception:
+                        pass
+                # Copy failed or unreadable — report as skipped
+                logger.warning("Skipping locked log file: %s", files[0])
+                if skipped_files is not None:
+                    skipped_files.append(str(files[0]))
+                raise FileNotFoundError(f"Only log file is locked by another process: {files[0]}") from exc
+            raise
 
     # Multiple files — merge via ATTACH + UNION ALL views
     con = duckdb.connect(":memory:")
     aliases: list[str] = []
     for i, f in enumerate(files):
         alias = f"logdb{i}"
-        con.execute(f"ATTACH '{f}' AS {alias} (READ_ONLY)")
+        try:
+            con.execute(f"ATTACH '{f}' AS {alias} (READ_ONLY)")
+        except Exception as exc:
+            if _is_lock_error(exc):
+                # Try copy-on-read
+                copied = _copy_locked_file(f, temp_copies)
+                if copied is not None:
+                    try:
+                        con.execute(f"ATTACH '{copied}' AS {alias} (READ_ONLY)")
+                        aliases.append(alias)
+                        continue
+                    except Exception:
+                        pass
+                # Copy failed — skip this file
+                logger.warning("Skipping locked log file: %s", f)
+                if skipped_files is not None:
+                    skipped_files.append(str(f))
+                continue
+            raise
         aliases.append(alias)
+
+    if not aliases:
+        raise FileNotFoundError(f"All log files are locked by other processes in {Path(data_dir) / 'logs'}")
 
     # Build UNION ALL view for tool_events (handles schema mismatches)
     _create_union_view(con, aliases, "tool_events")

@@ -772,6 +772,18 @@ def _subcommand_main(argv: list[str]) -> None:
     )
     skills_parser.add_argument("--force", action="store_true", default=False, help="Overwrite existing skill files")
 
+    # --- uninstall-skills ---
+    unskills_parser = sub.add_parser("uninstall-skills", help="Remove installed OpenClaw skills")
+    unskills_parser.add_argument(
+        "-t", "--target", default=None, help="Target directory (default: ~/.openclaw/skills/cellarbrain/)"
+    )
+
+    # --- update-skills ---
+    upskills_parser = sub.add_parser("update-skills", help="Update OpenClaw skills to latest bundled version")
+    upskills_parser.add_argument(
+        "-t", "--target", default=None, help="Target directory (default: ~/.openclaw/skills/cellarbrain/)"
+    )
+
     # --- gift ---
     gift_parser = sub.add_parser("gift", help="Recommend wines from the cellar as gifts")
     gift_parser.add_argument("profile", help="Free-text recipient description, e.g. 'loves bold Italian reds'")
@@ -873,6 +885,8 @@ def _subcommand_main(argv: list[str]) -> None:
         "anomalies": _cmd_anomalies,
         "info": _cmd_info,
         "install-skills": _cmd_install_skills,
+        "uninstall-skills": _cmd_uninstall_skills,
+        "update-skills": _cmd_update_skills,
         "gift": _cmd_gift,
         "service": _cmd_service,
     }
@@ -1932,6 +1946,34 @@ def _cmd_install_skills(args: argparse.Namespace, settings: Settings) -> None:
             print(f"  {name}")
     else:
         print(f"All skills already present in {target} (use --force to overwrite)")
+
+
+def _cmd_uninstall_skills(args: argparse.Namespace, settings: Settings) -> None:
+    """Remove installed OpenClaw skills."""
+    from .skills import uninstall_skills
+
+    target = pathlib.Path(args.target) if args.target else pathlib.Path.home() / ".openclaw" / "skills" / "cellarbrain"
+    removed = uninstall_skills(target)
+    if removed:
+        print(f"Removed {len(removed)} skills from {target}")
+        for name in removed:
+            print(f"  {name}")
+    else:
+        print(f"No skills found in {target}")
+
+
+def _cmd_update_skills(args: argparse.Namespace, settings: Settings) -> None:
+    """Update OpenClaw skills to the latest bundled version."""
+    from .skills import install_skills
+
+    target = pathlib.Path(args.target) if args.target else pathlib.Path.home() / ".openclaw" / "skills" / "cellarbrain"
+    installed = install_skills(target, force=True)
+    if installed:
+        print(f"Updated {len(installed)} skills in {target}")
+        for name in installed:
+            print(f"  {name}")
+    else:
+        print("All skills already up to date.")
 
 
 def _cmd_gift(args: argparse.Namespace, settings: Settings) -> None:

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-05-19
+
+### Added
+- **`uninstall-skills` command** — remove installed OpenClaw skills from the target directory.
+- **`update-skills` command** — update skills to the latest bundled version (convenience wrapper for `install-skills --force`).
+
 ## [0.3.1] — 2026-05-18
 
 ### Fixed

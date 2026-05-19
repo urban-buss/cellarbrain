@@ -60,15 +60,22 @@ def _wants_partial(request: Request) -> bool:
 @asynccontextmanager
 async def _lifespan(app: Starlette):
     # Observability log store — use open_log_reader for multi-file support
+    import shutil
+    from pathlib import Path
+
     from cellarbrain.observability import open_log_reader
 
+    app.state.skipped_log_files: list[str] = []
+    app.state.log_temp_dirs: list[Path] = []
     try:
         app.state.log_db = open_log_reader(
             app.state.data_dir or ".",
             app.state.log_db_path,
+            skipped_files=app.state.skipped_log_files,
+            temp_copies=app.state.log_temp_dirs,
         )
     except FileNotFoundError:
-        # No log files yet — open an empty in-memory DB so pages don't crash
+        # No usable log files (missing or all locked) — empty in-memory DB
         app.state.log_db = duckdb.connect(":memory:")
         app.state.log_db.execute(
             "CREATE TABLE tool_events (event_id VARCHAR, session_id VARCHAR, "
@@ -77,6 +84,24 @@ async def _lifespan(app: Starlette):
             "status VARCHAR, request_id VARCHAR, parameters VARCHAR, "
             "error_type VARCHAR, error_message VARCHAR, result_size INTEGER, "
             "agent_name VARCHAR, trace_id VARCHAR, client_id VARCHAR)"
+        )
+    except Exception as exc:
+        # Belt-and-suspenders: any unexpected DuckDB error
+        _log.warning("Could not open log store: %s — using empty DB", exc)
+        app.state.log_db = duckdb.connect(":memory:")
+        app.state.log_db.execute(
+            "CREATE TABLE tool_events (event_id VARCHAR, session_id VARCHAR, "
+            "turn_id VARCHAR, event_type VARCHAR, name VARCHAR, "
+            "started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ, duration_ms DOUBLE, "
+            "status VARCHAR, request_id VARCHAR, parameters VARCHAR, "
+            "error_type VARCHAR, error_message VARCHAR, result_size INTEGER, "
+            "agent_name VARCHAR, trace_id VARCHAR, client_id VARCHAR)"
+        )
+
+    if app.state.skipped_log_files:
+        _log.warning(
+            "Dashboard started with partial log data — locked files: %s",
+            ", ".join(app.state.skipped_log_files),
         )
 
     # Cellar data (Parquet-backed agent connection)
@@ -96,6 +121,9 @@ async def _lifespan(app: Starlette):
     app.state.log_db.close()
     if cellar_con is not None:
         cellar_con.close()
+    # Clean up temp copies of locked log files
+    for tmp_dir in app.state.log_temp_dirs:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---- Route handlers (observability) ---------------------------------------
@@ -1373,6 +1401,9 @@ async def api_top_tools(request: Request) -> JSONResponse:
 
 async def api_refresh(request: Request) -> JSONResponse:
     """Reopen the DuckDB log connection as a manual refresh fallback."""
+    import shutil
+    from pathlib import Path
+
     from cellarbrain.observability import open_log_reader
 
     app = request.app
@@ -1381,14 +1412,23 @@ async def api_refresh(request: Request) -> JSONResponse:
             app.state.log_db.close()
         except Exception:
             pass
+        # Clean up previous temp copies
+        for tmp_dir in getattr(app.state, "log_temp_dirs", []):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        skipped: list[str] = []
+        temp_dirs: list[Path] = []
         try:
             app.state.log_db = open_log_reader(
                 app.state.data_dir or ".",
                 app.state.log_db_path,
+                skipped_files=skipped,
+                temp_copies=temp_dirs,
             )
-        except FileNotFoundError:
+        except (FileNotFoundError, Exception):
             app.state.log_db = duckdb.connect(":memory:")
-    return JSONResponse({"status": "ok"})
+        app.state.skipped_log_files = skipped
+        app.state.log_temp_dirs = temp_dirs
+    return JSONResponse({"status": "ok", "skipped_files": skipped})
 
 
 # ---- SSE live tail --------------------------------------------------------
