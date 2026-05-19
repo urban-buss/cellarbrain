@@ -76,6 +76,11 @@ These catch issues that would only surface on GitHub's Ubuntu runner:
 
 Report findings as warnings (they won't block, but note them).
 
+## 6. Type checks
+
+Run `pyright` (or `mypy` if pyright is unavailable) across the `src/` directory.
+Report any type errors or warnings.
+
 ## Rules
 
 - Use the workspace `.venv` Python interpreter (`.venv/Scripts/python.exe` on
@@ -93,4 +98,19 @@ Report findings as warnings (they won't block, but note them).
   Auto-fix lint/format issues with `ruff check --fix .` and `ruff format .`
   if the user confirms.
 - On success: confirm with a single summary line like
-  `CI simulation passed: lint ✓, build ✓, imports ✓, test ✓ (N passed, M skipped)`.
+  `CI simulation passed: lint ✓, build ✓, imports ✓, test ✓, types ✓ (N passed, M skipped)`.
+
+## Zero-tolerance policy
+
+Unless the user explicitly specifies otherwise, **all steps must pass with
+zero failures and zero warnings**. This includes lint, tests, type checks, and
+import smoke tests.
+
+If any errors or warnings are found:
+1. **Fix them** — apply the necessary code changes.
+2. **Re-run the failing step** to confirm the fix works.
+3. **Commit the changes** with a concise commit message describing the fix
+   (e.g. `fix: resolve type error in transform.py`).
+
+Do not leave known failures or warnings unresolved. The goal is a fully green
+CI run before considering the task complete.

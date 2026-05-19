@@ -65,6 +65,12 @@
              hx-get="/anomalies/banner"
              hx-trigger="load, every 60s"
              hx-swap="innerHTML"></div>
+        {% if request.app.state.skipped_log_files %}
+        <div style="padding: 0.5rem 1rem; margin-bottom: 0.5rem; border-radius: 6px; font-size: 0.85rem;
+             background: #fef9c3; color: #854d0e;">
+            ⚠️ Some log files are unavailable (locked by another process). Ingest events may not appear.
+        </div>
+        {% endif %}
         <nav>
             <div class="nav-group">
                 <span class="nav-group-label">Cellar</span>

@@ -3,7 +3,7 @@
 Skills are shipped as package data so that ``pip install cellarbrain``
 includes them. Use :func:`install_skills` (or the ``cellarbrain
 install-skills`` CLI command) to copy them into a target Open Claw
-skills directory.
+skills directory. Use :func:`uninstall_skills` to remove them.
 """
 
 from __future__ import annotations
@@ -60,3 +60,31 @@ def install_skills(target_dir: pathlib.Path, *, force: bool = False) -> list[str
             installed.append(skill_name)
 
     return installed
+
+
+def uninstall_skills(target_dir: pathlib.Path) -> list[str]:
+    """Remove installed cellarbrain skills from the target directory.
+
+    Args:
+        target_dir: Directory where skills were installed
+            (e.g. ``~/.openclaw/skills/cellarbrain/``).
+
+    Returns:
+        List of skill names that were removed.
+    """
+    target_dir = pathlib.Path(target_dir)
+    if not target_dir.is_dir():
+        return []
+    removed: list[str] = []
+    for skill_name in SKILL_NAMES:
+        skill_dir = target_dir / skill_name
+        if skill_dir.is_dir():
+            shutil.rmtree(skill_dir)
+            removed.append(skill_name)
+    readme = target_dir / "README.md"
+    if readme.is_file():
+        readme.unlink()
+    # Remove the cellarbrain dir itself if empty
+    if target_dir.is_dir() and not any(target_dir.iterdir()):
+        target_dir.rmdir()
+    return removed

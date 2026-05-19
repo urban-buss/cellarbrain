@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -1170,3 +1171,279 @@ class TestOpenLogReader:
         assert row == (42, "k", True)
 
         con.close()
+
+    def test_locked_file_copied_in_multi(self, tmp_path):
+        """Copy-on-read: locked file in multi-file set is accessed via temp copy."""
+        from unittest.mock import patch
+
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        # MCP file — accessible
+        mcp_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(mcp_db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.execute(_CREATE_INGEST_TABLE_SQL)
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        # Ingest file — will simulate lock via mock
+        ingest_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(ingest_db))
+        c2.execute(_CREATE_TABLE_SQL)
+        c2.execute(_CREATE_INGEST_TABLE_SQL)
+        c2.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e2", "s2", "t2", "tool", "find_wine", now, now, 5.0, "ok"],
+        )
+        c2.close()
+
+        # Simulate inter-process lock on the ingest file
+        locked_path = str(ingest_db)
+
+        original_execute = duckdb.DuckDBPyConnection.execute
+
+        def _mock_execute(self, query, *args, **kwargs):
+            if "ATTACH" in str(query) and locked_path.replace("\\", "/") in str(query).replace("\\", "/"):
+                raise OSError(f'Could not set lock on file "{locked_path}"')
+            return original_execute(self, query, *args, **kwargs)
+
+        skipped: list[str] = []
+        temp_copies: list[Path] = []
+
+        with patch.object(duckdb.DuckDBPyConnection, "execute", _mock_execute):
+            con = open_log_reader(str(tmp_path), skipped_files=skipped, temp_copies=temp_copies)
+            count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+            assert count == 2
+            con.close()
+
+        # No files should be skipped — copy-on-read handled the lock
+        assert len(skipped) == 0
+        # Temp copy directory should have been created
+        assert len(temp_copies) == 1
+        assert temp_copies[0].exists()
+
+        import shutil
+
+        for d in temp_copies:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_all_files_locked_copied(self, tmp_path):
+        """Copy-on-read: all locked files are accessed via temp copies."""
+        from unittest.mock import patch
+
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        mcp_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(mcp_db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.execute(_CREATE_INGEST_TABLE_SQL)
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        ingest_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(ingest_db))
+        c2.execute(_CREATE_TABLE_SQL)
+        c2.execute(_CREATE_INGEST_TABLE_SQL)
+        c2.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e2", "s2", "t2", "tool", "find_wine", now, now, 5.0, "ok"],
+        )
+        c2.close()
+
+        # Simulate lock on ALL files
+        locked_dir = str(logs).replace("\\", "/")
+
+        original_execute = duckdb.DuckDBPyConnection.execute
+
+        def _mock_execute(self, query, *args, **kwargs):
+            q = str(query).replace("\\", "/")
+            if "ATTACH" in q and locked_dir in q:
+                raise OSError("Could not set lock on file")
+            return original_execute(self, query, *args, **kwargs)
+
+        skipped: list[str] = []
+        temp_copies: list[Path] = []
+
+        with patch.object(duckdb.DuckDBPyConnection, "execute", _mock_execute):
+            con = open_log_reader(str(tmp_path), skipped_files=skipped, temp_copies=temp_copies)
+            count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+            assert count == 2
+            con.close()
+
+        assert len(skipped) == 0
+        assert len(temp_copies) == 2
+
+        import shutil
+
+        for d in temp_copies:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_single_locked_file_copied(self, tmp_path):
+        """Copy-on-read: single locked file is accessed via temp copy."""
+        from unittest.mock import patch
+
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.execute(_CREATE_INGEST_TABLE_SQL)
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        # Simulate lock on the single file
+        locked_path = str(db)
+
+        original_connect = duckdb.connect
+
+        def _mock_connect(path, *args, **kwargs):
+            if str(path).replace("\\", "/") == locked_path.replace("\\", "/"):
+                raise OSError(f'Could not set lock on file "{path}"')
+            return original_connect(path, *args, **kwargs)
+
+        skipped: list[str] = []
+        temp_copies: list[Path] = []
+
+        with patch("duckdb.connect", side_effect=_mock_connect):
+            con = open_log_reader(str(tmp_path), skipped_files=skipped, temp_copies=temp_copies)
+            count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+            assert count == 1
+            con.close()
+
+        assert len(skipped) == 0
+        assert len(temp_copies) == 1
+
+        import shutil
+
+        for d in temp_copies:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_copy_failure_falls_back_to_skip(self, tmp_path):
+        """When copy-on-read also fails, the file is skipped gracefully."""
+        from unittest.mock import patch
+
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_INGEST_TABLE_SQL, _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        now = datetime.now(UTC)
+
+        # MCP file — accessible
+        mcp_db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(mcp_db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.execute(_CREATE_INGEST_TABLE_SQL)
+        c1.execute(
+            "INSERT INTO tool_events VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+            ["e1", "s1", "t1", "tool", "query_cellar", now, now, 10.0, "ok"],
+        )
+        c1.close()
+
+        # Ingest file — will simulate lock + copy failure
+        ingest_db = logs / "cellarbrain-ingest-logs.duckdb"
+        c2 = duckdb.connect(str(ingest_db))
+        c2.execute(_CREATE_TABLE_SQL)
+        c2.execute(_CREATE_INGEST_TABLE_SQL)
+        c2.close()
+
+        locked_path = str(ingest_db)
+
+        original_execute = duckdb.DuckDBPyConnection.execute
+
+        def _mock_execute(self, query, *args, **kwargs):
+            if "ATTACH" in str(query) and locked_path.replace("\\", "/") in str(query).replace("\\", "/"):
+                raise OSError(f'Could not set lock on file "{locked_path}"')
+            return original_execute(self, query, *args, **kwargs)
+
+        skipped: list[str] = []
+        temp_copies: list[Path] = []
+
+        # Mock both: ATTACH raises lock error AND copy2 fails
+        with (
+            patch.object(duckdb.DuckDBPyConnection, "execute", _mock_execute),
+            patch("shutil.copy2", side_effect=PermissionError("locked")),
+        ):
+            con = open_log_reader(str(tmp_path), skipped_files=skipped, temp_copies=temp_copies)
+            count = con.execute("SELECT COUNT(*) FROM tool_events").fetchone()[0]
+            assert count == 1
+            con.close()
+
+        assert len(skipped) == 1
+        assert "ingest" in skipped[0]
+        assert len(temp_copies) == 0
+
+    def test_copy_failure_single_file_raises(self, tmp_path):
+        """When copy-on-read fails on the only file, FileNotFoundError is raised."""
+        from unittest.mock import patch
+
+        import duckdb
+
+        from cellarbrain.observability import _CREATE_TABLE_SQL
+
+        logs = tmp_path / "logs"
+        logs.mkdir()
+
+        db = logs / "cellarbrain-mcp-logs.duckdb"
+        c1 = duckdb.connect(str(db))
+        c1.execute(_CREATE_TABLE_SQL)
+        c1.close()
+
+        locked_path = str(db)
+
+        original_connect = duckdb.connect
+
+        def _mock_connect(path, *args, **kwargs):
+            if str(path).replace("\\", "/") == locked_path.replace("\\", "/"):
+                raise OSError(f'Could not set lock on file "{path}"')
+            return original_connect(path, *args, **kwargs)
+
+        skipped: list[str] = []
+        temp_copies: list[Path] = []
+
+        with (
+            patch("duckdb.connect", side_effect=_mock_connect),
+            patch("shutil.copy2", side_effect=PermissionError("locked")),
+        ):
+            with pytest.raises(FileNotFoundError, match="locked"):
+                open_log_reader(str(tmp_path), skipped_files=skipped, temp_copies=temp_copies)
+
+        assert len(skipped) == 1

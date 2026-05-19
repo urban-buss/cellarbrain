@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from cellarbrain.skills import SKILL_NAMES, SKILLS_DIR, install_skills
+from cellarbrain.skills import SKILL_NAMES, SKILLS_DIR, install_skills, uninstall_skills
 
 
 class TestSkillsPackageData:
@@ -54,6 +54,39 @@ class TestInstallSkills:
         installed = install_skills(deep)
         assert deep.is_dir()
         assert len(installed) == len(SKILL_NAMES)
+
+
+class TestUninstallSkills:
+    """Verify uninstall_skills() removes files correctly."""
+
+    def test_uninstall_removes_all_skills(self, tmp_path: pathlib.Path) -> None:
+        install_skills(tmp_path)
+        removed = uninstall_skills(tmp_path)
+        assert set(removed) == set(SKILL_NAMES)
+        for name in SKILL_NAMES:
+            assert not (tmp_path / name).exists()
+        assert not (tmp_path / "README.md").exists()
+
+    def test_uninstall_removes_empty_parent(self, tmp_path: pathlib.Path) -> None:
+        install_skills(tmp_path)
+        uninstall_skills(tmp_path)
+        assert not tmp_path.exists()
+
+    def test_uninstall_preserves_extra_files(self, tmp_path: pathlib.Path) -> None:
+        install_skills(tmp_path)
+        (tmp_path / "custom.txt").write_text("keep")
+        uninstall_skills(tmp_path)
+        # Parent still exists because of the extra file
+        assert tmp_path.is_dir()
+        assert (tmp_path / "custom.txt").is_file()
+
+    def test_uninstall_empty_dir(self, tmp_path: pathlib.Path) -> None:
+        removed = uninstall_skills(tmp_path)
+        assert removed == []
+
+    def test_uninstall_nonexistent_dir(self, tmp_path: pathlib.Path) -> None:
+        removed = uninstall_skills(tmp_path / "nonexistent")
+        assert removed == []
 
 
 class TestSyncWithOpenclaw:

@@ -790,6 +790,63 @@ class TestInstallSkillsSubcommand:
 
 
 # ---------------------------------------------------------------------------
+# TestUninstallSkillsSubcommand
+# ---------------------------------------------------------------------------
+
+
+class TestUninstallSkillsSubcommand:
+    def test_uninstall_skills_removes_installed(self, tmp_path, capsys):
+        """uninstall-skills removes previously installed skills."""
+        main(["install-skills", "-t", str(tmp_path)])
+        capsys.readouterr()  # discard install output
+        main(["uninstall-skills", "-t", str(tmp_path)])
+        captured = capsys.readouterr()
+        assert "Removed" in captured.out
+
+    def test_uninstall_skills_empty_target(self, tmp_path, capsys):
+        """uninstall-skills on empty dir reports no skills found."""
+        main(["uninstall-skills", "-t", str(tmp_path)])
+        captured = capsys.readouterr()
+        assert "No skills found" in captured.out
+
+    def test_uninstall_skills_default_target(self, tmp_path, capsys, monkeypatch):
+        """uninstall-skills uses default target when no -t given."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        main(["install-skills"])
+        capsys.readouterr()
+        main(["uninstall-skills"])
+        captured = capsys.readouterr()
+        assert "Removed" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# TestUpdateSkillsSubcommand
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateSkillsSubcommand:
+    def test_update_skills_overwrites(self, tmp_path, capsys):
+        """update-skills overwrites existing skill files."""
+        main(["install-skills", "-t", str(tmp_path)])
+        # Modify a file
+        (tmp_path / "tonight" / "SKILL.md").write_text("old")
+        capsys.readouterr()
+        main(["update-skills", "-t", str(tmp_path)])
+        captured = capsys.readouterr()
+        assert "Updated" in captured.out
+        assert (tmp_path / "tonight" / "SKILL.md").read_text() != "old"
+
+    def test_update_skills_default_target(self, tmp_path, capsys, monkeypatch):
+        """update-skills uses default target when no -t given."""
+        monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+        main(["install-skills"])
+        capsys.readouterr()
+        main(["update-skills"])
+        captured = capsys.readouterr()
+        assert "Updated" in captured.out
+
+
+# ---------------------------------------------------------------------------
 # TestInfoSubcommand
 # ---------------------------------------------------------------------------
 
