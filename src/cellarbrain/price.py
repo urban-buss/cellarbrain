@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
-from ._query_base import QueryError, _format_df
+from ._query_base import _format_df
+from .exceptions import QueryError
 
 if TYPE_CHECKING:
     from .settings import Settings

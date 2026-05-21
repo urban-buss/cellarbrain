@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .exceptions import DataStaleError, QueryError
 
-class QueryError(Exception):
-    """SQL validation or execution error."""
-
-
-class DataStaleError(Exception):
-    """Parquet files missing or corrupted."""
+__all__ = ["DataStaleError", "QueryError", "_format_df", "_to_md", "_to_plain"]
 
 
 def _to_md(df: pd.DataFrame) -> str:

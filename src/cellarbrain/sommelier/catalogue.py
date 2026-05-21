@@ -148,7 +148,7 @@ def _filter_by_wine_context(
     placeholders = ", ".join("?" for _ in dish_ids)
     sql = f"SELECT dish_id, protein FROM food_catalogue WHERE dish_id IN ({placeholders})"
     try:
-        rows = con.execute(sql, dish_ids).fetchall()  # type: ignore[union-attr]
+        rows = con.execute(sql, dish_ids).fetchall()
     except Exception:
         return dish_ids
 
@@ -241,7 +241,7 @@ def resolve_food_candidates(
         params = score_params + name_params + [limit_per_query]
 
         try:
-            rows = con.execute(sql, params).fetchall()  # type: ignore[union-attr]
+            rows = con.execute(sql, params).fetchall()
         except Exception:
             continue
 
@@ -446,7 +446,7 @@ def derive_food_groups(
         f"FROM food_catalogue WHERE dish_id IN ({placeholders})"
     )
     try:
-        rows = con.execute(sql, dish_ids).fetchall()  # type: ignore[union-attr]
+        rows = con.execute(sql, dish_ids).fetchall()
     except Exception:
         return []
 
@@ -616,7 +616,7 @@ def _filter_tags_by_protein(
     placeholders = ", ".join("?" for _ in dish_ids)
     sql = f"SELECT dish_id, protein FROM food_catalogue WHERE dish_id IN ({placeholders})"
     try:
-        rows = con.execute(sql, dish_ids).fetchall()  # type: ignore[union-attr]
+        rows = con.execute(sql, dish_ids).fetchall()
     except Exception:
         return dish_ids
 

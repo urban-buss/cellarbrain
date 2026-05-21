@@ -1,18 +1,25 @@
 ---
-description: "Triage and fix all open issues in the issues/ folder, one by one. Use when: 'fix issues', 'resolve issues', 'work through issues', 'triage issues'."
+description: "Triage and fix all open issues in the issues/ folder, one by one"
 agent: agent
 ---
+
+<!-- GENERATED FROM .github/_shared/prompts/fix-issues.prompt.md -->
+<!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
+
 # Fix Issues
 
-Work through all open issues in the `issues/` folder, fixing each one systematically.
+Work through all open issues in the `issues/` folder, fixing each one
+systematically.
 
 ## 1. Discover
 
-List all `.md` files in the `issues/` folder (excluding `_resolved/`). If no issues exist, report "No open issues" and stop.
+List all `.md` files in `issues/` (excluding `_resolved/`). If no issues
+exist, report "No open issues" and stop.
 
-## 2. Fix Each Issue
+## 2. Fix each issue
 
-Iterate through every issue file. For each one, complete **all** sub-steps before moving to the next:
+Iterate through every issue file. For each one, complete **all** sub-steps
+before moving to the next.
 
 ### 2a. Understand
 
@@ -25,16 +32,17 @@ Iterate through every issue file. For each one, complete **all** sub-steps befor
 
 Before writing code, outline:
 
-- Root cause analysis
-- Which files will be created or modified
-- What tests are needed (regression test covering the issue + edge cases)
-- Any documentation updates required
+- Root-cause analysis.
+- Which files will be created or modified.
+- What tests are needed (regression test covering the issue + edge cases).
+- Any documentation updates required.
 
 Present the plan briefly, then proceed.
 
-### 2c. Implement & Test
+### 2c. Implement & test
 
-- Apply the fix following project conventions (see `implement.prompt.md` and `.github/copilot-instructions.md`).
+- Apply the fix following project conventions (see `implement.prompt.md` and
+  `.github/copilot-instructions.md`).
 - Write or update tests in the matching `tests/test_<module>.py` file.
 - Run the relevant tests to confirm the fix:
 
@@ -46,7 +54,7 @@ All targeted tests must pass before proceeding.
 
 ### 2d. Commit
 
-Stage and commit the changes with a descriptive message:
+Stage and commit the changes:
 
 ```
 git add -A
@@ -55,15 +63,14 @@ git commit -m "fix(<scope>): <short description>" -m "<details of what was wrong
 
 ### 2e. Resolve
 
-- Move the issue file to `issues/_resolved/`:
+Move the issue file to `issues/_resolved/`:
 
 ```powershell
 New-Item -ItemType Directory -Path issues/_resolved -Force
 git mv issues/<filename>.md issues/_resolved/<filename>.md
 ```
 
-- Prepend `[RESOLVED] ` to the document's H1 title inside the file.
-- Commit the move:
+Prepend `[RESOLVED] ` to the document's H1 title inside the file. Commit:
 
 ```
 git add -A
@@ -72,27 +79,28 @@ git commit -m "docs: resolve issue <filename>"
 
 ### 2f. Next
 
-Move to the next issue and repeat from step 2a.
+Move to the next issue and repeat from 2a.
 
-## 3. CI Validation
+## 3. CI validation
 
-Once all issues are resolved, run the full CI pipeline:
+Once all issues are resolved, run the full CI pipeline (see
+`ci.prompt.md`):
 
 ```
 ruff check .
 ruff format --check .
 pytest --collect-only -q
-pytest
+pytest --cov=cellarbrain --cov-report=term-missing
 cellarbrain --help
 ```
 
-All checks must pass. If any fail, diagnose and fix before finishing.
+All checks must pass.
 
 ## 4. Summary
 
 Print a final report:
 
-- Number of issues resolved
-- One-line summary per issue (filename → what was fixed)
-- CI status (pass/fail)
-- Any follow-up items or caveats
+- Number of issues resolved.
+- One-line summary per issue (filename → what was fixed).
+- CI status (pass/fail).
+- Any follow-up items or caveats.

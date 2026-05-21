@@ -1,22 +1,31 @@
 ---
+description: "Rules for reading, writing, and maintaining agent memory files in .memories/"
 applyTo: ".memories/**"
 ---
-# Memory Management Instructions
 
-## Filename Convention
+<!-- GENERATED FROM .github/_shared/instructions/memory-management.instructions.md -->
+<!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
+
+# Memory Management
+
+How agents read and write `.memories/` in the cellarbrain workspace.
+
+## Filename convention
 
 ```
 YYYY-MM-DD_<category>_<short-slug>.md
 ```
 
-**Categories:** `mistake`, `efficiency`, `convention`, `user-preference`, `tool-behavior`, `pattern`
+### Categories
 
-**Examples:**
-- `2026-05-04_mistake_wrong-view-for-bottles.md`
-- `2026-05-04_efficiency_batch-dossier-updates.md`
-- `2026-05-04_convention_always-check-freshness.md`
+- `mistake` — factual errors, wrong assumptions, failed approaches
+- `efficiency` — faster ways to accomplish tasks
+- `convention` — project style, naming, or structure rules discovered
+- `user-preference` — explicit user guidance on how they like things done
+- `tool-behavior` — quirks or gotchas with tools, APIs, or libraries
+- `pattern` — reusable solutions or recurring code shapes
 
-## Content Template
+## Content template
 
 ```markdown
 ---
@@ -28,40 +37,50 @@ severity: medium
 
 **Lesson:** The actionable takeaway.
 
-**Evidence:** Link to conversation or file where this came up.
+**Evidence:** Path, commit, or conversation reference.
 ```
 
-## Severity Guide
+`Context` / `Lesson` / `Evidence` are recommended structure for non-trivial
+lessons; a short free-form body is fine for incidental notes.
 
-| Level | When to use |
-|-------|-------------|
-| `high` | Explicit user correction, factual error, security issue, or repeated failure |
-| `medium` | Efficiency wins, useful patterns, or unexpected behavior |
-| `low` | Incidental observations, situational notes |
+## Severity
 
-## Conflict Handling
+| Level | When |
+|---|---|
+| `high` | Explicit user correction, factual error, security issue, repeated failure. |
+| `medium` | Efficiency win, useful pattern, unexpected tool behaviour. |
+| `low` | Incidental observation, situational note. |
+
+## Conflict handling
 
 When a memory contradicts an existing rule in `.github/`:
-- Mark severity as `high`
-- Add a `**Conflict**:` line explaining the contradiction
-- Example: `**Conflict**: copilot-instructions.md says X, but user corrected to Y`
 
-These are surfaced first during dream cycles for resolution.
+- Set `severity: high`.
+- Add a `**Conflict:**` line explaining what it contradicts and why.
 
-## Reading Rules
+Conflicts are surfaced first during `/dream` cycles for resolution.
 
-1. Check `.memories/INDEX.md` first (if it exists) for a grouped overview
-2. Scan filenames — the category and slug convey enough to decide relevance
-3. Only read full content when the filename suggests relevance to the current task
+## Reading rules
+
+1. Check `.memories/INDEX.md` first (if it exists) for a grouped overview.
+2. Scan filenames — category + slug usually convey enough to decide relevance.
+3. Read individual files only when the topic is directly relevant to the
+   current task.
 
 ## Cadence
 
-- At **10+ active memories**: mention `/dream` to the user (once per conversation)
-- At **25+ active memories**: strongly recommend running `/dream`
+- 10+ active memories → mention `/dream` to the user (once per conversation).
+- 25+ active memories → strongly recommend running `/dream`.
 
-## Hard Rules
+## Hard rules
 
-- **Never** `git add` any `.memories/` file
-- **Never** reference memory content in user-facing outputs
-- **Never** modify existing memory files (append-only system; corrections get new files)
-- **Never** write secrets, tokens, passwords, or API keys to memories
+- **Never** `git add` any `.memories/` file (it is gitignored).
+- **Never** reference memory contents verbatim in user-facing output.
+- **Never** modify an existing memory file — write a new one instead
+  (append-only system; corrections get new files).
+- **Never** write secrets, credentials, tokens, or API keys into memories.
+
+## Bootstrap
+
+On first use in a fresh clone: create `.memories/` + `.gitkeep` if missing,
+and verify `.gitignore` covers `.memories/`.

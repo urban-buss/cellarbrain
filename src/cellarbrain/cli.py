@@ -443,8 +443,12 @@ def _run_handler(fn):
     except Exception as exc:
         # Domain exceptions are lazily imported to avoid pulling in DuckDB
         # and heavy modules when they are not needed.
-        from .dossier_ops import ProtectedSectionError, WineNotFoundError
-        from .query import DataStaleError, QueryError
+        from .exceptions import (
+            DataStaleError,
+            ProtectedSectionError,
+            QueryError,
+            WineNotFoundError,
+        )
 
         if isinstance(
             exc,
@@ -1459,7 +1463,7 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
                     print(f"Skipped {db_file.name} — {exc}")
                 continue
             collector = EventCollector.__new__(EventCollector)
-            collector._db = rw_con  # type: ignore[assignment]
+            collector._db = rw_con
             collector._config = settings.logging
             collector._buffer = __import__("collections").deque()
             collector._ingest_buffer = __import__("collections").deque()
