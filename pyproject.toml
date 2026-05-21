@@ -149,5 +149,12 @@ module = [
     "imapclient.*",
     "jellyfish.*",
     "lxml.*",
+    "sentence_transformers.*",
+    "torch.*",
+    "faiss.*",
+    "markdown.*",
+    "yaml.*",
+    "pandas.*",
+    "tabulate.*",
 ]
 ignore_missing_imports = true
