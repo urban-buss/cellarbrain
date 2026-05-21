@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .models import ExtractedPromotion, PromotionMatch, PromotionScanResult
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def scan_once(
-    settings: object,
+    settings: Any,
     *,
     dry_run: bool = False,
     retailer_filter: str | None = None,
@@ -155,7 +156,7 @@ def scan_once(
     )
 
 
-def _matches_retailer(sender: str, retailer_filter: str, config: object) -> bool:
+def _matches_retailer(sender: str, retailer_filter: str, config: Any) -> bool:
     """Check if a sender matches the filtered retailer."""
     import fnmatch
 
@@ -166,7 +167,7 @@ def _matches_retailer(sender: str, retailer_filter: str, config: object) -> bool
     return any(fnmatch.fnmatch(sender_lower, pat) for pat in rcfg.sender_patterns)
 
 
-def _archive_emails(emails: list, archive_dir: str, config: object, data_dir: Path) -> None:
+def _archive_emails(emails: list, archive_dir: str, config: Any, data_dir: Path) -> None:
     """Save raw .eml files to the archive directory."""
     from .fetch import NewsletterEmail
 
@@ -183,7 +184,7 @@ def _archive_emails(emails: list, archive_dir: str, config: object, data_dir: Pa
             path.write_bytes(em.raw_bytes)
 
 
-def _infer_retailer_dir(sender: str, config: object) -> str:
+def _infer_retailer_dir(sender: str, config: Any) -> str:
     """Infer retailer directory name from sender address."""
     import fnmatch
 

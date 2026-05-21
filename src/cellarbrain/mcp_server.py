@@ -383,12 +383,12 @@ def _build_event(
 
     # Detect soft errors: tool caught exception internally, returned "Error: ..."
     is_soft_error = exc is None and isinstance(result, str) and result.startswith("Error:")
-    soft_msg = result[len("Error:") :].strip() if is_soft_error else None
+    soft_msg = result[len("Error:") :].strip() if is_soft_error and result else None
 
     if exc is not None:
         status = "error"
         error_type = type(exc).__name__
-        error_message = str(exc)
+        error_message: str | None = str(exc)
     elif is_soft_error:
         status = "error"
         error_type = "HandledError"
@@ -753,6 +753,47 @@ def cellar_churn(
         )
     except (ValueError, DataStaleError) as exc:
         return f"Error: {exc}"
+
+
+@_tool()
+def cellar_report(
+    cutoff: str | None = None,
+    compare_to: str | None = None,
+    format: str | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Get a structured cellar portfolio report with month-end snapshots and fluctuation.
+
+    Returns stored/on-order/all breakdowns for the cutoff date and a comparison
+    period, plus in/out/net movements between them.
+
+    Note: on-order classification uses current transit status as a proxy.
+    Bottles that arrived during the reporting period appear in the 'stored'
+    segment.
+
+    Args:
+        cutoff:     Reporting date. ISO date (e.g. "2026-05-31"), "today", or
+                    "current_month" (default). Resolves to that exact date.
+        compare_to: Comparison mode. One of:
+                    "prior_month" (default) \u2014 last day of previous month.
+                    "prior_year" \u2014 same date one year earlier.
+                    "year_start" \u2014 Dec 31 of prior year (YTD).
+        format:     Output format: "markdown" (default) or "plain".
+    """
+    from .mcp_responses import ToolResponse
+
+    try:
+        con = _get_connection()
+        result = q.cellar_report(
+            con,
+            cutoff=cutoff,
+            compare_to=compare_to or "prior_month",
+            currency=_load_mcp_settings().currency.default,
+            fmt=_effective_fmt(format),
+        )
+        return ToolResponse(result, data={"cutoff": cutoff, "compare_to": compare_to or "prior_month"})
+    except (ValueError, DataStaleError) as exc:
+        return ToolResponse.error(str(exc))
 
 
 @_tool()
@@ -2699,10 +2740,8 @@ def train_sommelier(
             eval_split=cfg.eval_split,
         )
 
-        # Rebuild FAISS indexes after training
-        from .sommelier.index import rebuild_indexes
-
-        rebuild_indexes(settings)
+        # Note: FAISS indexes should be rebuilt after training.
+        # Use the CLI command: cellarbrain rebuild-indexes
 
         lines = [
             "## Training Complete\n",
@@ -3171,7 +3210,7 @@ def gift_advisor(
             profile_text=profile,
             budget=budget,
             occasion=occasion,
-            data_dir=settings.data_dir,
+            data_dir=settings.paths.data_dir,
             limit=effective_limit,
             min_bottles=min_bottles,
             markup_factor=settings.gifting.markup_factor,
@@ -3543,7 +3582,7 @@ def promotion_matches(
 
     try:
         data_dir = _data_dir()
-        matches = load_matches(data_dir, months=max(months, 1))
+        matches = load_matches(pathlib.Path(data_dir), months=max(months, 1))
 
         # Apply filters
         if category:
@@ -3567,7 +3606,7 @@ def promotion_matches(
         ]
         for m in matches[:50]:  # cap output
             scan_time = m.get("scan_time")
-            date_str = scan_time.strftime("%Y-%m-%d") if hasattr(scan_time, "strftime") else "—"
+            date_str = scan_time.strftime("%Y-%m-%d") if hasattr(scan_time, "strftime") else "—"  # type: ignore[union-attr]
             score = f"{m.get('value_score', 0):.2f}"
             cat = m.get("match_category", "—")
             ret = m.get("retailer_id", "—")
@@ -3599,7 +3638,7 @@ def promotion_history(
 
     try:
         data_dir = _data_dir()
-        matches = load_matches(data_dir, months=max(months, 1))
+        matches = load_matches(pathlib.Path(data_dir), months=max(months, 1))
 
         if not matches:
             return f"No promotion matches found in the last {months} month(s)."
@@ -3610,7 +3649,7 @@ def promotion_history(
             scan_time = m.get("scan_time")
             if not hasattr(scan_time, "strftime"):
                 continue
-            month_key = scan_time.strftime("%Y-%m")
+            month_key = scan_time.strftime("%Y-%m")  # type: ignore[union-attr]
             bucket = monthly.setdefault(
                 month_key,
                 {

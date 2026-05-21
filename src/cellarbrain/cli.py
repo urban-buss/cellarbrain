@@ -1264,7 +1264,7 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
     # Recompute bottle-level fields
     bottle_changes = 0
     for b in bottles:
-        old = (b.get("purchase_price"),)
+        b_old = (b.get("purchase_price"),)
         # Currency normalisation
         b["purchase_price"] = convert_to_default_currency(
             b.get("original_purchase_price"),
@@ -1276,8 +1276,8 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
         # In-memory classification for markdown/dossier helpers
         loc = cellar_id_to_loc.get(b.get("cellar_id"), "onsite")
         b["is_in_transit"] = loc == "in_transit"
-        new = (b["purchase_price"],)
-        if old != new:
+        b_new = (b["purchase_price"],)
+        if b_old != b_new:
             bottle_changes += 1
 
     # Write updated Parquet
@@ -1459,7 +1459,7 @@ def _cmd_logs(args: argparse.Namespace, settings: Settings) -> None:
                     print(f"Skipped {db_file.name} — {exc}")
                 continue
             collector = EventCollector.__new__(EventCollector)
-            collector._db = rw_con
+            collector._db = rw_con  # type: ignore[assignment]
             collector._config = settings.logging
             collector._buffer = __import__("collections").deque()
             collector._ingest_buffer = __import__("collections").deque()
@@ -1675,7 +1675,7 @@ def _cmd_digest(args: argparse.Namespace, settings: Settings) -> None:
 
     data_dir = pathlib.Path(settings.paths.data_dir)
     con = q.connect(data_dir)
-    result = build_digest(con, data_dir, period=args.period)
+    result = build_digest(con, str(data_dir), period=args.period)
     print(format_digest(result))
 
 

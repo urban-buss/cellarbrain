@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .models import PromotionMatch
 
@@ -116,7 +116,7 @@ def _match_to_row(
     }
 
 
-def _timedelta_months(months: int) -> __import__("datetime").timedelta:
+def _timedelta_months(months: int) -> timedelta:
     """Approximate N months as days (30.44 days/month)."""
     from datetime import timedelta
 

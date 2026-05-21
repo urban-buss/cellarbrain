@@ -81,7 +81,7 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
         return None
 
     # Find wine name <b> tag with year prefix
-    b_tag = table.find("b", string=_WINE_NAME_RE)
+    b_tag = table.find("b", string=_WINE_NAME_RE)  # type: ignore[call-overload]
     if not b_tag:
         return None
 
@@ -171,7 +171,7 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
     discount_pct: float | None = None
     for img in table.find_all("img"):
         src = img.get("src", "")
-        disc_match = _DISCOUNT_IMG_RE.search(src)
+        disc_match = _DISCOUNT_IMG_RE.search(src)  # type: ignore[arg-type]
         if disc_match:
             discount_pct = float(disc_match.group(1))
             break
@@ -190,8 +190,8 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
         vintage=vintage,
         bottle_size_ml=bottle_size_ml,
         product_url=product_url,
-        rating_score=rating_score,
-        rating_source=rating_source,
+        rating_score=rating_score,  # type: ignore[arg-type]
+        rating_source=rating_source,  # type: ignore[arg-type]
         appellation=appellation,
         category=region,
     )
@@ -235,7 +235,7 @@ class MoevenpickParser(NewsletterParser):
         seen: set[tuple[str, Decimal]] = set()
 
         # Find all <b> tags with year-prefixed wine names
-        wine_bolds = soup.find_all("b", string=_WINE_NAME_RE)
+        wine_bolds = soup.find_all("b", string=_WINE_NAME_RE)  # type: ignore[call-overload]
 
         for b_tag in wine_bolds:
             # Walk up to find the product table container
@@ -269,9 +269,9 @@ def _find_product_table(b_tag: Tag) -> Tag | None:
     The product table is a ``<table width="100%">`` that contains both
     the wine name and a CHF price.
     """
-    level = b_tag
+    level: Tag | None = b_tag
     for _ in range(10):
-        level = level.parent
+        level = level.parent  # type: ignore[union-attr]
         if not level or not isinstance(level, Tag):
             return None
         if level.name == "table":

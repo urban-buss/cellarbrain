@@ -3,22 +3,23 @@
 Provides two functions used by the auto-derive pipeline in
 ``dossier_ops``:
 
-- ``extract_food_candidates`` — hybrid regex + keyword extraction
+- ``extract_food_candidates`` â€” hybrid regex + keyword extraction
   that pulls food reference strings from food_pairings prose.
-- ``resolve_food_candidates`` — DuckDB keyword search against the
+- ``resolve_food_candidates`` â€” DuckDB keyword search against the
   food catalogue to turn candidate strings into ``dish_id`` slugs.
 
-No heavy dependencies — uses only stdlib ``re`` and an existing
+No heavy dependencies â€” uses only stdlib ``re`` and an existing
 DuckDB connection. Works without the ``[sommelier]`` optional extra.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Any
 
 _BOLD_RE = re.compile(r"\*\*([^*]+?)\*\*")
 _COLON_LIST_RE = re.compile(r":\s*(.+?)(?:\.\s|\n)")
-_BULLET_RE = re.compile(r"^-\s+\*?\*?([^—\n]+?)(?:\*\*|\s—|\n)", re.MULTILINE)
+_BULLET_RE = re.compile(r"^-\s+\*?\*?([^â€”\n]+?)(?:\*\*|\sâ€”|\n)", re.MULTILINE)
 _SPLIT_RE = re.compile(r",\s*|\s+and\s+")
 
 FOOD_KEYWORDS: frozenset[str] = frozenset(
@@ -38,8 +39,8 @@ FOOD_KEYWORDS: frozenset[str] = frozenset(
         "oyster",
         "cheese",
         "parmesan",
-        "gruyère",
-        "comté",
+        "gruyÃ¨re",
+        "comtÃ©",
         "fontina",
         "cheddar",
         "risotto",
@@ -56,7 +57,7 @@ FOOD_KEYWORDS: frozenset[str] = frozenset(
         "confit",
         "tartare",
         "stew",
-        "ragù",
+        "ragÃ¹",
         "bourguignon",
         "osso",
         "buco",
@@ -97,7 +98,7 @@ def extract_food_candidates(prose: str) -> list[str]:
     """
     candidates: set[str] = set()
 
-    # Regex extraction — structured patterns
+    # Regex extraction â€” structured patterns
     for pattern in (_BOLD_RE, _COLON_LIST_RE, _BULLET_RE):
         for m in pattern.finditer(prose):
             for part in _SPLIT_RE.split(m.group(1)):
@@ -105,7 +106,7 @@ def extract_food_candidates(prose: str) -> list[str]:
                 if 3 <= len(part) <= 60:
                     candidates.add(part)
 
-    # Keyword extraction — narrative anchors
+    # Keyword extraction â€” narrative anchors
     words = re.findall(r"\b[\w'-]+\b", prose.lower())
     for i, word in enumerate(words):
         if word in FOOD_KEYWORDS:
@@ -119,7 +120,7 @@ def extract_food_candidates(prose: str) -> list[str]:
 
 
 # Weight-class restrictions by wine category
-_WINE_CATEGORY_FILTERS: dict[str, dict[str, object]] = {
+_WINE_CATEGORY_FILTERS: dict[str, dict[str, Any]] = {
     "sweet": {
         "exclude_proteins": {"red_meat", "pork", "game"},
         "prefer_weights": {"light", "medium"},
@@ -133,8 +134,8 @@ _WINE_CATEGORY_FILTERS: dict[str, dict[str, object]] = {
 
 def _filter_by_wine_context(
     dish_ids: list[str],
-    con: object,
-    filters: dict[str, object],
+    con: Any,
+    filters: dict[str, Any],
 ) -> list[str]:
     """Remove dish_ids whose protein is in the exclude set."""
     if not dish_ids:
@@ -157,7 +158,7 @@ def _filter_by_wine_context(
 
 def resolve_food_candidates(
     candidates: list[str],
-    con: object,
+    con: Any,
     *,
     limit_per_query: int = 2,
     min_name_overlap: float = 0.5,
@@ -252,7 +253,7 @@ def resolve_food_candidates(
                     seen.add(dish_id)
                     results.append(dish_id)
         elif rows:
-            # Only take the top-1 if score is meaningful (≥ 1 point per token)
+            # Only take the top-1 if score is meaningful (â‰¥ 1 point per token)
             dish_id, score, _no = rows[0]
             if score >= len(tokens) and dish_id not in seen:
                 seen.add(dish_id)
@@ -291,7 +292,7 @@ def deduplicate_variants(dish_ids: list[str]) -> list[str]:
         >>> deduplicate_variants(["kleftiko", "kleftiko-greek"])
         ['kleftiko', 'kleftiko-greek']
     """
-    stems_seen: dict[str, str] = {}  # stem → first dish_id
+    stems_seen: dict[str, str] = {}  # stem â†’ first dish_id
     result: list[str] = []
 
     for dish_id in dish_ids:
@@ -300,7 +301,7 @@ def deduplicate_variants(dish_ids: list[str]) -> list[str]:
             stems_seen[stem] = dish_id
             result.append(dish_id)
         elif dish_id == stem and stems_seen[stem] != stem:
-            # The canonical (no-suffix) version appeared later — swap
+            # The canonical (no-suffix) version appeared later â€” swap
             idx = result.index(stems_seen[stem])
             result[idx] = dish_id
             stems_seen[stem] = dish_id
@@ -335,7 +336,7 @@ _ALLOWED_METHODS: frozenset[str] = frozenset(
         "roasted",
         "smoked",
         "raw",
-        "sautéed",
+        "sautÃ©ed",
         "baked",
         "cured",
     }
@@ -413,7 +414,7 @@ def _conflicts_with_accepted(group: str, accepted: list[str]) -> bool:
 
 def derive_food_groups(
     dish_ids: list[str],
-    con: object,
+    con: Any,
     *,
     threshold: float = 0.4,
     max_groups: int = 10,
@@ -466,7 +467,7 @@ def derive_food_groups(
                 counts[normalised] += 1
         for flav in flavours or []:
             if flav in _ALLOWED_FLAVOURS:
-                counts[flav] += 0.5  # secondary signal
+                counts[flav] += 0.5  # type: ignore[assignment]  # secondary signal
 
     min_count = max(1, len(rows) * threshold)
     groups = [group for group, count in counts.most_common() if count >= min_count]
@@ -528,7 +529,7 @@ def validate_food_data(
     food_tags: list[str],
     food_groups: list[str],
     prose: str,
-    con: object,
+    con: Any,
     *,
     wine_sweetness: str | None = None,
 ) -> tuple[list[str], list[str]]:
@@ -605,7 +606,7 @@ def _extract_negated_groups(prose: str) -> set[str]:
 
 def _filter_tags_by_protein(
     dish_ids: list[str],
-    con: object,
+    con: Any,
     excluded_proteins: set[str],
 ) -> list[str]:
     """Remove tags whose protein matches the exclusion set."""
@@ -652,9 +653,9 @@ FOOD_GROUP_KEYWORDS: dict[str, str] = {
     "cheese": "cheese",
     "fondue": "cheese",
     "raclette": "cheese",
-    "gruyère": "cheese",
+    "gruyÃ¨re": "cheese",
     "parmesan": "cheese",
-    "comté": "cheese",
+    "comtÃ©": "cheese",
     "vegetarian": "vegetarian",
     "vegan": "vegan",
     # Cooking styles
@@ -707,7 +708,7 @@ _NEGATION_WORDS: frozenset[str] = frozenset(
 _NEGATION_WINDOW = 5  # words after negation to suppress
 
 # Cuisine keywords that commonly appear as dish adjectives rather than
-# indicating wine-level cuisine affinity.  Require ≥2 hits to include.
+# indicating wine-level cuisine affinity.  Require â‰¥2 hits to include.
 _CUISINE_GROUPS: frozenset[str] = frozenset(
     {
         "French",
@@ -736,7 +737,7 @@ def extract_food_groups(
 
     Returns groups ordered by frequency (most hits first).  Cuisine-type
     groups (French, Swiss, etc.) require at least ``min_cuisine_hits``
-    keyword occurrences to be included — this prevents a single dish
+    keyword occurrences to be included â€” this prevents a single dish
     adjective like "French onion soup" from tagging the wine as French.
 
     Examples:

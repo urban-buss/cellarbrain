@@ -64,6 +64,9 @@ bkp/
 logs/
 pip_out.txt
 
+# Stale test artifacts
+nonexistent/
+
 # OpenClaw research
 openclaw/
 

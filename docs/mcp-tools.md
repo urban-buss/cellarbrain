@@ -33,6 +33,7 @@ affect tool behaviour. Omit it for backward compatibility.
 | `cellar_info` | `verbose?: bool` | Version, currency, data directory, ETL freshness, inventory counts, and config metadata. Set `verbose=True` for extended diagnostics. |
 | `cellar_stats` | `group_by?: str`, `limit?: int`, `sort_by?: str` | Overall summary or grouped breakdown by one of 10 dimensions. `limit`: max groups (default 20, 0=unlimited); excess rolled into `(other)`. `sort_by`: "bottles" (default), "value", "wines", "volume". |
 | `cellar_churn` | `period?: str`, `year?: int`, `month?: int` | Roll-forward churn analysis (beginning/purchased/consumed/ending). |
+| `cellar_report` | `cutoff?: str`, `compare_to?: str` | Structured portfolio snapshot (stored/on-order/all) with fluctuation (in/out/net). |
 | `consumption_velocity` | `months?: int` | Month-by-month acquisition vs consumption rates, net growth, and 12-month projection. Default lookback: 6 months. |
 | `cellar_gaps` | `dimension?: str`, `months?: int` | Identify underrepresented categories. Dimensions: "region" (consumed but depleted), "grape" (none drinkable next 12 months), "price_tier" (no ready-to-drink), "vintage" (empty aging decades). Default: all four. `months`: consumption lookback (default 12). |
 | `search_synonyms` | `action: str`, `key?: str`, `value?: str` | Manage custom search synonyms. Actions: `list`, `add`, `remove`. |
@@ -67,6 +68,8 @@ Intent and system-concept filters remain mandatory throughout all fallback stage
 `cellar_stats` group_by options: `country`, `region`, `category`, `vintage`, `winery`, `grape`, `cellar`, `provider`, `status`, `on_order`.
 
 `cellar_churn` period options: `"month"` (month-by-month), `"year"` (year-by-year). If omitted, returns a single-period summary. Defaults to current month when no args given. Examples: `cellar_churn()`, `cellar_churn(year=2025, month=3)`, `cellar_churn(period="month", year=2025)`, `cellar_churn(period="year")`.
+
+`cellar_report` generates a structured portfolio report for a given cutoff date compared against a prior period. The `cutoff` parameter accepts an ISO date (`"2026-05-31"`), `"today"`, or `"current_month"` (default). The `compare_to` parameter selects the comparison baseline: `"prior_month"` (last day of previous month, default), `"prior_year"` (same date one year earlier), or `"year_start"` (Dec 31 of prior year for YTD analysis). Output includes three sections: current snapshot, prior snapshot, and fluctuation (in/out/net) broken down by stored, on-order, and combined totals. Each shows value (CHF), bottle count, and volume (litres). Note: on-order classification uses current transit status as a proxy.
 
 `consumption_velocity` analyses how fast the cellar is growing or shrinking. Returns per-month acquired and consumed counts, average rates, net growth per month, current stored bottle count, and a 12-month projection. The `months` parameter controls the lookback window (1–60, default 6). Excludes the current incomplete month.
 

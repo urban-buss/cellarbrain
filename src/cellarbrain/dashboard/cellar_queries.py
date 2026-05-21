@@ -74,10 +74,11 @@ def get_wines(
     col = sort if sort in _WINE_SORT_COLUMNS else "wine_name"
     direction = "DESC" if desc else "ASC"
 
-    total = con.execute(
+    total_row = con.execute(
         f"SELECT COUNT(*) FROM wines WHERE {where}",
         params,
-    ).fetchone()[0]
+    ).fetchone()
+    total = total_row[0] if total_row else 0
 
     rows = con.execute(
         f"""
@@ -200,10 +201,11 @@ def get_bottles(
         params.append(category)
     where = " AND ".join(wheres)
 
-    total = con.execute(
+    total_row = con.execute(
         f"SELECT COUNT(*) FROM bottles_full WHERE {where}",
         params,
-    ).fetchone()[0]
+    ).fetchone()
+    total = total_row[0] if total_row else 0
 
     rows = con.execute(
         f"""
@@ -306,6 +308,8 @@ def get_quick_stats(
                         THEN 1 ELSE 0 END) AS ready
         FROM wines
     """).fetchone()
+    if row is None:
+        return {"wines": 0, "bottles": 0, "value": 0, "ready": 0}
     return {
         "wines": row[0],
         "bottles": row[1],
@@ -361,6 +365,18 @@ def get_cellar_stats_overview(
             ROUND(SUM(COALESCE(bottles_on_order, 0) * COALESCE(price, 0)), 0) AS on_order_value
         FROM wines
     """).fetchone()
+    if row is None:
+        return {
+            "wines": 0,
+            "bottles": 0,
+            "total_value": 0,
+            "avg_price": 0,
+            "ready": 0,
+            "countries": 0,
+            "regions": 0,
+            "on_order": 0,
+            "on_order_value": 0,
+        }
     return {
         "wines": row[0],
         "bottles": row[1],
@@ -772,9 +788,10 @@ def get_consumption_velocity(
     net_growth = round(avg_acquired - avg_consumed, 1)
 
     try:
-        current_bottles = con.execute(
+        _crow = con.execute(
             "SELECT count(*) FROM bottles_full WHERE status = 'stored' AND NOT is_in_transit"
-        ).fetchone()[0]
+        ).fetchone()
+        current_bottles = _crow[0] if _crow else 0
     except Exception:
         current_bottles = 0
 

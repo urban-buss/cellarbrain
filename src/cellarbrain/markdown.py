@@ -1001,27 +1001,28 @@ def affected_wine_ids(
 
     for c in change_log:
         etype = c["entity_type"]
-        eid = c.get("entity_id")
+        eid: int | None = c.get("entity_id")
         ctype = c["change_type"]
 
         if etype == "wine" and ctype in ("insert", "update", "rename"):
-            result.add(eid)
+            if eid is not None:
+                result.add(eid)
         elif etype == "winery":
-            result.update(wines_by_winery.get(eid, set()))
+            result.update(wines_by_winery.get(eid, set()))  # type: ignore[arg-type]
         elif etype == "appellation":
-            result.update(wines_by_appellation.get(eid, set()))
+            result.update(wines_by_appellation.get(eid, set()))  # type: ignore[arg-type]
         elif etype == "grape":
-            result.update(wines_by_grape.get(eid, set()))
+            result.update(wines_by_grape.get(eid, set()))  # type: ignore[arg-type]
         elif etype == "bottle":
-            wid = bottle_wine.get(eid)
+            wid = bottle_wine.get(eid)  # type: ignore[arg-type]
             if wid is not None:
                 result.add(wid)
         elif etype == "tasting":
-            wid = tasting_wine.get(eid)
+            wid = tasting_wine.get(eid)  # type: ignore[arg-type]
             if wid is not None:
                 result.add(wid)
         elif etype == "pro_rating":
-            wid = rating_wine.get(eid)
+            wid = rating_wine.get(eid)  # type: ignore[arg-type]
             if wid is not None:
                 result.add(wid)
         elif etype == "wine_grape":

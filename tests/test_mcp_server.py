@@ -285,6 +285,34 @@ class TestCellarInfoTool:
 
 
 # ---------------------------------------------------------------------------
+# TestCellarReportTool
+# ---------------------------------------------------------------------------
+
+
+class TestCellarReportTool:
+    def test_default_report(self, server):
+        result = server.cellar_report()
+        assert "Cellar Report" in result
+
+    def test_with_cutoff(self, server):
+        result = server.cellar_report(cutoff="2025-03-31")
+        assert "Cellar Report" in result
+        assert "stored" in result
+
+    def test_compare_to_prior_year(self, server):
+        result = server.cellar_report(compare_to="prior_year")
+        assert "Prior Year" in result
+
+    def test_invalid_compare_to(self, server):
+        result = server.cellar_report(compare_to="invalid")
+        assert "Error" in result
+
+    def test_invalid_cutoff(self, server):
+        result = server.cellar_report(cutoff="not-a-date")
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
 # TestFindWineTool
 # ---------------------------------------------------------------------------
 
@@ -1049,6 +1077,7 @@ class TestToolRegistration:
         "query_cellar",
         "cellar_stats",
         "cellar_churn",
+        "cellar_report",
         "cellar_info",
         "find_wine",
         "wine_suggestions",

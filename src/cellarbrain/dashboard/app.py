@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import duckdb
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -61,12 +61,11 @@ def _wants_partial(request: Request) -> bool:
 async def _lifespan(app: Starlette):
     # Observability log store — use open_log_reader for multi-file support
     import shutil
-    from pathlib import Path
 
     from cellarbrain.observability import open_log_reader
 
-    app.state.skipped_log_files: list[str] = []
-    app.state.log_temp_dirs: list[Path] = []
+    app.state.skipped_log_files = []
+    app.state.log_temp_dirs = []
     try:
         app.state.log_db = open_log_reader(
             app.state.data_dir or ".",
@@ -216,9 +215,9 @@ async def errors_export(request: Request) -> PlainTextResponse:
         lines.append("")
         lines.append(f"## Error details ({len(data)} most recent)")
         for i, e in enumerate(data, 1):
-            ts = e["started_at"].strftime("%Y-%m-%d %H:%M:%S") if e["started_at"] else "?"
+            ts_str = e["started_at"].strftime("%Y-%m-%d %H:%M:%S") if e["started_at"] else "?"
             lines.append("")
-            lines.append(f"### {i}. [{ts}] {e['name']} — {e['error_type'] or 'Unknown'}")
+            lines.append(f"### {i}. [{ts_str}] {e['name']} — {e['error_type'] or 'Unknown'}")
             lines.append(f"Message: {e['error_message'] or '—'}")
             if e.get("duration_ms") is not None:
                 lines.append(f"Duration: {e['duration_ms']}ms")
@@ -581,7 +580,7 @@ async def _read_form(request: Request) -> dict:
     return {k: (v if isinstance(v, str) else "") for k, v in form.items()}
 
 
-async def wine_notes_save(request: Request) -> HTMLResponse:
+async def wine_notes_save(request: Request) -> Response:
     """POST /cellar/{wine_id:int}/notes — save the dashboard_notes section."""
     wine_id = int(request.path_params["wine_id"])
     data_dir = request.app.state.data_dir
@@ -664,7 +663,7 @@ async def wine_notes_partial(request: Request) -> HTMLResponse:
     )
 
 
-async def bottle_mark_consumed(request: Request) -> HTMLResponse:
+async def bottle_mark_consumed(request: Request) -> Response:
     """POST /cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed.
 
     Adds the bottle to the consumed-pending sidecar and returns an updated
@@ -696,7 +695,7 @@ async def bottle_mark_consumed(request: Request) -> HTMLResponse:
     )
 
 
-async def bottle_unmark_consumed(request: Request) -> HTMLResponse:
+async def bottle_unmark_consumed(request: Request) -> Response:
     """POST /cellar/{wine_id:int}/bottles/{bottle_id:int}/consumed/undo."""
     wine_id = int(request.path_params["wine_id"])
     bottle_id = int(request.path_params["bottle_id"])
@@ -829,7 +828,7 @@ async def drink_tonight_get(request: Request) -> JSONResponse:
     return JSONResponse({"items": items, "count": len(items)})
 
 
-async def drink_tonight_add(request: Request) -> HTMLResponse:
+async def drink_tonight_add(request: Request) -> Response:
     """POST /drink-tonight/add — append a wine, return updated button fragment."""
     data_dir = request.app.state.data_dir
     if not data_dir:
@@ -852,7 +851,7 @@ async def drink_tonight_add(request: Request) -> HTMLResponse:
     )
 
 
-async def drink_tonight_remove(request: Request) -> HTMLResponse:
+async def drink_tonight_remove(request: Request) -> Response:
     """POST /drink-tonight/remove — drop a wine, return updated button fragment."""
     data_dir = request.app.state.data_dir
     if not data_dir:
@@ -1110,12 +1109,12 @@ async def pairing_page(request: Request) -> HTMLResponse:
     if request.method == "POST":
         form = await request.form()
         params = {
-            "dish_description": form.get("dish_description", ""),
-            "category": form.get("category") or None,
-            "weight": form.get("weight") or None,
-            "protein": form.get("protein") or None,
-            "cuisine": form.get("cuisine") or None,
-            "grapes": form.get("grapes") or None,
+            "dish_description": str(form.get("dish_description", "")),
+            "category": str(form.get("category", "")) or None,
+            "weight": str(form.get("weight", "")) or None,
+            "protein": str(form.get("protein", "")) or None,
+            "cuisine": str(form.get("cuisine", "")) or None,
+            "grapes": str(form.get("grapes", "")) or None,
         }
 
         from cellarbrain import pairing
@@ -1201,8 +1200,8 @@ async def sql_playground(request: Request) -> HTMLResponse:
 
     if request.method == "POST":
         form = await request.form()
-        sql = form.get("sql", "").strip()
-        max_rows = min(int(form.get("max_rows", "500") or "500"), 1000)
+        sql = str(form.get("sql", "")).strip()
+        max_rows = min(int(str(form.get("max_rows", "500")) or "500"), 1000)
 
         if sql:
             try:
