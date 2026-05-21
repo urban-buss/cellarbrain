@@ -1,68 +1,83 @@
 ---
+description: "Consolidate agent memories into learned rules — the dream cycle"
 agent: agent
-description: "Consolidate agent memories into improved instructions and prompts. Run periodically to turn lessons learned into permanent workspace rules."
 ---
+
+<!-- GENERATED FROM .github/_shared/prompts/dream.prompt.md -->
+<!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 
 # Dream Cycle
 
-You are running a **dream cycle** — consolidating lessons from `.memories/` into permanent workspace rules in `.github/`.
+You are running the **dream cycle** — consolidating lessons from `.memories/`
+into permanent workspace rules under `.github/`.
 
-## Process
+Follow these steps in order. **Do not apply changes without user approval.**
 
-### 1. Gather
+## 1. Gather
 
-Read all files in `.memories/` (skip `_archive/` and `INDEX.md`). Parse the `severity` frontmatter from each file.
+- Read every file in `.memories/` (skip `_archive/` and `INDEX.md`).
+- Parse the `severity` frontmatter from each file.
+- Report what was found: count by category and severity.
 
-If `.memories/` is empty or contains only `.gitkeep`, report "No memories to process" and stop.
+If `.memories/` is empty or contains only `.gitkeep`, report
+"No memories to process" and stop.
 
-### 2. Conflicts First
+## 2. Conflicts first
 
-Surface any memories containing a `**Conflict**:` line. For each conflict, present the user with options:
-- **Update rule** — modify the `.github/` file to match the lesson
-- **Discard lesson** — archive the memory without changes
-- **Keep both** — add a nuanced note to the rule acknowledging the exception
+Surface any memory containing a `**Conflict:**` line. For each, present three
+options:
 
-Wait for user input before proceeding past conflicts.
+1. **Update rule** — modify the `.github/` file to match the lesson.
+2. **Discard lesson** — archive the memory without changes.
+3. **Keep both** — add a nuanced note to the rule acknowledging the exception.
 
-### 3. Cluster
+Wait for user resolution before proceeding past conflicts.
 
-Group remaining memories by theme (e.g., "SQL queries", "dossier formatting", "pairing workflow"). Weight by severity.
+## 3. Cluster
 
-### 4. Evaluate
+Group remaining memories by theme. Weight clusters by severity
+(`high` > `medium` > `low`).
 
-Apply severity-aware thresholds to decide what to act on:
-- Any `severity: high` → act immediately
-- 2+ `severity: medium` on the same topic → act
-- 3+ `severity: low` on the same topic → act
-- Below threshold → defer (keep in `.memories/` for next cycle)
+## 4. Evaluate
 
-### 5. Propose
+Apply severity-aware thresholds to decide which clusters to act on:
+
+- Any `severity: high` → act immediately.
+- 2+ `severity: medium` on the same theme → act.
+- 3+ `severity: low` on the same theme → act.
+- Below threshold → defer (keep in `.memories/` for the next cycle).
+
+## 5. Propose
 
 Present a **dream plan** to the user:
-- Which `.github/` files will be modified
-- What rules/guidelines will be added or refined
-- Which memories will be archived
-- Which memories will be deferred
 
-**Wait for user approval before making any changes.**
+- Which `.github/` files will be modified or created.
+- What rules/guidelines will be added or refined.
+- Which memories will be archived.
+- Which memories will be deferred (and why).
 
-### 6. Apply
+**Wait for explicit user approval before making any changes.**
+
+## 6. Apply
 
 Edit `.github/` files minimally:
-- Add or refine rules — don't restructure existing content
-- Match the voice and formatting of the existing file
-- Prefer appending to sections over rewriting them
 
-### 7. Archive
+- Add or refine rules — don't restructure existing content.
+- Match the voice and formatting of the existing file.
+- Prefer appending to sections over rewriting them.
+
+## 7. Archive
 
 Move processed memories to `.memories/_archive/`:
-- Create `_archive/` if it doesn't exist
-- Move each processed memory file there
-- Verify `_archive/` is covered by `.gitignore` (it's under `.memories/`)
 
-### 8. Update INDEX
+- Create `_archive/` if it does not exist.
+- Move each processed memory file there.
+- Verify `_archive/` is still covered by `.gitignore`.
 
-Regenerate `.memories/INDEX.md` with remaining (deferred) memories grouped by theme:
+## 8. Update INDEX
+
+Regenerate `.memories/INDEX.md` with the remaining (deferred) memories
+grouped by theme:
 
 ```markdown
 # Memory Index
@@ -71,15 +86,22 @@ Last updated: YYYY-MM-DD
 
 ## <Theme>
 - `filename.md` — one-line summary (severity)
-
-## <Theme>
-- `filename.md` — one-line summary (severity)
 ```
 
-### 9. Report
+If no memories remain, write a placeholder noting the date of the last dream.
 
-Summarize:
-- What rules were added/modified in `.github/`
-- What memories were archived
-- What memories were deferred (and why)
-- Remind user: all `.github/` changes are revertible via `git checkout`
+## 9. Report
+
+Summarise:
+
+- What rules were added or changed in `.github/`.
+- What memories were archived.
+- What memories were deferred (and why).
+- Remind the user: all `.github/` changes are revertible via
+  `git checkout -- .github/`.
+
+## Hard rules
+
+- Never `git add` anything inside `.memories/`.
+- Never reference memory content verbatim in user-facing output.
+- Never write secrets into rules or memories.

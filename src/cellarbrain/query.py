@@ -32,7 +32,8 @@ import re
 import duckdb
 import pandas as pd
 
-from ._query_base import DataStaleError, QueryError, _format_df
+from ._query_base import _format_df
+from .exceptions import DataStaleError, QueryError
 from .flat import (
     BOTTLES_FULL_VIEW_SQL,
     BOTTLES_VIEW_SQL,
@@ -158,6 +159,20 @@ _DISALLOWED_PATTERN = re.compile(
 
 _ALLOWED_PATTERN = re.compile(
     r"^\s*(SELECT|WITH)\b",
+    re.IGNORECASE,
+)
+
+# Block keywords that can appear anywhere in a query (subqueries, CTEs)
+_FORBIDDEN_KEYWORDS = re.compile(
+    r"\b(COPY|ATTACH|DETACH|PRAGMA|LOAD|INSTALL"
+    r"|GRANT|REVOKE|EXEC|EXECUTE)\b",
+    re.IGNORECASE,
+)
+
+# Block direct file-access functions that bypass view-only exposure
+_FORBIDDEN_FUNCTIONS = re.compile(
+    r"\b(read_parquet|read_csv|read_csv_auto|read_json|read_json_auto"
+    r"|parquet_scan|parquet_metadata|parquet_schema|query)\s*\(",
     re.IGNORECASE,
 )
 
@@ -417,7 +432,8 @@ def validate_sql(sql: str) -> None:
     """Check that *sql* is a read-only SELECT statement.
 
     Raises QueryError if the SQL is empty, contains DDL/DML, does not
-    start with SELECT or WITH, or contains multiple statements.
+    start with SELECT or WITH, contains multiple statements, or uses
+    forbidden functions (e.g. read_parquet) that could access the filesystem.
     """
     stripped = sql.strip().rstrip(";").strip()
     if not stripped:
@@ -428,6 +444,19 @@ def validate_sql(sql: str) -> None:
         raise QueryError(f"Only SELECT queries are allowed. Got: {stripped.split()[0].upper()}")
     if not _ALLOWED_PATTERN.match(stripped):
         raise QueryError(f"SQL must start with SELECT or WITH. Got: {stripped[:40]!r}")
+
+    # Strip comments before deeper checks (keywords/functions in subqueries)
+    no_comments = re.sub(r"--[^\n]*", "", stripped)
+    no_comments = re.sub(r"/\*.*?\*/", "", no_comments, flags=re.DOTALL)
+
+    kw_match = _FORBIDDEN_KEYWORDS.search(no_comments)
+    if kw_match:
+        raise QueryError(f"Forbidden SQL keyword: {kw_match.group(1).upper()}")
+
+    func_match = _FORBIDDEN_FUNCTIONS.search(no_comments)
+    if func_match:
+        raise QueryError(f"Forbidden SQL function: {func_match.group(1)}")
+
     logger.debug("SQL validated: %s", stripped[:200])
 
 

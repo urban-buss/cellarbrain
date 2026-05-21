@@ -24,11 +24,6 @@ from mcp.server.fastmcp import FastMCP
 
 from . import query as q
 from .dossier_ops import (
-    ProtectedSectionError,
-    TrackedWineNotFoundError,
-    WineNotFoundError,
-)
-from .dossier_ops import (
     pending_companion_research as _pending_companion,
 )
 from .dossier_ops import (
@@ -52,7 +47,13 @@ from .dossier_ops import (
 from .dossier_ops import (
     update_dossier as _update_dossier,
 )
-from .query import DataStaleError, QueryError
+from .exceptions import (
+    DataStaleError,
+    ProtectedSectionError,
+    QueryError,
+    TrackedWineNotFoundError,
+    WineNotFoundError,
+)
 from .settings import Settings, load_settings
 
 if TYPE_CHECKING:

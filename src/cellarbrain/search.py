@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 import duckdb
 import pandas as pd
 
-from ._query_base import QueryError, _format_df, _to_md
+from ._query_base import _format_df, _to_md
+from .exceptions import QueryError
 
 logger = logging.getLogger(__name__)
 

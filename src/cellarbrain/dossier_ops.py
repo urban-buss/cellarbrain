@@ -19,22 +19,11 @@ from .settings import Settings
 
 logger = logging.getLogger(__name__)
 
+# Re-export exceptions for backward compatibility (importers may use
+# ``from .dossier_ops import WineNotFoundError`` etc.)
+from .exceptions import ProtectedSectionError, TrackedWineNotFoundError, WineNotFoundError  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
-class WineNotFoundError(Exception):
-    """Wine ID does not exist or dossier file is missing."""
-
-
-class ProtectedSectionError(Exception):
-    """Attempted to write to an invalid or ETL-owned section."""
-
-
-class TrackedWineNotFoundError(Exception):
-    """Tracked wine ID does not exist or companion dossier is missing."""
+__all__ = ["ProtectedSectionError", "TrackedWineNotFoundError", "WineNotFoundError"]
 
 
 # ---------------------------------------------------------------------------
