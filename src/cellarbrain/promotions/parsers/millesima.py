@@ -202,7 +202,7 @@ def _extract_product_from_td(td: Tag) -> ExtractedPromotion | None:
     product_url = ""
     link = td.find("a", href=True)
     if link:
-        href = link.get("href", "")
+        href = str(link.get("href", ""))
         if "millesima" in href:
             product_url = href
 
@@ -295,9 +295,9 @@ def _find_product_td(strong: Tag) -> Tag | None:
     The product TD contains both the wine name and CHF pricing,
     plus pack/bottle info.
     """
-    level = strong
+    level: Tag | None = strong
     for _ in range(10):
-        level = level.parent
+        level = level.parent  # type: ignore[union-attr]
         if not level or not isinstance(level, Tag):
             return None
         if level.name == "td":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,10 @@ class SommelierEngine:
     def __init__(self, config, data_dir: str | Path):
         self._config = config
         self._data_dir = Path(data_dir)
-        self._model = None
-        self._food_index = None
+        self._model: Any = None
+        self._food_index: Any = None
         self._food_ids: list[str] | None = None
-        self._wine_index = None
+        self._wine_index: Any = None
         self._wine_ids: list[str] | None = None
 
     def check_availability(self) -> str | None:
@@ -69,7 +70,7 @@ class SommelierEngine:
 
         from .index import search_index
 
-        results = search_index(vector, self._wine_index, self._wine_ids, limit)
+        results = search_index(vector, self._wine_index, self._wine_ids or [], limit)
         return [ScoredWine(wine_id=int(wid), score=score, wine_text="") for wid, score in results]
 
     def suggest_foods(self, wine_id: int, limit: int = 10) -> list[ScoredFood]:
@@ -92,7 +93,7 @@ class SommelierEngine:
 
         from .index import search_index
 
-        results = search_index(vector, self._food_index, self._food_ids, limit)
+        results = search_index(vector, self._food_index, self._food_ids or [], limit)
 
         # Load food catalogue for dish names
         food_names = self._get_food_names()

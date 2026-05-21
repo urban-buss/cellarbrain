@@ -222,16 +222,16 @@ def _extract_mime_parts(msg: email.message.Message) -> tuple[str, str]:
         for part in msg.walk():
             content_type = part.get_content_type()
             if content_type == "text/plain" and not text_plain:
-                payload = part.get_content()
+                payload = part.get_content()  # type: ignore[attr-defined]
                 if isinstance(payload, str):
                     text_plain = payload
             elif content_type == "text/html" and not text_html:
-                payload = part.get_content()
+                payload = part.get_content()  # type: ignore[attr-defined]
                 if isinstance(payload, str):
                     text_html = payload
     else:
         content_type = msg.get_content_type()
-        payload = msg.get_content()
+        payload = msg.get_content()  # type: ignore[attr-defined]
         if isinstance(payload, str):
             if content_type == "text/plain":
                 text_plain = payload

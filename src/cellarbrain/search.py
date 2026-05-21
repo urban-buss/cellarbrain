@@ -19,6 +19,7 @@ Internal helpers re-exported for test access:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import duckdb
@@ -74,7 +75,7 @@ def _intent_drinking_ready(
 
 def _intent_drinking_exact(
     status: str,
-) -> callable:
+) -> Callable:
     def _handler(
         matched: list[str],
         idx: int,
@@ -156,7 +157,7 @@ def _matches_numeric(token: str) -> bool:
 # Patterns ordered longest-first for greedy matching.  Each entry:
 #   (tuple_of_lowercase_tokens, handler, numeric_tail)
 # numeric_tail=True means the last token slot matches any number.
-_INTENT_PATTERNS: list[tuple[tuple[str, ...], callable, bool]] = [
+_INTENT_PATTERNS: list[tuple[tuple[str, ...], Callable, bool]] = [
     # --- drinking status (multi-word first) ---
     (("ready", "to", "drink"), _intent_drinking_ready, False),
     (("ready", "drink"), _intent_drinking_ready, False),

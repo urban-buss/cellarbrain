@@ -16,7 +16,7 @@ from cellarbrain.settings import (
     SearchConfig,
     Settings,
     SommelierConfig,
-    _anchor,
+    _anchor_rel,
     _default_search_synonyms,
     _legacy_to_rules,
     _load_currency_sidecar,
@@ -1350,12 +1350,12 @@ class TestOutputConfig:
 
 class TestSommelierPathAnchoring:
     def test_anchor_relative_path(self):
-        result = _anchor("models/sommelier/model", pathlib.Path("/data"))
+        result = _anchor_rel("models/sommelier/model", pathlib.Path("/data"))
         assert result == str(pathlib.Path("/data/models/sommelier/model"))
 
     def test_anchor_absolute_path_passthrough(self):
         abs_path = str(pathlib.Path("/custom/absolute/model"))
-        assert _anchor(abs_path, pathlib.Path("/data")) == abs_path
+        assert _anchor_rel(abs_path, pathlib.Path("/data")) == abs_path
 
     def test_resolve_anchors_mutable_paths(self):
         cfg = SommelierConfig()

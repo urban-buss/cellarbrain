@@ -317,7 +317,7 @@ class CoopParser(NewsletterParser):
                 style = font.get("style", "")
                 text = font.get_text(strip=True)
 
-                if "18px" in style:
+                if "18px" in str(style):
                     pm = self._HTML_PRICE_RE.fullmatch(text)
                     if pm:
                         sale_price = Decimal(pm.group(1))
@@ -346,7 +346,7 @@ class CoopParser(NewsletterParser):
             # Product URL
             product_url = ""
             for link in search_root.find_all("a", href=True):
-                href = link.get("href", "")
+                href = str(link.get("href", ""))
                 if "mondovino" in href:
                     product_url = href
                     break

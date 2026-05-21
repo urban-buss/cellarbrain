@@ -6,6 +6,7 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import anyio
 
@@ -21,7 +22,7 @@ class ToolInfo:
     """Metadata for a single MCP tool function."""
 
     name: str
-    func: object  # the callable
+    func: Any  # the callable
     description: str
     category: str
     parameters: list[dict] = field(default_factory=list)

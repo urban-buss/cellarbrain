@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ..settings import IngestConfig, Settings
 
@@ -400,10 +401,10 @@ def _clear_pending_retry(state: dict | IngestState, batch_uids: list[int]) -> No
 
 
 def _reap_messages(
-    client: object,
+    client: Any,
     messages: list,
     *,
-    config: object,
+    config: Any,
     now: datetime,
     state: IngestState,
     reason: str,

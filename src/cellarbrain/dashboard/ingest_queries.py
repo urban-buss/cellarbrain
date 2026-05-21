@@ -11,7 +11,7 @@ def has_ingest_table(con: duckdb.DuckDBPyConnection) -> bool:
         result = con.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'ingest_events'"
         ).fetchone()
-        return result[0] > 0
+        return result is not None and result[0] > 0
     except Exception:
         return False
 

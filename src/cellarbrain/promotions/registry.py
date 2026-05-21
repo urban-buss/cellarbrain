@@ -7,6 +7,7 @@ import importlib
 import logging
 import pkgutil
 from pathlib import Path
+from typing import Any
 
 from .parsers.base import NewsletterParser
 
@@ -62,7 +63,7 @@ def route_email(
     subject: str,
     text_plain: str,
     text_html: str,
-    config: object,
+    config: Any,
 ) -> tuple[str, NewsletterParser] | None:
     """Route an email to the correct parser based on sender + config.
 

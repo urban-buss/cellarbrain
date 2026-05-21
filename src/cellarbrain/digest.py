@@ -8,6 +8,7 @@ formatted brief for agents and CLI consumers.
 from __future__ import annotations
 
 import logging
+import pathlib
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -208,15 +209,15 @@ def build_digest(
     # --- Inventory summary ---
     inventory: InventorySummary | None = None
     try:
-        row = con.execute(_INVENTORY_SQL).fetchone()
-        if row:
+        inv_row = con.execute(_INVENTORY_SQL).fetchone()
+        if inv_row:
             inventory = InventorySummary(
-                total_wines=row[0] or 0,
-                total_bottles=row[1] or 0,
-                total_value=row[2],
-                past_optimal_count=row[3] or 0,
-                optimal_count=row[4] or 0,
-                too_young_count=row[5] or 0,
+                total_wines=inv_row[0] or 0,
+                total_bottles=inv_row[1] or 0,
+                total_value=inv_row[2],
+                past_optimal_count=inv_row[3] or 0,
+                optimal_count=inv_row[4] or 0,
+                too_young_count=inv_row[5] or 0,
             )
     except Exception as exc:
         logger.debug("inventory query failed: %s", exc)
@@ -224,14 +225,14 @@ def build_digest(
     # --- Recent ETL changes ---
     recent_changes: EtlChange | None = None
     try:
-        row = con.execute(_LAST_ETL_SQL).fetchone()
-        if row:
+        etl_row = con.execute(_LAST_ETL_SQL).fetchone()
+        if etl_row:
             recent_changes = EtlChange(
-                last_run_timestamp=str(row[0]) if row[0] else None,
-                last_run_mode=row[1],
-                inserts=row[2] or 0,
-                updates=row[3] or 0,
-                deletes=row[4] or 0,
+                last_run_timestamp=str(etl_row[0]) if etl_row[0] else None,
+                last_run_mode=etl_row[1],
+                inserts=etl_row[2] or 0,
+                updates=etl_row[3] or 0,
+                deletes=etl_row[4] or 0,
             )
     except Exception as exc:
         logger.debug("etl_run query failed: %s", exc)
@@ -242,7 +243,7 @@ def build_digest(
         try:
             from .promotions.state import load_state
 
-            state = load_state(data_dir)
+            state = load_state(pathlib.Path(data_dir))
             # State tracks processed UIDs — we look at recent report files
             # For simplicity, report promotions as available if state exists
             if state:
