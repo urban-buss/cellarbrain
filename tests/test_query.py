@@ -1551,6 +1551,23 @@ class TestCellarReport:
         # Bottle 7 has price=25.00 and was output 2025-03-15
         assert "25.00" in result
 
+    def test_fluctuation_out_columns_not_swapped(self, data_dir):
+        """Regression: out row must have CHF value in value col, count in bottles col."""
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        # Bottle 7: price=25.00, output 2025-03-15 → 1 bottle out
+        for line in result.splitlines():
+            if line.strip().startswith("| out"):
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                # parts: [direction, value, bottles, volume]
+                value_str = parts[1].lstrip("-")
+                bottles_str = parts[2].lstrip("-")
+                assert float(value_str.replace("'", "")) == 25.0
+                assert int(bottles_str) == 1
+                break
+        else:
+            pytest.fail("No 'out' row found in report")
+
     def test_compare_to_prior_year(self, data_dir):
         con = get_connection(data_dir)
         result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_year")
