@@ -769,11 +769,12 @@ def pending_research(
     section: str | None = None,
     include_stale: bool = False,
     stale_months: int = 6,
+    fmt: str = "markdown",
 ) -> str:
     """List wines with pending agent sections, sorted by priority.
 
     Priority: favorites first, then by bottles_in_cellar descending.
-    Returns a Markdown table.
+    Returns a Markdown table or plain text depending on *fmt*.
 
     Args:
         data_dir: Path to the data directory.
@@ -784,6 +785,7 @@ def pending_research(
             sections (research older than *stale_months*). These appear after
             genuinely pending wines.
         stale_months: Threshold for stale research (default 6 months).
+        fmt: Output format ("markdown" or "plain").
     """
     d = pathlib.Path(data_dir)
     wines_dir = d / "wines"
@@ -875,28 +877,42 @@ def pending_research(
     # Truncate
     pending_data = pending_data[:limit]
 
-    # Format as Markdown table
-    lines = [
-        "| wine_id | Name | Vintage | Bottles | Favorite | Pending |",
-        "|---|---|---|---|---|---|",
-    ]
-    for item in pending_data:
-        fav = "⭐" if item["is_favorite"] else ""
-        lines.append(
-            f"| {item['wine_id']} "
-            f"| {item['wine_name'] or '—'} "
-            f"| {item['vintage'] or 'NV'} "
-            f"| {item['bottles']} "
-            f"| {fav} "
-            f"| {item['pending_count']} |"
-        )
+    # Format output
+    if fmt == "plain":
+        lines: list[str] = []
+        for item in pending_data:
+            fav = " ⭐" if item["is_favorite"] else ""
+            lines.append(
+                f"{item['wine_id']}. {item['wine_name'] or '—'}"
+                f" ({item['vintage'] or 'NV'}){fav}"
+                f" — {item['bottles']} btl, {item['pending_count']} pending"
+            )
+    else:
+        lines = [
+            "| wine_id | Name | Vintage | Bottles | Favorite | Pending |",
+            "|---|---|---|---|---|---|",
+        ]
+        for item in pending_data:
+            fav = "⭐" if item["is_favorite"] else ""
+            lines.append(
+                f"| {item['wine_id']} "
+                f"| {item['wine_name'] or '—'} "
+                f"| {item['vintage'] or 'NV'} "
+                f"| {item['bottles']} "
+                f"| {fav} "
+                f"| {item['pending_count']} |"
+            )
 
     # Optionally append stale research items
     if include_stale:
-        stale_result = stale_research(data_dir, months=stale_months, limit=limit, section=section)
+        stale_result = stale_research(data_dir, months=stale_months, limit=limit, section=section, fmt=fmt)
         if "*No stale research found.*" not in stale_result:
-            lines.append("")
-            lines.append("### Stale Research (>" + str(stale_months) + " months)")
+            if fmt == "plain":
+                lines.append("")
+                lines.append(f"STALE RESEARCH (>{stale_months} months)")
+            else:
+                lines.append("")
+                lines.append("### Stale Research (>" + str(stale_months) + " months)")
             lines.append("")
             lines.append(stale_result)
 
@@ -909,6 +925,7 @@ def stale_research(
     limit: int = 20,
     section: str | None = None,
     settings: Settings | None = None,
+    fmt: str = "markdown",
 ) -> str:
     """Find wine dossier sections where research metadata is older than *months*.
 
@@ -916,7 +933,7 @@ def stale_research(
     with a parseable date. Sections without metadata are ignored (use
     ``pending_research`` for those).
 
-    Returns a Markdown table sorted by oldest-first.
+    Returns a table sorted by oldest-first.
     """
     d = pathlib.Path(data_dir)
     wines_dir = d / "wines"
@@ -981,20 +998,29 @@ def stale_research(
 
     stale_items = stale_items[:limit]
 
-    lines = [
-        "| wine_id | Name | Section | Date | Age | Agent |",
-        "|---|---|---|---|---|---|",
-    ]
-    for item in stale_items:
-        name = wine_meta.get(item["wine_id"], "")
-        lines.append(
-            f"| {item['wine_id']} "
-            f"| {name} "
-            f"| {item['section']} "
-            f"| {item['date']} "
-            f"| {item['months_ago']}mo "
-            f"| {item['agent']} |"
-        )
+    if fmt == "plain":
+        lines: list[str] = []
+        for item in stale_items:
+            name = wine_meta.get(item["wine_id"], "")
+            lines.append(
+                f"{item['wine_id']}. {name} — {item['section']}"
+                f" ({item['date']}, {item['months_ago']}mo ago, agent: {item['agent']})"
+            )
+    else:
+        lines = [
+            "| wine_id | Name | Section | Date | Age | Agent |",
+            "|---|---|---|---|---|---|",
+        ]
+        for item in stale_items:
+            name = wine_meta.get(item["wine_id"], "")
+            lines.append(
+                f"| {item['wine_id']} "
+                f"| {name} "
+                f"| {item['section']} "
+                f"| {item['date']} "
+                f"| {item['months_ago']}mo "
+                f"| {item['agent']} |"
+            )
 
     return "\n".join(lines)
 
@@ -1361,11 +1387,12 @@ def update_companion_dossier(
 def pending_companion_research(
     data_dir: str | pathlib.Path,
     limit: int = 20,
+    fmt: str = "markdown",
 ) -> str:
     """List tracked wines with pending companion sections.
 
     Scans companion dossier frontmatter for ``agent_sections_pending`` entries.
-    Returns a Markdown table sorted by tracked_wine_id.
+    Returns a table sorted by tracked_wine_id.
     """
     d = pathlib.Path(data_dir)
     wishlist_dir = d / "wines" / "tracked"
@@ -1432,16 +1459,25 @@ def pending_companion_research(
     pending_data.sort(key=lambda x: x["tracked_wine_id"])
     pending_data = pending_data[:limit]
 
-    lines = [
-        "| tracked_wine_id | Winery | Wine | Pending |",
-        "|---|---|---|---|",
-    ]
-    for item in pending_data:
-        lines.append(
-            f"| {item['tracked_wine_id']} "
-            f"| {item['winery'] or '—'} "
-            f"| {item['wine_name'] or '—'} "
-            f"| {item['pending_count']} |"
-        )
+    if fmt == "plain":
+        lines: list[str] = []
+        for item in pending_data:
+            lines.append(
+                f"{item['tracked_wine_id']}. {item['winery'] or '—'}"
+                f" — {item['wine_name'] or '—'}"
+                f" ({item['pending_count']} pending)"
+            )
+    else:
+        lines = [
+            "| tracked_wine_id | Winery | Wine | Pending |",
+            "|---|---|---|---|",
+        ]
+        for item in pending_data:
+            lines.append(
+                f"| {item['tracked_wine_id']} "
+                f"| {item['winery'] or '—'} "
+                f"| {item['wine_name'] or '—'} "
+                f"| {item['pending_count']} |"
+            )
 
     return "\n".join(lines)

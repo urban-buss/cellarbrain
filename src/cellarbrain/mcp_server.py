@@ -863,7 +863,7 @@ def cellar_gaps(
 
 
 @_tool()
-def cellar_info(verbose: bool = False, meta: dict | None = None) -> str:
+def cellar_info(verbose: bool = False, format: str | None = None, meta: dict | None = None) -> str:
     """Return general information about this cellar installation.
 
     Returns version, default currency, data directory, ETL freshness,
@@ -994,7 +994,30 @@ def cellar_info(verbose: bool = False, meta: dict | None = None) -> str:
 
     from .mcp_responses import ToolResponse
 
+    fmt = _effective_fmt(format)
     text = "\n".join(lines)
+
+    if fmt == "plain":
+        # Strip markdown table formatting for iMessage readability
+        plain_lines = []
+        for line in lines:
+            if line.startswith("|:") or line.startswith("|--") or line.startswith("|-"):
+                continue
+            if line.startswith("| "):
+                # Convert table row to "key: value" or plain list
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if len(cells) == 2:
+                    plain_lines.append(f"• {cells[0]}: {cells[1]}")
+                else:
+                    plain_lines.append("  ".join(cells))
+            elif line.startswith("## "):
+                plain_lines.append(line[3:].strip().upper())
+            elif line.startswith("**"):
+                plain_lines.append(line.replace("**", ""))
+            else:
+                plain_lines.append(line)
+        text = "\n".join(plain_lines)
+
     data = {
         "version": version,
         "data_dir": s.paths.data_dir,
@@ -1121,7 +1144,7 @@ def wine_suggestions(query: str, limit: int = 5, meta: dict | None = None) -> st
 
 
 @_tool()
-def search_stats(window_days: int = 7, limit: int = 20, meta: dict | None = None) -> str:
+def search_stats(window_days: int = 7, limit: int = 20, format: str | None = None, meta: dict | None = None) -> str:
     """Show search query statistics from the observability log.
 
     Returns tables of: top queries, zero-result queries, fuzzy/phonetic
@@ -1130,7 +1153,9 @@ def search_stats(window_days: int = 7, limit: int = 20, meta: dict | None = None
     Args:
         window_days: Number of days to look back (default 7).
         limit: Maximum rows per table (default 20).
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
+    fmt = _effective_fmt(format)
     from .observability import get_collector
 
     collector = get_collector()
@@ -1182,25 +1207,84 @@ def search_stats(window_days: int = 7, limit: int = 20, meta: dict | None = None
     except Exception as exc:
         return f"Error: {exc}"
 
-    parts = [f"## Search Statistics (last {window_days} days)\n"]
-    if summary:
-        parts.append(
-            f"**Total searches:** {summary[0]} | "
-            f"**Avg latency:** {summary[1]} ms | "
-            f"**Zero-result:** {summary[2]} | "
-            f"**Fuzzy rescues:** {summary[3]} | "
-            f"**Phonetic rescues:** {summary[4]}\n"
-        )
-    if not top_df.empty:
-        parts.append("\n### Top Queries\n")
-        parts.append(_to_md_table(top_df))
-    if not zero_df.empty:
-        parts.append("\n### Zero-Result Queries\n")
-        parts.append(_to_md_table(zero_df))
-    if not rescued_df.empty:
-        parts.append("\n### Rescued Queries (fuzzy/phonetic/soft-and)\n")
-        parts.append(_to_md_table(rescued_df))
+    if fmt == "plain":
+        parts = [f"SEARCH STATISTICS (last {window_days} days)\n"]
+        if summary:
+            parts.append(
+                f"Total searches: {summary[0]}\n"
+                f"Avg latency: {summary[1]} ms\n"
+                f"Zero-result: {summary[2]}\n"
+                f"Fuzzy rescues: {summary[3]}\n"
+                f"Phonetic rescues: {summary[4]}\n"
+            )
+        if not top_df.empty:
+            parts.append("\nTop Queries\n")
+            parts.append(_format_table(top_df, fmt))
+        if not zero_df.empty:
+            parts.append("\nZero-Result Queries\n")
+            parts.append(_format_table(zero_df, fmt))
+        if not rescued_df.empty:
+            parts.append("\nRescued Queries (fuzzy/phonetic/soft-and)\n")
+            parts.append(_format_table(rescued_df, fmt))
+    else:
+        parts = [f"## Search Statistics (last {window_days} days)\n"]
+        if summary:
+            parts.append(
+                f"**Total searches:** {summary[0]} | "
+                f"**Avg latency:** {summary[1]} ms | "
+                f"**Zero-result:** {summary[2]} | "
+                f"**Fuzzy rescues:** {summary[3]} | "
+                f"**Phonetic rescues:** {summary[4]}\n"
+            )
+        if not top_df.empty:
+            parts.append("\n### Top Queries\n")
+            parts.append(_format_table(top_df, fmt))
+        if not zero_df.empty:
+            parts.append("\n### Zero-Result Queries\n")
+            parts.append(_format_table(zero_df, fmt))
+        if not rescued_df.empty:
+            parts.append("\n### Rescued Queries (fuzzy/phonetic/soft-and)\n")
+            parts.append(_format_table(rescued_df, fmt))
     return "\n".join(parts)
+
+
+def _format_table(df, fmt: str = "markdown") -> str:
+    """Format a DataFrame as either Markdown table or plain text."""
+    from ._query_base import _format_df
+
+    return _format_df(df, fmt, style="auto")
+
+
+def _md_to_plain(text: str) -> str:
+    """Convert markdown-formatted text to iMessage-friendly plain text.
+
+    Strips table separators, converts table rows to bullet/list items,
+    and replaces markdown headings with plain uppercase headings.
+    """
+    lines: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        # Skip table separator rows
+        if stripped.startswith("|") and set(stripped.replace("|", "").replace(":", "").strip()) <= {"-"}:
+            continue
+        # Convert table rows
+        if stripped.startswith("| ") and stripped.endswith(" |"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) == 2:
+                lines.append(f"• {cells[0]}: {cells[1]}")
+            else:
+                lines.append("  ".join(cells))
+        elif stripped.startswith("### "):
+            lines.append(stripped[4:].strip().upper())
+        elif stripped.startswith("## "):
+            lines.append(stripped[3:].strip().upper())
+        elif stripped.startswith("# "):
+            lines.append(stripped[2:].strip().upper())
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            lines.append(stripped.strip("*"))
+        else:
+            lines.append(line.replace("**", ""))
+    return "\n".join(lines)
 
 
 def _to_md_table(df) -> str:
@@ -1287,20 +1371,21 @@ def update_dossier(
 
 
 @_tool()
-def get_format_siblings(wine_id: int, meta: dict | None = None) -> str:
+def get_format_siblings(wine_id: int, format: str | None = None, meta: dict | None = None) -> str:
     """Get format siblings for a wine (e.g. Standard + Magnum of the same wine).
 
-    Returns a Markdown table listing all format variants that share the same
+    Returns a table listing all format variants that share the same
     wine identity (winery, name, vintage) but differ in bottle volume.
 
     Args:
         wine_id: The numeric wine ID to look up siblings for.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     try:
         from . import query as _q
 
         con = _get_agent_connection()
-        result = _q.format_siblings(con, wine_id)
+        result = _q.format_siblings(con, wine_id, fmt=_effective_fmt(format))
         return result if result else f"Wine {wine_id} has no format siblings."
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -1311,13 +1396,14 @@ def similar_wines(
     wine_id: int,
     limit: int = 5,
     include_gone: bool = False,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Find wines similar to a given wine based on structural attributes.
 
     Uses 6-signal weighted scoring: winery affinity, region/appellation,
     grape composition overlap, category match, price tier adjacency, and
-    food group overlap. Returns a ranked Markdown table with scores and
+    food group overlap. Returns a ranked table with scores and
     human-readable match signals explaining why each wine is similar.
 
     Results are capped at 2 per winery for diversity. Format siblings are
@@ -1327,6 +1413,7 @@ def similar_wines(
         wine_id: The target wine to find similar wines for.
         limit: Maximum similar wines to return (default 5, max 20).
         include_gone: Include wines with no bottles stored (default False).
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     try:
         from . import similarity as _sim
@@ -1339,6 +1426,7 @@ def similar_wines(
             _data_dir(),
             limit=effective_limit,
             include_gone=include_gone,
+            fmt=_effective_fmt(format),
         )
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -1493,6 +1581,7 @@ def stale_research(
     months: int = 6,
     limit: int = 20,
     section: str | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Find dossier sections where research is older than a threshold.
@@ -1506,12 +1595,13 @@ def stale_research(
         months: Age threshold in months (default 6).
         limit: Maximum results to return.
         section: Optional filter — only check this specific section key.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
-    return _stale_research(_data_dir(), months=months, limit=limit, section=section)
+    return _stale_research(_data_dir(), months=months, limit=limit, section=section, fmt=_effective_fmt(format))
 
 
 @_tool()
-def pending_companion_research(limit: int | None = None, meta: dict | None = None) -> str:
+def pending_companion_research(limit: int | None = None, format: str | None = None, meta: dict | None = None) -> str:
     """List tracked wines that have pending companion dossier sections.
 
     Scans companion dossier frontmatter for agent_sections_pending entries.
@@ -1519,9 +1609,10 @@ def pending_companion_research(limit: int | None = None, meta: dict | None = Non
 
     Args:
         limit: Maximum number of tracked wines to return.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     effective_limit = limit if limit is not None else _load_mcp_settings().query.pending_limit
-    return _pending_companion(_data_dir(), limit=effective_limit)
+    return _pending_companion(_data_dir(), limit=effective_limit, fmt=_effective_fmt(format))
 
 
 @_tool()
@@ -1531,6 +1622,7 @@ def research_completeness(
     sort: str = "score_asc",
     min_score: int | None = None,
     max_score: int | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Get research completeness scores for wines in the cellar.
@@ -1585,31 +1677,48 @@ def research_completeness(
         if result.empty:
             return ToolResponse("*No wines match the given criteria.*")
 
-        # Format as Markdown table
-        lines = [
-            "| wine_id | Wine | Vintage | Score | Pop | Pend | Fresh | Stale | Tags | Groups | Pro |",
-            "|---|---|---|---|---|---|---|---|---|---|---|",
-        ]
-        for _, row in result.iterrows():
-            lines.append(
-                f"| {row['wine_id']} "
-                f"| {row['wine_name'] or '—'} "
-                f"| {row['vintage'] or 'NV'} "
-                f"| {row['completeness_score']}% "
-                f"| {row['populated_count']}/8 "
-                f"| {row['pending_count']} "
-                f"| {row['fresh_count']} "
-                f"| {row['stale_count']} "
-                f"| {'✓' if row['has_food_tags'] else '✗'} "
-                f"| {'✓' if row['has_food_groups'] else '✗'} "
-                f"| {'✓' if row['has_pro_ratings'] else '✗'} |"
-            )
-
-        # Add summary
+        # Format output
+        fmt = _effective_fmt(format)
         avg_score = result["completeness_score"].mean()
         total = len(result)
-        lines.append("")
-        lines.append(f"**Summary:** {total} wines shown, average score {avg_score:.0f}%")
+
+        if fmt == "plain":
+            lines: list[str] = []
+            for _, row in result.iterrows():
+                tags = "✓" if row["has_food_tags"] else "✗"
+                groups = "✓" if row["has_food_groups"] else "✗"
+                pro = "✓" if row["has_pro_ratings"] else "✗"
+                lines.append(
+                    f"{row['wine_id']}. {row['wine_name'] or '—'}"
+                    f" ({row['vintage'] or 'NV'})"
+                    f" — {row['completeness_score']}%"
+                    f", {row['populated_count']}/8 pop"
+                    f", {row['pending_count']} pend"
+                    f", tags:{tags}, groups:{groups}, pro:{pro}"
+                )
+            lines.append("")
+            lines.append(f"Summary: {total} wines, avg score {avg_score:.0f}%")
+        else:
+            lines = [
+                "| wine_id | Wine | Vintage | Score | Pop | Pend | Fresh | Stale | Tags | Groups | Pro |",
+                "|---|---|---|---|---|---|---|---|---|---|---|",
+            ]
+            for _, row in result.iterrows():
+                lines.append(
+                    f"| {row['wine_id']} "
+                    f"| {row['wine_name'] or '—'} "
+                    f"| {row['vintage'] or 'NV'} "
+                    f"| {row['completeness_score']}% "
+                    f"| {row['populated_count']}/8 "
+                    f"| {row['pending_count']} "
+                    f"| {row['fresh_count']} "
+                    f"| {row['stale_count']} "
+                    f"| {'✓' if row['has_food_tags'] else '✗'} "
+                    f"| {'✓' if row['has_food_groups'] else '✗'} "
+                    f"| {'✓' if row['has_pro_ratings'] else '✗'} |"
+                )
+            lines.append("")
+            lines.append(f"**Summary:** {total} wines shown, average score {avg_score:.0f}%")
 
         text = "\n".join(lines)
         data = {"wine_count": total, "avg_score": round(float(avg_score), 1)}
@@ -1684,7 +1793,7 @@ def update_companion_dossier(
 
 
 @_tool()
-def list_companion_dossiers(pending_only: bool = False, meta: dict | None = None) -> str:
+def list_companion_dossiers(pending_only: bool = False, format: str | None = None, meta: dict | None = None) -> str:
     """List companion dossiers for tracked wines.
 
     When *pending_only* is False, returns all tracked wines from the database.
@@ -1692,11 +1801,14 @@ def list_companion_dossiers(pending_only: bool = False, meta: dict | None = None
 
     Args:
         pending_only: If True, only show tracked wines with pending sections.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
+    fmt = _effective_fmt(format)
     if pending_only:
         return _pending_companion(
             _data_dir(),
             limit=_load_mcp_settings().query.pending_limit,
+            fmt=fmt,
         )
     try:
         con = _get_agent_connection()
@@ -1709,6 +1821,7 @@ def list_companion_dossiers(pending_only: bool = False, meta: dict | None = None
             ORDER BY tracked_wine_id
         """,
             row_limit=_load_mcp_settings().query.row_limit,
+            fmt=fmt,
         )
     except (QueryError, DataStaleError) as exc:
         return f"Error: {exc}"
@@ -1913,6 +2026,7 @@ def currency_rates(
     action: str = "list",
     currency: str = "",
     rate: float | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """View or manage currency exchange rates used for price normalisation.
@@ -1931,13 +2045,23 @@ def currency_rates(
         currency: ISO 4217 currency code (required for set/remove).
                   Example: "EUR", "USD", "GBP", "RON".
         rate: Exchange rate to CHF (required for set). Must be > 0.
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     global _mcp_settings
     default_currency = _load_mcp_settings().currency.default
+    fmt = _effective_fmt(format)
 
     if action == "list":
         effective = _effective_rates()
         custom = _load_custom_rates()
+
+        if fmt == "plain":
+            lines = [f"{len(effective)} currency rates (default: {default_currency})", ""]
+            for code in sorted(effective):
+                src = "custom" if code in custom else "toml"
+                lines.append(f"• {code}: {effective[code]} ({src})")
+            return "\n".join(lines)
+
         lines = [
             f"**{len(effective)} currency rates** (default: {default_currency})\n",
             f"| Currency | Rate (\u2192 {default_currency}) | Source |",
@@ -2470,7 +2594,7 @@ def add_pairing(
 
 
 @_tool()
-def server_stats(period: str = "24h", meta: dict | None = None) -> str:
+def server_stats(period: str = "24h", format: str | None = None, meta: dict | None = None) -> str:
     """Return usage, latency, and error statistics from the MCP log store.
 
     Queries the observability DuckDB log store for recent tool invocations.
@@ -2478,6 +2602,7 @@ def server_stats(period: str = "24h", meta: dict | None = None) -> str:
     Args:
         period: Time window â€” e.g. "1h", "24h", "7d", "30d". Default "24h".
     """
+    fmt = _effective_fmt(format)
     from .observability import get_collector
 
     collector = get_collector()
@@ -2526,6 +2651,19 @@ def server_stats(period: str = "24h", meta: dict | None = None) -> str:
             WHERE started_at >= {cutoff_sql}
         """).fetchone()
 
+        if fmt == "plain":
+            lines = [
+                f"SERVER STATS (last {period})",
+                "",
+                f"Sessions: {sessions[0]}, Turns: {sessions[1]}, Events: {sessions[2]}",
+                f"Errors: {sessions[3]}, Avg latency: {sessions[4]} ms",
+                "",
+                "Per-Tool:",
+            ]
+            for row in usage:
+                lines.append(f"• {row[0]}/{row[1]}: {row[2]} calls, avg {row[3]}ms, max {row[4]}ms, {row[5]} errs")
+            return "\n".join(lines)
+
         lines = [
             f"## Server Stats (last {period})\n",
             "### Overview\n",
@@ -2550,29 +2688,44 @@ def server_stats(period: str = "24h", meta: dict | None = None) -> str:
 
 
 @_tool()
-def cache_stats(meta: dict | None = None) -> str:
+def cache_stats(format: str | None = None, meta: dict | None = None) -> str:
     """Return query cache hit/miss statistics.
 
     Shows current cache utilisation, hit ratio, and eviction counts.
     The query cache memoises results of cellar_stats and find_wine to
     avoid redundant computation for repeated identical queries.
+
+    Args:
+        format: Output format: "markdown" (default) or "plain" (iMessage-friendly).
     """
     from .mcp_responses import ToolResponse
 
+    fmt = _effective_fmt(format)
     s = _query_cache.stats()
-    lines = [
-        "## Query Cache Stats\n",
-        "| Metric | Value |",
-        "|:-------|------:|",
-        f"| Enabled | {_query_cache.enabled} |",
-        f"| Entries | {s.size} / {s.max_size} |",
-        f"| Hits | {s.hits} |",
-        f"| Misses | {s.misses} |",
-        f"| Hit ratio | {s.hit_ratio:.1%} |",
-        f"| Evictions | {s.evictions} |",
-        f"| Invalidations | {s.invalidations} |",
-    ]
-    text = "\n".join(lines)
+
+    if fmt == "plain":
+        text = (
+            f"QUERY CACHE STATS\n"
+            f"Enabled: {_query_cache.enabled}\n"
+            f"Entries: {s.size}/{s.max_size}\n"
+            f"Hits: {s.hits}, Misses: {s.misses}\n"
+            f"Hit ratio: {s.hit_ratio:.1%}\n"
+            f"Evictions: {s.evictions}, Invalidations: {s.invalidations}"
+        )
+    else:
+        lines = [
+            "## Query Cache Stats\n",
+            "| Metric | Value |",
+            "|:-------|------:|",
+            f"| Enabled | {_query_cache.enabled} |",
+            f"| Entries | {s.size} / {s.max_size} |",
+            f"| Hits | {s.hits} |",
+            f"| Misses | {s.misses} |",
+            f"| Hit ratio | {s.hit_ratio:.1%} |",
+            f"| Evictions | {s.evictions} |",
+            f"| Invalidations | {s.invalidations} |",
+        ]
+        text = "\n".join(lines)
     data = {
         "enabled": _query_cache.enabled,
         "size": s.size,
@@ -2595,6 +2748,7 @@ def cache_stats(meta: dict | None = None) -> str:
 def cellar_anomalies(
     severity: str | None = None,
     kinds: str | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Detect unusual patterns in tool usage, latency, errors, and ETL output.
@@ -2609,6 +2763,8 @@ def cellar_anomalies(
             result_size_drift, etl_mass_delete, etl_partial_export.
     """
     from .anomaly import detect_all
+
+    fmt = _effective_fmt(format)
     from .observability import get_collector
 
     settings = _load_mcp_settings()
@@ -2657,6 +2813,15 @@ def cellar_anomalies(
 
     if not anomalies:
         return "No anomalies detected."
+
+    if fmt == "plain":
+        lines = [f"ANOMALIES DETECTED ({len(anomalies)})", ""]
+        for a in anomalies:
+            badge = {"critical": "!!!", "warn": "!!", "info": "i"}.get(a.severity, "")
+            lines.append(
+                f"[{badge} {a.severity.upper()}] {a.subject}: {a.message} (observed {a.observed:.1f}, baseline {a.baseline:.1f})"
+            )
+        return "\n".join(lines)
 
     # Format as Markdown
     lines = [f"## Anomalies Detected ({len(anomalies)})\n"]
@@ -2774,7 +2939,7 @@ def train_sommelier(
 
 
 @_tool()
-def get_drink_tonight(meta: dict | None = None) -> str:
+def get_drink_tonight(format: str | None = None, meta: dict | None = None) -> str:
     """Return the wines the user has staged on the dashboard's "Drink Tonight" shortlist.
 
     The list lives in ``<data_dir>/.drink-tonight.json`` and is mirrored by
@@ -2819,7 +2984,10 @@ def get_drink_tonight(meta: dict | None = None) -> str:
             f"| {r[1]} | {r[2] or '—'} | {r[3] or '—'} | {r[6] or '—'} | "
             f"{r[5]} | {m.get('added_at', '')} | {m.get('note') or ''} |"
         )
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    if _effective_fmt(format) == "plain":
+        return _md_to_plain(result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2834,6 +3002,7 @@ def recommend_tonight(
     guests: int | None = None,
     budget: str | None = None,
     limit: int = 5,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Score and rank cellar wines for tonight's drinking occasion.
@@ -2878,6 +3047,8 @@ def recommend_tonight(
             data_dir=_data_dir(),
         )
         text = format_recommendations(results, params)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
         from .mcp_responses import ToolResponse
 
         data = {
@@ -2899,6 +3070,7 @@ def plan_trip(
     include_producers: bool = True,
     include_gaps: bool = True,
     limit: int = 20,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Generate a wine travel brief for a destination region or country.
@@ -2942,6 +3114,8 @@ def plan_trip(
                 data={"destination": destination, "match": False},
             )
         text = format_travel_brief(brief)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
         data = {
             "destination": brief.destination,
             "match_level": brief.match_level,
@@ -2961,6 +3135,7 @@ def learning_path(
     lesson_size: int = 4,
     include_purchases: bool = True,
     include_dossier_insights: bool = True,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Generate a guided wine education path for a topic.
@@ -3000,6 +3175,8 @@ def learning_path(
                 data={"topic": topic, "match": False},
             )
         text = format_learning_path(path)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
         data = {
             "topic": path.topic,
             "framework": path.framework_name,
@@ -3018,6 +3195,7 @@ def learning_path(
 @_tool()
 def cellar_digest(
     period: str = "daily",
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Proactive cellar intelligence brief with urgency warnings and recommendations.
@@ -3037,13 +3215,16 @@ def cellar_digest(
     try:
         con = _get_connection()
         result = build_digest(con, _data_dir(), period=period)
-        return format_digest(result)
+        text = format_digest(result)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
+        return text
     except Exception as exc:
         return f"Error: {exc}"
 
 
 @_tool()
-def wine_of_the_day(meta: dict | None = None) -> str:
+def wine_of_the_day(format: str | None = None, meta: dict | None = None) -> str:
     """Today's deterministic wine pick \u2014 urgency-weighted daily rotation.
 
     Returns a single wine recommendation that stays the same all day and
@@ -3061,6 +3242,8 @@ def wine_of_the_day(meta: dict | None = None) -> str:
         con = _get_connection()
         pick = pick_wine_of_the_day(con, data_dir=_data_dir())
         text = format_wine_of_the_day(pick)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
         if pick is None:
             return ToolResponse(text, metadata={"empty": True})
         data = {
@@ -3090,6 +3273,7 @@ def plan_dinner(
     budget: str = "any",
     style: str = "classic",
     dinner_time: str | None = None,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Plan a complete wine flight for a multi-course dinner party.
@@ -3146,6 +3330,8 @@ def plan_dinner(
         )
 
         text = format_flight_plan(plan)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
         data = {
             "courses": [
                 {
@@ -3177,6 +3363,7 @@ def gift_advisor(
     occasion: str | None = None,
     protect_last_bottle: bool = True,
     limit: int = 3,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Recommend wines from the cellar as gifts for a specific recipient.
@@ -3219,6 +3406,8 @@ def gift_advisor(
         )
 
         text = format_gift_suggestions(plan)
+        if _effective_fmt(format) == "plain":
+            text = _md_to_plain(text)
 
         data = {
             "profile_summary": plan.profile_summary,
@@ -3525,6 +3714,7 @@ def view_schemas() -> str:
 def scan_promotions(
     retailer: str = "",
     dry_run: bool = False,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Scan newsletter emails for wine promotions and extract deals.
@@ -3538,10 +3728,12 @@ def scan_promotions(
     Args:
         retailer: Only scan a specific retailer (e.g. "kapweine"). Empty = all.
         dry_run: If true, scan but do not archive emails or update state.
+        format: Output format ("markdown" or "plain"). Default from settings.
     """
     from .promotions import scan_once
     from .promotions.report import format_scored_report
 
+    fmt = _effective_fmt(format)
     try:
         settings = _load_mcp_settings()
         result = scan_once(
@@ -3549,7 +3741,7 @@ def scan_promotions(
             dry_run=dry_run,
             retailer_filter=retailer or None,
         )
-        return format_scored_report(result)
+        return format_scored_report(result, fmt=fmt)
     except Exception as exc:
         return f"Error: {exc}"
 
@@ -3560,6 +3752,7 @@ def promotion_matches(
     category: str = "",
     retailer: str = "",
     min_score: float = 0.0,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Query historical promotion matches scored by cellar relevance.
@@ -3578,9 +3771,11 @@ def promotion_matches(
         category: Filter by match category ("rebuy", "similar", "gap_fill"). Empty = all.
         retailer: Filter by retailer ID. Empty = all.
         min_score: Minimum value_score threshold (0.0–1.0). Default 0.0 = all.
+        format: Output format ("markdown" or "plain"). Default from settings.
     """
     from .promotions.persistence import load_matches
 
+    fmt = _effective_fmt(format)
     try:
         data_dir = _data_dir()
         matches = load_matches(pathlib.Path(data_dir), months=max(months, 1))
@@ -3595,6 +3790,23 @@ def promotion_matches(
 
         if not matches:
             return f"No promotion matches found in the last {months} month(s)."
+
+        if fmt == "plain":
+            lines = [
+                f"PROMOTION MATCHES (last {months} month(s))",
+                f"Total: {len(matches)} matches",
+                "",
+            ]
+            for i, m in enumerate(matches[:50], 1):
+                scan_time = m.get("scan_time")
+                date_str = scan_time.strftime("%Y-%m-%d") if hasattr(scan_time, "strftime") else "—"  # type: ignore[union-attr]
+                score = f"{m.get('value_score', 0):.2f}"
+                cat = m.get("match_category", "—")
+                ret = m.get("retailer_id", "—")
+                wine = m.get("wine_name", "—")
+                price = f"{m.get('currency', 'CHF')} {m.get('sale_price', '—')}"
+                lines.append(f"{i}. [{score}] {cat} | {ret}: {wine} — {price} ({date_str})")
+            return "\n".join(lines)
 
         # Format as markdown table
         lines = [
@@ -3624,6 +3836,7 @@ def promotion_matches(
 @_tool()
 def promotion_history(
     months: int = 6,
+    format: str | None = None,
     meta: dict | None = None,
 ) -> str:
     """Month-by-month summary of promotion match trends.
@@ -3634,9 +3847,11 @@ def promotion_history(
 
     Args:
         months: How many months of history to include (default 6).
+        format: Output format ("markdown" or "plain"). Default from settings.
     """
     from .promotions.persistence import load_matches
 
+    fmt = _effective_fmt(format)
     try:
         data_dir = _data_dir()
         matches = load_matches(pathlib.Path(data_dir), months=max(months, 1))
@@ -3674,6 +3889,22 @@ def promotion_history(
                 bucket["retailers"][ret] = bucket["retailers"].get(ret, 0) + 1
 
         # Format
+        if fmt == "plain":
+            lines = [
+                f"PROMOTION HISTORY (last {months} months)",
+                "",
+            ]
+            for month_key in sorted(monthly.keys()):
+                b = monthly[month_key]
+                avg = sum(b["scores"]) / len(b["scores"]) if b["scores"] else 0
+                top_ret = max(b["retailers"], key=b["retailers"].get) if b["retailers"] else "—"
+                lines.append(
+                    f"{month_key}: {b['total']} total"
+                    f" (rebuy {b['rebuy']}, similar {b['similar']}, gap {b['gap_fill']})"
+                    f" avg {avg:.2f}, top: {top_ret}"
+                )
+            return "\n".join(lines)
+
         lines = [
             f"## Promotion History (last {months} months)",
             "",

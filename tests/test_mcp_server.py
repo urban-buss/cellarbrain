@@ -126,6 +126,11 @@ def server():
     mcp_server._mcp_settings = None  # force re-read from env
     mcp_server._hybrid_engine = None  # reset cached hybrid engine
     mcp_server.invalidate_connections()
+
+    # Force markdown output for test assertions (production may use "plain")
+    settings = mcp_server._load_mcp_settings()
+    object.__setattr__(settings.output, "default_format", "markdown")
+
     yield mcp_server
 
     # Cleanup: close and reset collector to avoid cross-test pollution

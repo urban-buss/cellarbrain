@@ -190,6 +190,7 @@ def similar_wines(
     *,
     limit: int = 5,
     include_gone: bool = False,
+    fmt: str = "markdown",
 ) -> str:
     """Return top-N similar wines to *wine_id*, ranked by weighted score.
 
@@ -202,9 +203,10 @@ def similar_wines(
         data_dir: Path to the Parquet data directory (for wine_grape.parquet).
         limit: Maximum results to return.
         include_gone: If True, include wines with zero bottles stored.
+        fmt: Output format ("markdown" or "plain").
 
     Returns:
-        Formatted Markdown table with similarity scores and match signals,
+        Formatted table with similarity scores and match signals,
         or an error/empty message.
     """
     d = pathlib.Path(data_dir)
@@ -232,6 +234,16 @@ def similar_wines(
     # Format header
     vintage_str = f" {target_vintage}" if target_vintage else ""
     header = f"**Similar to:** {target_name}{vintage_str} (wine #{wine_id})\n\n"
+
+    if fmt == "plain":
+        lines: list[str] = []
+        for i, r in enumerate(results, 1):
+            r_wine_name = r[1] or "—"
+            r_vintage = r[2] if r[2] else "NV"
+            r_score = f"{r[10]:.2f}"
+            r_signals = r[11] or ""
+            lines.append(f"{i}. {r_wine_name} ({r_vintage}) — score: {r_score}, {r_signals}")
+        return header + "\n".join(lines)
 
     # Build Markdown table
     lines = [

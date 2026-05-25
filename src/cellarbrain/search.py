@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 import duckdb
 import pandas as pd
 
-from ._query_base import _format_df, _to_md
+from ._query_base import _format_df
 from .exceptions import QueryError
 
 logger = logging.getLogger(__name__)
@@ -362,8 +362,9 @@ def _add_status_markers(df: pd.DataFrame) -> pd.DataFrame:
 def format_siblings(
     con: duckdb.DuckDBPyConnection,
     wine_id: int,
+    fmt: str = "markdown",
 ) -> str:
-    """Return a Markdown table of format siblings for *wine_id*.
+    """Return a table of format siblings for *wine_id*.
 
     Returns an empty string if the wine has no format_group_id or no siblings.
     """
@@ -383,6 +384,12 @@ def format_siblings(
     ).fetchall()
     if len(rows) < 2:
         return ""
+    if fmt == "plain":
+        lines: list[str] = []
+        for r in rows:
+            marker = " ★" if r[0] == wine_id else ""
+            lines.append(f"• {r[0]}{marker}: {r[1]} ({r[2]} mL) — {r[3]}, {r[4]} stored")
+        return "\n".join(lines)
     lines = [
         "| Wine ID | Format | Volume | Status | Stored |",
         "|---|---|---|---|---|",
@@ -521,16 +528,16 @@ def find_wine(
         # --- Explicit fuzzy (caller requested) ---
         if fuzzy and remaining_tokens:
             expanded_query = " ".join(remaining_tokens)
-            return _find_wine_fuzzy(con, expanded_query, limit)
+            return _find_wine_fuzzy(con, expanded_query, limit, fmt=fmt)
         # --- Implicit fuzzy at higher threshold (auto "did you mean") ---
         if remaining_tokens:
             expanded_query = " ".join(remaining_tokens)
-            auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90)
+            auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90, fmt=fmt)
             if "No wines found" not in auto_result:
                 return auto_result.replace("*Fuzzy matches", "*Did you mean")
         # --- Phonetic fallback ---
         if remaining_tokens:
-            phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit)
+            phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit, fmt=fmt)
             if phonetic_result:
                 return phonetic_result
         # --- Suggestions (very relaxed JW) ---
@@ -590,6 +597,7 @@ def _find_wine_fuzzy(
     query: str,
     limit: int,
     threshold: float = 0.85,
+    fmt: str = "markdown",
 ) -> str:
     """Fuzzy fallback — find close matches using Jaro-Winkler similarity.
 
@@ -639,13 +647,14 @@ def _find_wine_fuzzy(
         return f"*No wines found matching '{query}' (including fuzzy).*"
     df = _add_status_markers(df)
     header = f"*Fuzzy matches for '{query}':*\n\n"
-    return header + _to_md(df)
+    return header + _format_df(df, fmt, style="list")
 
 
 def _find_wine_phonetic(
     con: duckdb.DuckDBPyConnection,
     tokens: list[str],
     limit: int,
+    fmt: str = "markdown",
 ) -> str | None:
     """Phonetic fallback — match via Double Metaphone codes.
 
@@ -702,7 +711,7 @@ def _find_wine_phonetic(
     if df.empty:
         return None
     header = f"*Phonetic matches for '{query_text}':*\n\n"
-    return header + _to_md(df)
+    return header + _format_df(df, fmt, style="list")
 
 
 def _suggest_names(
@@ -865,7 +874,7 @@ def find_wine_with_telemetry(
     if fuzzy and remaining_tokens:
         telemetry.used_fuzzy = True
         expanded_query = " ".join(remaining_tokens)
-        result = _find_wine_fuzzy(con, expanded_query, limit)
+        result = _find_wine_fuzzy(con, expanded_query, limit, fmt=fmt)
         if "No wines found" not in result:
             telemetry.result_count = result.count("\n|") - 1  # approx rows
         return result, telemetry
@@ -873,7 +882,7 @@ def find_wine_with_telemetry(
     # --- Implicit fuzzy (high threshold) ---
     if remaining_tokens:
         expanded_query = " ".join(remaining_tokens)
-        auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90)
+        auto_result = _find_wine_fuzzy(con, expanded_query, limit, threshold=0.90, fmt=fmt)
         if "No wines found" not in auto_result:
             telemetry.used_fuzzy = True
             telemetry.result_count = auto_result.count("\n|") - 1
@@ -881,7 +890,7 @@ def find_wine_with_telemetry(
 
     # --- Phonetic fallback ---
     if remaining_tokens:
-        phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit)
+        phonetic_result = _find_wine_phonetic(con, remaining_tokens, limit, fmt=fmt)
         if phonetic_result:
             telemetry.used_phonetic = True
             telemetry.result_count = phonetic_result.count("\n|") - 1

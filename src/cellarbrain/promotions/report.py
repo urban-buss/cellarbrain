@@ -1,12 +1,12 @@
-"""Markdown report builder for promotion scan results."""
+"""Report builder for promotion scan results."""
 
 from __future__ import annotations
 
 from .models import ExtractedPromotion, PromotionMatch, PromotionScanResult
 
 
-def format_report(result: PromotionScanResult) -> str:
-    """Format a PromotionScanResult as a Markdown report.
+def format_report(result: PromotionScanResult, fmt: str = "markdown") -> str:
+    """Format a PromotionScanResult as a report.
 
     Structure:
     - Scan summary (newsletters processed, promotions found)
@@ -14,6 +14,9 @@ def format_report(result: PromotionScanResult) -> str:
     - All extracted promotions table
     - Errors (if any)
     """
+    if fmt == "plain":
+        return _format_report_plain(result)
+
     lines: list[str] = []
 
     # Header
@@ -65,6 +68,49 @@ def format_report(result: PromotionScanResult) -> str:
     return "\n".join(lines)
 
 
+def _format_report_plain(result: PromotionScanResult) -> str:
+    """Plain text (iMessage-friendly) formatting of a scan report."""
+    lines: list[str] = []
+
+    lines.append("NEWSLETTER PROMOTION SCAN")
+    lines.append(f"Scanned: {result.newsletters_processed} newsletters, Promotions found: {result.total_promotions}")
+    lines.append("")
+
+    if result.retailer_stats:
+        lines.append("By Retailer:")
+        for retailer_id, stats in sorted(result.retailer_stats.items()):
+            lines.append(f"• {retailer_id}: {stats.get('emails', 0)} emails, {stats.get('products', 0)} products")
+        lines.append("")
+
+    if result.promotions:
+        lines.append("Extracted Promotions:")
+        for i, promo in enumerate(result.promotions, 1):
+            vintage = str(promo.vintage) if promo.vintage else "NV"
+            sale = f"{promo.currency} {promo.sale_price}"
+            discount = ""
+            if promo.discount_pct is not None:
+                discount = f" (-{promo.discount_pct:.0f}%)"
+            lines.append(f"{i}. {promo.retailer_id}: {promo.producer} {promo.wine_name} {vintage} — {sale}{discount}")
+        lines.append("")
+
+    if result.errors:
+        lines.append("Errors:")
+        for error in result.errors:
+            lines.append(f"• {error}")
+        lines.append("")
+
+    if result.matches:
+        lines.append("Cellar Matches:")
+        for i, match in enumerate(result.matches, 1):
+            promo = match.promotion
+            promo_price = f"{promo.currency} {promo.sale_price}"
+            conf = f"{match.confidence:.0%}"
+            lines.append(f"{i}. {promo.retailer_id}: {promo.wine_name} → {match.wine_name} ({conf}), {promo_price}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def _format_promo_row(promo: ExtractedPromotion) -> str:
     """Format a single promotion as a Markdown table row."""
     vintage = str(promo.vintage) if promo.vintage else "—"
@@ -108,7 +154,7 @@ def _format_match_row(match: PromotionMatch) -> str:
 # ---------------------------------------------------------------------------
 
 
-def format_scored_report(result: PromotionScanResult) -> str:
+def format_scored_report(result: PromotionScanResult, fmt: str = "markdown") -> str:
     """Format a PromotionScanResult with categorised scored matches.
 
     Groups scored matches into:
@@ -119,7 +165,10 @@ def format_scored_report(result: PromotionScanResult) -> str:
     Falls back to basic format_report() if no scored_matches present.
     """
     if not result.scored_matches:
-        return format_report(result)
+        return format_report(result, fmt=fmt)
+
+    if fmt == "plain":
+        return _format_scored_report_plain(result)
 
     lines: list[str] = []
 
@@ -217,3 +266,63 @@ def _format_gap_row(match: PromotionMatch) -> str:
         f"| {match.value_score:.2f} | {promo.retailer_id} | {promo.wine_name} | "
         f"{promo_price} | {match.gap_dimension} | {match.gap_detail} |"
     )
+
+
+def _format_scored_report_plain(result: PromotionScanResult) -> str:
+    """Plain text (iMessage-friendly) version of scored promotion report."""
+    lines: list[str] = []
+
+    lines.append("NEWSLETTER PROMOTION SCAN")
+    lines.append(
+        f"Scanned: {result.newsletters_processed} newsletters, "
+        f"Promotions found: {result.total_promotions}, "
+        f"Actionable matches: {len(result.scored_matches)}"
+    )
+    lines.append("")
+
+    if result.retailer_stats:
+        lines.append("By Retailer:")
+        for retailer_id, stats in sorted(result.retailer_stats.items()):
+            lines.append(f"• {retailer_id}: {stats.get('emails', 0)} emails, {stats.get('products', 0)} products")
+        lines.append("")
+
+    rebuy = [m for m in result.scored_matches if m.match_category == "rebuy"]
+    similar = [m for m in result.scored_matches if m.match_category == "similar"]
+    gap_fill = [m for m in result.scored_matches if m.match_category == "gap_fill"]
+
+    if rebuy:
+        lines.append("Re-buy Opportunities:")
+        for i, m in enumerate(rebuy, 1):
+            promo = m.promotion
+            savings = f" ({m.discount_vs_reference:+.0f}%)" if m.discount_vs_reference is not None else ""
+            lines.append(
+                f"{i}. [{m.value_score:.2f}] {promo.retailer_id}: {promo.wine_name}"
+                f" — {promo.currency} {promo.sale_price}{savings}"
+            )
+        lines.append("")
+
+    if similar:
+        lines.append("Similar to Your Collection:")
+        for i, m in enumerate(similar, 1):
+            promo = m.promotion
+            sim = f" ({m.similarity_score:.0%} sim)" if m.similarity_score else ""
+            lines.append(f"{i}. [{m.value_score:.2f}] {promo.retailer_id}: {promo.wine_name} → like {m.wine_name}{sim}")
+        lines.append("")
+
+    if gap_fill:
+        lines.append("Fill Cellar Gaps:")
+        for i, m in enumerate(gap_fill, 1):
+            promo = m.promotion
+            lines.append(
+                f"{i}. [{m.value_score:.2f}] {promo.retailer_id}: {promo.wine_name}"
+                f" — {promo.currency} {promo.sale_price} ({m.gap_dimension}: {m.gap_detail})"
+            )
+        lines.append("")
+
+    if result.errors:
+        lines.append("Errors:")
+        for error in result.errors:
+            lines.append(f"• {error}")
+        lines.append("")
+
+    return "\n".join(lines)
