@@ -59,6 +59,20 @@ row_limit = 200        # max rows returned by query_cellar
 search_limit = 10      # default find_wine results
 pending_limit = 20     # default pending_research results
 
+# --- Output Formatting ------------------------------------------------------
+# Controls how MCP tools render tabular results.
+#   "markdown" — pipe tables, rich Markdown headings (default; best for
+#                Claude Desktop, VS Code, and any client that renders
+#                Markdown tables).
+#   "plain"    — bullet lists / aligned monospace code blocks, no pipe
+#                tables. Use this when the agent talks to a client that
+#                does NOT render Markdown tables — notably Apple iMessage
+#                via OpenClaw on iPhone.
+# Per-call override: many tools accept a `format` argument that wins
+# over this default.
+[output]
+default_format = "plain"
+
 # --- Display & Formatting ---------------------------------------------------
 [display]
 null_char = "—"                          # shown in tables for empty values
