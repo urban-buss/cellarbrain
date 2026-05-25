@@ -1331,7 +1331,7 @@ def _fluctuation_between(con: duckdb.DuckDBPyConnection, start_date: _dt.date, e
     for segment, bottles, value, liters in in_rows:
         result[segment] = (float(value), bottles, float(liters), 0.0, 0, 0.0)
 
-    out_val, out_bottles, out_liters = out_row if out_row else (0.0, 0, 0.0)
+    out_bottles, out_val, out_liters = out_row if out_row else (0, 0.0, 0.0)
     out_val = float(out_val)
     out_liters = float(out_liters)
     s_in = result["stored"]

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-25
+
+### Fixed
+- **Cellar report fluctuation column swap** — the "out" row in `cellar_report` incorrectly displayed bottle count in the value column and CHF value in the bottles column.
+
 ## [0.3.5] — 2026-05-25
 
 ### Added
