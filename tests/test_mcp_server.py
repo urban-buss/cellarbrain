@@ -316,6 +316,14 @@ class TestCellarReportTool:
         result = server.cellar_report(cutoff="not-a-date")
         assert "Error" in result
 
+    def test_structured_data_includes_snapshots(self, server):
+        result = server.cellar_report()
+        assert result.data is not None
+        assert result.data["compare_to"] == "prior_month"
+        assert result.data["current_snapshot"]["stored"]["bottles"] >= 0
+        assert result.data["prior_snapshot"]["all"]["value_chf"] >= 0
+        assert set(result.data["fluctuation"].keys()) == {"stored", "on_order", "all"}
+
 
 # ---------------------------------------------------------------------------
 # TestFindWineTool

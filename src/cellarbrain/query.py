@@ -1340,13 +1340,13 @@ def _fluctuation_between(con: duckdb.DuckDBPyConnection, start_date: _dt.date, e
     return result
 
 
-def cellar_report(
+def _cellar_report_structured(
     con: duckdb.DuckDBPyConnection,
     cutoff: str | None = None,
     compare_to: str = "prior_month",
     currency: str = "CHF",
     fmt: str = "markdown",
-) -> str:
+) -> tuple[str, dict]:
     """Generate a structured cellar portfolio report with snapshot and fluctuation.
 
     Returns current and prior period snapshots (stored/on-order/all) with
@@ -1480,7 +1480,66 @@ def cellar_report(
     all_out_lit = s[5] + o[5]
     _flux_table("all", all_in_val, all_in_bot, all_in_lit, all_out_val, all_out_bot, all_out_lit)
 
-    return "\n".join(lines)
+    def _snapshot_data(data: dict) -> dict:
+        stored_val, stored_bot, stored_lit = data["stored"]
+        order_val, order_bot, order_lit = data["on_order"]
+        return {
+            "stored": {"value_chf": stored_val, "bottles": stored_bot, "liters": stored_lit},
+            "on_order": {"value_chf": order_val, "bottles": order_bot, "liters": order_lit},
+            "all": {
+                "value_chf": stored_val + order_val,
+                "bottles": stored_bot + order_bot,
+                "liters": stored_lit + order_lit,
+            },
+        }
+
+    def _flux_data(segment_data: tuple[float, int, float, float, int, float]) -> dict:
+        in_val, in_bot, in_lit, out_val, out_bot, out_lit = segment_data
+        net_val = in_val - out_val
+        net_bot = in_bot - out_bot
+        net_lit = in_lit - out_lit
+        return {
+            "in": {"value_chf": in_val, "bottles": in_bot, "liters": in_lit},
+            "out": {"value_chf": out_val, "bottles": out_bot, "liters": out_lit},
+            "net": {"value_chf": net_val, "bottles": net_bot, "liters": net_lit},
+        }
+
+    data = {
+        "cutoff": cutoff_date.isoformat(),
+        "compare_to": compare_to,
+        "currency": currency,
+        "current_snapshot": _snapshot_data(current),
+        "prior_snapshot": _snapshot_data(prior),
+        "fluctuation": {
+            "stored": _flux_data(flux["stored"]),
+            "on_order": _flux_data(flux["on_order"]),
+            "all": _flux_data((all_in_val, all_in_bot, all_in_lit, all_out_val, all_out_bot, all_out_lit)),
+        },
+    }
+
+    return "\n".join(lines), data
+
+
+def cellar_report(
+    con: duckdb.DuckDBPyConnection,
+    cutoff: str | None = None,
+    compare_to: str = "prior_month",
+    currency: str = "CHF",
+    fmt: str = "markdown",
+) -> str:
+    """Generate a structured cellar portfolio report with snapshot and fluctuation.
+
+    Returns current and prior period snapshots (stored/on-order/all) with
+    value, bottles, and volume, plus a fluctuation breakdown (in/out/net).
+
+    Note: on-order classification uses current transit status as a proxy.
+    Bottles that arrived during the reporting period appear in the 'stored'
+    segment for both the current snapshot and the 'in' fluctuation.
+
+    Raises ValueError for invalid cutoff or compare_to values.
+    """
+    text, _ = _cellar_report_structured(con, cutoff=cutoff, compare_to=compare_to, currency=currency, fmt=fmt)
+    return text
 
 
 # ---------------------------------------------------------------------------

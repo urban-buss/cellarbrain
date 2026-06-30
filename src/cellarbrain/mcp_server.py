@@ -785,14 +785,16 @@ def cellar_report(
 
     try:
         con = _get_connection()
-        result = q.cellar_report(
+        result_text, result_data = q._cellar_report_structured(
             con,
             cutoff=cutoff,
             compare_to=compare_to or "prior_month",
             currency=_load_mcp_settings().currency.default,
             fmt=_effective_fmt(format),
         )
-        return ToolResponse(result, data={"cutoff": cutoff, "compare_to": compare_to or "prior_month"})
+        result_data["cutoff"] = result_data.get("cutoff", cutoff)
+        result_data["compare_to"] = compare_to or "prior_month"
+        return ToolResponse(result_text, data=result_data)
     except (ValueError, DataStaleError) as exc:
         return ToolResponse.error(str(exc))
 
