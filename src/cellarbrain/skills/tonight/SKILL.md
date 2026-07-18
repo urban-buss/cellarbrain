@@ -1,4 +1,4 @@
-﻿---
+---
 name: tonight
 description: "Recommend a wine to open tonight. Uses the scoring engine for occasion, food, budget, and urgency."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
@@ -60,5 +60,4 @@ Per pick: **Wine** vintage (id) — one-line character — status — location �
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
-
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

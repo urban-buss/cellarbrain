@@ -1,4 +1,4 @@
-﻿---
+---
 name: food-pairing
 description: "Pair a wine from the cellar with a dish or menu. Food-to-wine and wine-to-food."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
@@ -70,5 +70,4 @@ Per pick: Wine vintage (id) -- pairing rationale -- status + location -- CHF pri
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
-
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

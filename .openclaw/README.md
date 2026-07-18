@@ -1,6 +1,6 @@
-﻿# Cellarbrain -- OpenClaw Skills
+# Cellarbrain -- OpenClaw Skills
 
-AI sommelier skills for managing a wine cellar via the cellarbrain MCP server. Each skill is self-contained, short (<80 lines), and designed for small/local LLMs.
+AI sommelier skills for managing a wine cellar through the CellarBrain MCP server. Each skill is self-contained and designed for OpenClaw agents, including small/local models.
 
 ## Installation & Onboarding
 
@@ -57,15 +57,15 @@ Replace `/path/to/output` with your ETL output directory.
 
 ### Step 5 -- Verify
 
-Open Claw should now discover all 8 skills. Test with:
+OpenClaw should now discover all 17 skills. Test with:
 - "What should I drink tonight?" -> triggers `tonight` skill
 - "How's my cellar looking?" -> triggers `cellar-stats` skill
 
 ### Updating skills
 
-When you upgrade cellarbrain (`pip install --upgrade cellarbrain`), re-install the skills:
+When you upgrade CellarBrain, update the installed skills:
 ```bash
-cellarbrain install-skills --force
+cellarbrain update-skills
 ```
 
 Skills are backward-compatible -- new versions may use new MCP tools but never remove existing ones.
@@ -78,11 +78,19 @@ Skills are backward-compatible -- new versions may use new MCP tools but never r
 | [food-pairing](./food-pairing/) | "What goes with this dish?" | Food->wine and wine->food pairing (hybrid RAG + embedding) |
 | [wine-info](./wine-info/) | "Tell me about this wine" | Dossier lookup with similar wines and staleness check |
 | [cellar-stats](./cellar-stats/) | "How's my cellar?" | Statistics, values, anomalies, monthly summary |
+| [monthly-report](./monthly-report/) | "Monthly report" | Point-in-time snapshot and fluctuation analysis |
+| [cellar-gaps](./cellar-gaps/) | "What should I buy next?" | Region, grape, price-tier, and vintage gaps |
+| [consumption-velocity](./consumption-velocity/) | "Is my cellar growing?" | Acquisitions, consumption, and projections |
 | [research](./research/) | "Research this wine" | Dossier population with provenance tracking |
+| [research-completeness](./research-completeness/) | "Which wines need research?" | Completeness scoring and campaign planning |
 | [drinking-window](./drinking-window/) | "What's approaching peak?" | Urgency-sorted drinking readiness |
 | [price-scan](./price-scan/) | "Track this wine's price" | Swiss retailer price scanning |
+| [promotion-analysis](./promotion-analysis/) | "Which deals match my cellar?" | Promotion matching and retailer trends |
+| [dinner-party](./dinner-party/) | "Plan wines for dinner" | Multi-course wine-flight planning |
+| [digest](./digest/) | "What's happening in my cellar?" | Daily or weekly intelligence brief |
 | [wine-of-the-day](./wine-of-the-day/) | "Surprise me" / "Daily pick" | Deterministic daily rotation weighted by urgency |
 | [manage](./manage/) | "Upgrade cellarbrain" | System maintenance, migrations, and health checks |
+| [hilfe](./hilfe/) | "Hilfe" / "Was kannst du?" | German command and prompt overview |
 
 ## Optional: Sommelier Model
 
@@ -103,7 +111,7 @@ All skills work without the model -- they fall back to SQL-based retrieval.
 | `recommend_tonight` | Urgency + occasion + food scoring -- primary recommendation engine |
 | `similar_wines` | Structural similarity (winery, region, grape, price) |
 | `wine_suggestions` | Autocomplete / typo correction for search |
-| `cellar_anomalies` | Data quality flags (missing data, outliers, stale dossiers) |
+| `cellar_anomalies` | Operational MCP, latency, error, and ETL anomaly detection |
 | `stale_research` | Check if dossier sections need refreshing |
 | `cache_stats` / `search_stats` | System health introspection |
 

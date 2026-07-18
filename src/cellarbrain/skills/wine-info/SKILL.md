@@ -1,4 +1,4 @@
-﻿---
+---
 name: wine-info
 description: "Look up a wine and show its dossier: tasting notes, ratings, drinking window, food pairings, similar wines."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
@@ -55,5 +55,4 @@ If dossier info looks sparse, note research may be stale. The `stale_research` t
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
-
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

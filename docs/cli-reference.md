@@ -297,7 +297,7 @@ cellarbrain install-skills --force
 | `-t`, `--target` | No | `~/.openclaw/skills/cellarbrain/` | Target directory for skill files |
 | `--force` | No | `false` | Overwrite existing skill files |
 
-The command copies 8 skill files (SKILL.md) and a README.md from the bundled package data. Without `--force`, files that already exist are skipped.
+The command copies 17 skill files (`SKILL.md`) and a README from the bundled package data. Without `--force`, files that already exist are skipped. Use `cellarbrain update-skills` after upgrading to overwrite installed skills with the latest bundled versions.
 
 ---
 
@@ -602,4 +602,3 @@ cellarbrain digest --period weekly  # weekly digest (7-day lookback)
 ### Scheduling
 
 See `setup/operations/scheduled-digest.md` for cron, launchd, and Task Scheduler examples.
-

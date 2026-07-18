@@ -36,8 +36,10 @@ If user wants more detail:
 
 ## 3. Pairing (optional)
 
-If user mentions food or dinner:
-`pair_wine(wine_id, dish="<what they're eating>")`
+If the user asks what foods suit the pick:
+`suggest_foods(wine_id=<wine_id>, limit=5)`
+
+If the user names a dish, call `pair_wine(dish="<dish>")` and explain whether the daily pick appears among the matches.
 
 ## 4. Alternatives
 
@@ -63,5 +65,6 @@ Keep it brief — the value is instant, low-friction suggestion.
 | `wine_of_the_day` | Primary daily pick |
 | `read_dossier` | Deep-dive on the pick |
 | `pair_wine` | Food pairing for the pick |
+| `suggest_foods` | Food ideas for the selected wine |
 | `recommend_tonight` | Alternatives if user rejects pick |
 | `similar_wines` | Wines similar to today's pick |
