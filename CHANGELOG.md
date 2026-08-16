@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-25
+
+### Fixed
+- **Cellar report fluctuation column swap** — the "out" row in `cellar_report` incorrectly displayed bottle count in the value column and CHF value in the bottles column.
+
+## [0.3.5] — 2026-05-25
+
+### Added
+- **Configurable output format for MCP tools** — all table-returning tools now accept a `format` parameter (`markdown`, `plain`, or `auto`). Default is controlled by `[output] default_format` in `cellarbrain.toml`.
+- **Plain-text rendering styles** — `aligned`, `kv`, and `summary` styles for iMessage-friendly output.
+- **Auto heuristic** — automatically selects the best plain-text style based on result size (≤5 rows → kv, 6–15 → aligned, else → summary).
+
+## [0.3.4] — 2026-05-21
+
+## [0.3.3] — 2026-05-21
+
 ## [0.3.2] — 2026-05-19
 
 ### Added

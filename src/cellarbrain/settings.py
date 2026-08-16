@@ -875,7 +875,7 @@ def _resolve_config_path(
     return None
 
 
-def _anchor(path_str: str, base: pathlib.Path) -> str:
+def _anchor_rel(path_str: str, base: pathlib.Path) -> str:
     """Resolve *path_str* against *base* unless it is already absolute."""
     p = pathlib.Path(path_str)
     if p.is_absolute():
@@ -902,12 +902,12 @@ def _resolve_sommelier_paths(
 
     return SommelierConfig(
         enabled=cfg.enabled,
-        model_dir=_anchor(cfg.model_dir, data_dir),
+        model_dir=_anchor_rel(cfg.model_dir, data_dir),
         base_model=cfg.base_model,
         food_catalogue=food_cat,
-        pairing_dataset=_anchor(cfg.pairing_dataset, data_dir),
-        food_index=_anchor(cfg.food_index, data_dir),
-        food_ids=_anchor(cfg.food_ids, data_dir),
+        pairing_dataset=_anchor_rel(cfg.pairing_dataset, data_dir),
+        food_index=_anchor_rel(cfg.food_index, data_dir),
+        food_ids=_anchor_rel(cfg.food_ids, data_dir),
         wine_index_dir=cfg.wine_index_dir,
         default_limit=cfg.default_limit,
         min_score=cfg.min_score,

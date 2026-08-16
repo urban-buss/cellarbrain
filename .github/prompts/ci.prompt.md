@@ -1,116 +1,86 @@
 ---
-description: "Simulate the full GitHub Actions CI pipeline locally (lint + test matrix). Use when: 'run CI', 'simulate CI', 'pre-push check', 'will CI pass', 'check before push', 'lint and test'."
-argument-hint: "Optional: specific job to run (lint, test, build, imports) or Python version"
-agent: "agent"
+description: "Run the full CI pipeline locally: lint, format, typecheck, tests, smoke-test"
+agent: agent
 ---
 
-Read the CI workflow at [ci.yml](../.github/workflows/ci.yml) and simulate each
-job locally in the terminal. Run them in the same order GitHub Actions would:
+<!-- GENERATED FROM .github/_shared/prompts/ci.prompt.md -->
+<!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 
-## 1. Lint
+# Local CI
 
-Run `ruff check .` and `ruff format --check .` from the workspace root.
-If either fails, report the issues and stop — do not proceed to later steps.
+Run the full CI pipeline locally for `cellarbrain`. All steps are
+**blocking** — every step must pass with zero errors and zero warnings unless
+the user explicitly overrides.
 
-## 2. Build / Install check
-
-Run `pip install -e ".[research,dashboard]" --dry-run` to verify that
-`pyproject.toml` is valid, all declared dependencies resolve, and the package
-builds without errors. This catches:
-- Typos or missing entries in `[project.dependencies]` or `[project.optional-dependencies]`
-- Invalid `pyproject.toml` syntax that would fail `pip install -e .` in CI
-- Missing or mis-named package data declarations
-
-If `--dry-run` is not supported by the local pip version, fall back to
-`python -m build --no-isolation` (requires `build` package) or at minimum
-`pip install -e . 2>&1` and check the exit code.
-
-## 3. Import smoke test
-
-After ensuring the package is installed, verify that all public modules
-import cleanly — the same way CI will discover import errors at test
-collection time:
+## 1. Lint & format
 
 ```
-python -c "
-import cellarbrain.cli
-import cellarbrain.settings
-import cellarbrain.mcp_server
-import cellarbrain.query
-import cellarbrain.transform
-import cellarbrain.writer
-import cellarbrain.markdown
-import cellarbrain.dossier_ops
-import cellarbrain.computed
-import cellarbrain.pairing
-import cellarbrain.search
-import cellarbrain.price
-import cellarbrain.info
-import cellarbrain.doctor
-import cellarbrain.service
-import cellarbrain.dashboard
-"
+ruff check .
+ruff format --check .
 ```
 
-If any import fails, report the traceback and stop.
+Fix any issues before proceeding. Auto-fix with `ruff check --fix .` and
+`ruff format .` if the user confirms.
 
-## 4. Test
+## 2. Type check
 
-Run `pytest` with `--tb=short -q` to keep output concise.
-Report the final summary line (passed / failed / skipped / errors).
+```
+mypy src/cellarbrain
+```
 
-## 5. Platform-divergence checks
+Mypy is currently `continue-on-error` in GitHub CI, but locally we still
+report and review every finding. Fix what you can; note the rest in the
+report.
 
-These catch issues that would only surface on GitHub's Ubuntu runner:
+## 3. Test collection check
 
-- **Path separators**: search for hardcoded `\\` in assertions or string
-  comparisons in tests. Flag any that aren't wrapped in `pathlib.Path()` or
-  `os.sep` — they will break on Linux.
-- **Case sensitivity**: flag any file path references in tests that rely on
-  Windows case-insensitivity (e.g. `"Output"` vs `"output"`).
-- **Missing test markers**: if any test depends on local files (raw/ CSV,
-  output/ Parquet, .env), verify it has `@pytest.mark.skipif` or
-  `@pytest.mark.integration` so it won't fail in CI's clean checkout.
-- **Encoding assumptions**: flag any `open()` calls in tests that omit
-  `encoding=` — Ubuntu's default may differ from Windows.
+```
+pytest --collect-only -q
+```
 
-Report findings as warnings (they won't block, but note them).
+Verify there are no collection errors (missing fixtures, bad imports) and no
+`PytestCollectionWarning`.
 
-## 6. Type checks
+## 4. Unit tests with coverage
 
-Run `pyright` (or `mypy` if pyright is unavailable) across the `src/` directory.
-Report any type errors or warnings.
+```
+pytest --cov=cellarbrain --cov-report=term-missing
+```
 
-## Rules
+All tests must pass. Report the coverage summary line.
 
-- Use the workspace `.venv` Python interpreter (`.venv/Scripts/python.exe` on
-  Windows, `.venv/bin/python` on Unix).
-- If the user specifies a job name (e.g. "lint", "test", "build", "imports"),
-  run only that job.
-- If the user specifies a Python version, note it but use the local venv
-  (mention any version mismatch as a caveat).
-- CI tests against Python 3.11, 3.12, 3.13. Note the local version and flag
-  if using syntax/features not available in 3.11 (e.g. `type` statement,
-  `ExceptionGroup` without backport).
-- CI installs extras `[research,dashboard]`. If those extras aren't installed
-  locally, note which tests may be skipped that would run in CI.
-- On failure: show the relevant output, diagnose the issue, and suggest a fix.
-  Auto-fix lint/format issues with `ruff check --fix .` and `ruff format .`
-  if the user confirms.
-- On success: confirm with a single summary line like
-  `CI simulation passed: lint ✓, build ✓, imports ✓, test ✓, types ✓ (N passed, M skipped)`.
+## 5. Skills sync check
 
-## Zero-tolerance policy
+Verify mirrored skills are in sync:
 
-Unless the user explicitly specifies otherwise, **all steps must pass with
-zero failures and zero warnings**. This includes lint, tests, type checks, and
-import smoke tests.
+```
+python .github/tools/sync-skills.py
+git diff --exit-code src/cellarbrain/skills/
+```
 
-If any errors or warnings are found:
-1. **Fix them** — apply the necessary code changes.
-2. **Re-run the failing step** to confirm the fix works.
-3. **Commit the changes** with a concise commit message describing the fix
-   (e.g. `fix: resolve type error in transform.py`).
+If the diff is non-empty, the skill mirrors are stale — re-commit and retry.
 
-Do not leave known failures or warnings unresolved. The goal is a fully green
-CI run before considering the task complete.
+## 6. Smoke test
+
+Verify the package imports and the CLI entry point works:
+
+```
+python -c "import cellarbrain; print(cellarbrain.__version__)"
+cellarbrain --help
+```
+
+If the MCP server module is available, also verify it loads:
+
+```
+python -c "from cellarbrain.mcp_server import mcp; print(f'{len(mcp._tool_manager._tools)} tools registered')"
+```
+
+## Fix & retest
+
+If any step produces errors or warnings, fix the issues and re-run the
+failing step(s) until they pass cleanly.
+
+## Report
+
+Summarise pass/fail per step. Confirm all checks passed (or list what was
+deferred and why).

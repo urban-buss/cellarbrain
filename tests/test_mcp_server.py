@@ -126,6 +126,11 @@ def server():
     mcp_server._mcp_settings = None  # force re-read from env
     mcp_server._hybrid_engine = None  # reset cached hybrid engine
     mcp_server.invalidate_connections()
+
+    # Force markdown output for test assertions (production may use "plain")
+    settings = mcp_server._load_mcp_settings()
+    object.__setattr__(settings.output, "default_format", "markdown")
+
     yield mcp_server
 
     # Cleanup: close and reset collector to avoid cross-test pollution
@@ -282,6 +287,34 @@ class TestCellarInfoTool:
         assert "Cellar Info" in result
         assert "Version" in result
         assert "run `cellarbrain etl`" in result
+
+
+# ---------------------------------------------------------------------------
+# TestCellarReportTool
+# ---------------------------------------------------------------------------
+
+
+class TestCellarReportTool:
+    def test_default_report(self, server):
+        result = server.cellar_report()
+        assert "Cellar Report" in result
+
+    def test_with_cutoff(self, server):
+        result = server.cellar_report(cutoff="2025-03-31")
+        assert "Cellar Report" in result
+        assert "stored" in result
+
+    def test_compare_to_prior_year(self, server):
+        result = server.cellar_report(compare_to="prior_year")
+        assert "Prior Year" in result
+
+    def test_invalid_compare_to(self, server):
+        result = server.cellar_report(compare_to="invalid")
+        assert "Error" in result
+
+    def test_invalid_cutoff(self, server):
+        result = server.cellar_report(cutoff="not-a-date")
+        assert "Error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1049,6 +1082,7 @@ class TestToolRegistration:
         "query_cellar",
         "cellar_stats",
         "cellar_churn",
+        "cellar_report",
         "cellar_info",
         "find_wine",
         "wine_suggestions",

@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .settings import LoggingConfig
 
@@ -207,7 +207,7 @@ class EventCollector:
         self._ingest_buffer: deque[IngestEvent] = deque()
         self._turn_id: str = uuid.uuid4().hex
         self._last_event_time: float = time.monotonic()
-        self._db = None
+        self._db: Any = None
         self._flush_timer: threading.Timer | None = None
         self._closed = False
         self.lock_conflict_pid: int | None = None

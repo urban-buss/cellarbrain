@@ -99,7 +99,8 @@ def _run_checks(con: duckdb.DuckDBPyConnection, result: ValidationResult) -> Non
     # ------------------------------------------------------------------
     def check_zero(name: str, sql: str) -> None:
         try:
-            count = con.execute(sql).fetchone()[0]
+            row = con.execute(sql).fetchone()
+            count = row[0] if row else 0
         except duckdb.CatalogException:
             result.add(name, True, "skipped — table not present")
             return
@@ -360,13 +361,15 @@ def _run_checks(con: duckdb.DuckDBPyConnection, result: ValidationResult) -> Non
     # 4. Row count sanity
     # ------------------------------------------------------------------
     try:
-        wine_count = con.execute("SELECT count(*) FROM wine").fetchone()[0]
+        row = con.execute("SELECT count(*) FROM wine").fetchone()
+        wine_count = row[0] if row else 0
         result.add("wine row count > 0", wine_count > 0, f"{wine_count} wines")
     except duckdb.CatalogException:
         result.add("wine row count > 0", False, "wine.parquet not found")
 
     try:
-        bottle_count = con.execute("SELECT count(*) FROM bottle").fetchone()[0]
+        row = con.execute("SELECT count(*) FROM bottle").fetchone()
+        bottle_count = row[0] if row else 0
         result.add("bottle row count > 0", bottle_count > 0, f"{bottle_count} bottles")
     except duckdb.CatalogException:
         result.add("bottle row count > 0", False, "bottle.parquet not found")

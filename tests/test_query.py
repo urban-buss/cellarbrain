@@ -16,6 +16,7 @@ from cellarbrain.query import (
     _fmt_litres,
     cellar_churn,
     cellar_gaps,
+    cellar_report,
     cellar_stats,
     consumption_velocity,
     execute_query,
@@ -1498,6 +1499,105 @@ class TestCellarChurn:
         con = get_connection(data_dir)
         result = cellar_churn(con, year=2024, month=6)
         assert "**Ending**" in result
+
+
+# ---------------------------------------------------------------------------
+# TestCellarReport
+# ---------------------------------------------------------------------------
+
+
+class TestCellarReport:
+    """Test cellar_report portfolio snapshot and fluctuation."""
+
+    @pytest.fixture()
+    def data_dir(self, tmp_path):
+        return _make_dataset(tmp_path)
+
+    def test_basic_output_markdown(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        assert "Cellar Report" in result
+        assert "stored" in result
+        assert "on order" in result
+        assert "Fluctuation" in result
+
+    def test_basic_output_plain(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month", fmt="plain")
+        assert "stored:" in result
+        assert "on order:" in result
+        assert "Fluctuation" in result
+
+    def test_snapshot_values(self, data_dir):
+        """Verify current snapshot at 2025-03-31 includes correct bottles."""
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        # stored: bottles 1,2,6,8 → 25+25+17.21+30 = 97.21 CHF, 4 bottles
+        assert "97.21" in result
+        # on_order: bottle 4 → 20.00 CHF, 1 bottle
+        assert "20.00" in result
+
+    def test_fluctuation_in(self, data_dir):
+        """Bottle 4 purchased 2025-03-10 should appear in 'in' fluctuation."""
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        # Fluctuation section should show bottle 4's value as inflow
+        assert "20.00" in result
+
+    def test_fluctuation_out(self, data_dir):
+        """Bottle 7 output 2025-03-15 should appear in 'out' fluctuation."""
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        # Bottle 7 has price=25.00 and was output 2025-03-15
+        assert "25.00" in result
+
+    def test_fluctuation_out_columns_not_swapped(self, data_dir):
+        """Regression: out row must have CHF value in value col, count in bottles col."""
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_month")
+        # Bottle 7: price=25.00, output 2025-03-15 → 1 bottle out
+        for line in result.splitlines():
+            if line.strip().startswith("| out"):
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                # parts: [direction, value, bottles, volume]
+                value_str = parts[1].lstrip("-")
+                bottles_str = parts[2].lstrip("-")
+                assert float(value_str.replace("'", "")) == 25.0
+                assert int(bottles_str) == 1
+                break
+        else:
+            pytest.fail("No 'out' row found in report")
+
+    def test_compare_to_prior_year(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="prior_year")
+        assert "Prior Year" in result
+
+    def test_compare_to_year_start(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", compare_to="year_start")
+        assert "Year Start" in result
+
+    def test_invalid_compare_to(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="Invalid compare_to"):
+            cellar_report(con, cutoff="2025-03-31", compare_to="invalid")
+
+    def test_invalid_cutoff(self, data_dir):
+        con = get_connection(data_dir)
+        with pytest.raises(ValueError, match="Invalid cutoff"):
+            cellar_report(con, cutoff="not-a-date")
+
+    def test_cutoff_today(self, data_dir):
+        """cutoff=None defaults to today and does not crash."""
+        con = get_connection(data_dir)
+        result = cellar_report(con)
+        assert "Cellar Report" in result
+
+    def test_currency_passthrough(self, data_dir):
+        con = get_connection(data_dir)
+        result = cellar_report(con, cutoff="2025-03-31", currency="EUR")
+        assert "EUR" in result
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,8 @@ def get_overview(
         WHERE started_at >= now() - INTERVAL '{hours} hours'
         {_wb(exclude_workbench)}
     """).fetchone()
+    if row is None:
+        return {"total": 0, "error_pct": 0.0, "avg_ms": 0.0, "sessions": 0}
     return {
         "total": row[0],
         "error_pct": row[1],
@@ -279,6 +281,8 @@ def get_latency_percentiles(
     """,
         params,
     ).fetchone()
+    if row is None:
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
     return {"p50": row[0], "p95": row[1], "p99": row[2], "max": row[3]}
 
 

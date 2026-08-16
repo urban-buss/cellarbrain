@@ -14,7 +14,7 @@ import imaplib
 import logging
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from .grouping import EmailMessage
 
@@ -41,7 +41,7 @@ class ImapClient:
         self._port = port
         self._use_ssl = use_ssl
         self._timeout = timeout
-        self._client: object = None  # imapclient.IMAPClient instance
+        self._client: Any = None  # imapclient.IMAPClient instance
 
     def __enter__(self) -> ImapClient:
         import imapclient
@@ -279,5 +279,5 @@ def _extract_attachments(msg: email.message.EmailMessage) -> list[tuple[str, byt
         payload = part.get_payload(decode=True)
         if payload is None:
             continue
-        attachments.append((filename, payload))
+        attachments.append((filename, payload))  # type: ignore[arg-type]
     return attachments

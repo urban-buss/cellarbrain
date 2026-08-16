@@ -200,9 +200,9 @@ def _stabilize_entity(
     # Step 1: remap FK columns using already-stabilised parent entities
     for row in new_rows:
         for fk_field, ref_type in fk_refs.items():
-            remap = id_remappings.get(ref_type)
-            if remap and row.get(fk_field) is not None:
-                row[fk_field] = remap.get(row[fk_field], row[fk_field])
+            fk_remap = id_remappings.get(ref_type)
+            if fk_remap and row.get(fk_field) is not None:
+                row[fk_field] = fk_remap.get(row[fk_field], row[fk_field])
 
     if pk is None:
         # Composite-PK entity (e.g. wine_grape) — nothing to stabilise
@@ -589,9 +589,9 @@ def sync(
         rows = stabilised.get(entity_type, [])
         for row in rows:
             for fk_field, ref_type in fk_refs.items():
-                remap = id_remappings.get(ref_type)
-                if remap and row.get(fk_field) is not None:
-                    row[fk_field] = remap.get(row[fk_field], row[fk_field])
+                fk_remap = id_remappings.get(ref_type)
+                if fk_remap and row.get(fk_field) is not None:
+                    row[fk_field] = fk_remap.get(row[fk_field], row[fk_field])
 
     return stabilised, all_changes, id_remappings
 
@@ -874,8 +874,8 @@ def classify_wines(
         csv_fp_norm = (csv_fp[0], csv_fp[1], csv_fp[2], cat_slug, price_str)
 
         existing_group = slug_index.get(slug, [])
-        active = [(wid, d) for wid, d in existing_group if not d and wid not in consumed_ids]
-        deleted = [(wid, d) for wid, d in existing_group if d and wid not in consumed_ids]
+        active: list[tuple[int, bool]] = [(wid, d) for wid, d in existing_group if not d and wid not in consumed_ids]
+        deleted: list[tuple[int, bool]] = [(wid, d) for wid, d in existing_group if d and wid not in consumed_ids]
 
         matched_wid = _match_by_fingerprint(active, csv_fp_norm, fp_index)
         if matched_wid is not None:
@@ -922,7 +922,7 @@ def classify_wines(
         deletions.remove(dd)
         next_id -= 1
 
-    counts = {}
+    counts: dict[str, int] = {}
     for m in matches:
         counts[m.status] = counts.get(m.status, 0) + 1
     logger.info(

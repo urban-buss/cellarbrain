@@ -398,9 +398,11 @@ def render_companion_dossier(
         best_val = _select_best_value(vstats)
         if best_val is not None:
             bv_vintage = str(best_val.vintage) if best_val.vintage else "NV"
-            max_s = int(best_val.best_score_max) if best_val.best_score_max else 100
+            max_s = int(best_val.best_score_max) if best_val.best_score_max is not None else 100
             score_val = (
-                int(best_val.best_score) if best_val.best_score == int(best_val.best_score) else best_val.best_score
+                int(best_val.best_score)
+                if best_val.best_score is not None and best_val.best_score == int(best_val.best_score)
+                else (best_val.best_score or 0)
             )
             price_str = (
                 f"{best_val.list_currency} {best_val.list_price:.0f}"

@@ -410,7 +410,7 @@ def plan_flight(
             if wid in used_wine_ids:
                 continue
 
-            meta = metadata.get(wid)
+            meta = metadata.get(wid)  # type: ignore[assignment]
             if meta is None:
                 continue
 

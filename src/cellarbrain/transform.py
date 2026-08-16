@@ -792,7 +792,7 @@ def build_tracked_wines(
         if key not in groups:
             groups[key] = {
                 "category": w.get("category", "unknown"),
-                "appellation_id": appellation_by_wine.get(w.get("wine_id")),
+                "appellation_id": appellation_by_wine.get(w.get("wine_id")),  # type: ignore[arg-type]
             }
 
     entities: list[dict] = []
@@ -850,7 +850,7 @@ def assign_tracked_dossier_paths(
         "wishlist",
     )
     for tw in entities.get("tracked_wine", []):
-        winery_name = winery_name_by_id.get(tw.get("winery_id"))
+        winery_name = winery_name_by_id.get(tw.get("winery_id"))  # type: ignore[arg-type]
         slug = companion_dossier_slug(
             tw["tracked_wine_id"],
             winery_name,

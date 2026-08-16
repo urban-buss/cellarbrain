@@ -81,6 +81,7 @@ Skills are backward-compatible -- new versions may use new MCP tools but never r
 | [research](./research/) | "Research this wine" | Dossier population with provenance tracking |
 | [drinking-window](./drinking-window/) | "What's approaching peak?" | Urgency-sorted drinking readiness |
 | [price-scan](./price-scan/) | "Track this wine's price" | Swiss retailer price scanning |
+| [wine-of-the-day](./wine-of-the-day/) | "Surprise me" / "Daily pick" | Deterministic daily rotation weighted by urgency |
 | [manage](./manage/) | "Upgrade cellarbrain" | System maintenance, migrations, and health checks |
 
 ## Optional: Sommelier Model

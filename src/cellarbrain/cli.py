@@ -443,8 +443,12 @@ def _run_handler(fn):
     except Exception as exc:
         # Domain exceptions are lazily imported to avoid pulling in DuckDB
         # and heavy modules when they are not needed.
-        from .dossier_ops import ProtectedSectionError, WineNotFoundError
-        from .query import DataStaleError, QueryError
+        from .exceptions import (
+            DataStaleError,
+            ProtectedSectionError,
+            QueryError,
+            WineNotFoundError,
+        )
 
         if isinstance(
             exc,
@@ -1264,7 +1268,7 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
     # Recompute bottle-level fields
     bottle_changes = 0
     for b in bottles:
-        old = (b.get("purchase_price"),)
+        b_old = (b.get("purchase_price"),)
         # Currency normalisation
         b["purchase_price"] = convert_to_default_currency(
             b.get("original_purchase_price"),
@@ -1276,8 +1280,8 @@ def _cmd_recalc(args: argparse.Namespace, settings: Settings) -> None:
         # In-memory classification for markdown/dossier helpers
         loc = cellar_id_to_loc.get(b.get("cellar_id"), "onsite")
         b["is_in_transit"] = loc == "in_transit"
-        new = (b["purchase_price"],)
-        if old != new:
+        b_new = (b["purchase_price"],)
+        if b_old != b_new:
             bottle_changes += 1
 
     # Write updated Parquet
@@ -1675,7 +1679,7 @@ def _cmd_digest(args: argparse.Namespace, settings: Settings) -> None:
 
     data_dir = pathlib.Path(settings.paths.data_dir)
     con = q.connect(data_dir)
-    result = build_digest(con, data_dir, period=args.period)
+    result = build_digest(con, str(data_dir), period=args.period)
     print(format_digest(result))
 
 

@@ -23,6 +23,7 @@ Two connection modes:
 
 from __future__ import annotations
 
+import datetime as _dt
 import difflib
 import logging
 import pathlib
@@ -31,7 +32,8 @@ import re
 import duckdb
 import pandas as pd
 
-from ._query_base import DataStaleError, QueryError, _format_df
+from ._query_base import _format_df
+from .exceptions import DataStaleError, QueryError
 from .flat import (
     BOTTLES_FULL_VIEW_SQL,
     BOTTLES_VIEW_SQL,
@@ -157,6 +159,20 @@ _DISALLOWED_PATTERN = re.compile(
 
 _ALLOWED_PATTERN = re.compile(
     r"^\s*(SELECT|WITH)\b",
+    re.IGNORECASE,
+)
+
+# Block keywords that can appear anywhere in a query (subqueries, CTEs)
+_FORBIDDEN_KEYWORDS = re.compile(
+    r"\b(COPY|ATTACH|DETACH|PRAGMA|LOAD|INSTALL"
+    r"|GRANT|REVOKE|EXEC|EXECUTE)\b",
+    re.IGNORECASE,
+)
+
+# Block direct file-access functions that bypass view-only exposure
+_FORBIDDEN_FUNCTIONS = re.compile(
+    r"\b(read_parquet|read_csv|read_csv_auto|read_json|read_json_auto"
+    r"|parquet_scan|parquet_metadata|parquet_schema|query)\s*\(",
     re.IGNORECASE,
 )
 
@@ -416,7 +432,8 @@ def validate_sql(sql: str) -> None:
     """Check that *sql* is a read-only SELECT statement.
 
     Raises QueryError if the SQL is empty, contains DDL/DML, does not
-    start with SELECT or WITH, or contains multiple statements.
+    start with SELECT or WITH, contains multiple statements, or uses
+    forbidden functions (e.g. read_parquet) that could access the filesystem.
     """
     stripped = sql.strip().rstrip(";").strip()
     if not stripped:
@@ -427,6 +444,19 @@ def validate_sql(sql: str) -> None:
         raise QueryError(f"Only SELECT queries are allowed. Got: {stripped.split()[0].upper()}")
     if not _ALLOWED_PATTERN.match(stripped):
         raise QueryError(f"SQL must start with SELECT or WITH. Got: {stripped[:40]!r}")
+
+    # Strip comments before deeper checks (keywords/functions in subqueries)
+    no_comments = re.sub(r"--[^\n]*", "", stripped)
+    no_comments = re.sub(r"/\*.*?\*/", "", no_comments, flags=re.DOTALL)
+
+    kw_match = _FORBIDDEN_KEYWORDS.search(no_comments)
+    if kw_match:
+        raise QueryError(f"Forbidden SQL keyword: {kw_match.group(1).upper()}")
+
+    func_match = _FORBIDDEN_FUNCTIONS.search(no_comments)
+    if func_match:
+        raise QueryError(f"Forbidden SQL function: {func_match.group(1)}")
+
     logger.debug("SQL validated: %s", stripped[:200])
 
 
@@ -607,6 +637,8 @@ def _overall_stats(con: duckdb.DuckDBPyConnection, *, currency: str = "CHF", fmt
             COALESCE(sum(volume_ml * (bottles_stored + bottles_on_order)), 0) / 1000.0    AS volume_total
         FROM wines_full
     """).fetchone()
+    if row is None:
+        return "No data available."
     (
         wines_cellar,
         wines_on_order,
@@ -901,7 +933,8 @@ def cellar_churn(
 
     if period == "year":
         # Year-by-year since first purchase
-        first_year = con.execute("SELECT min(extract('year' FROM purchase_date))::INT FROM bottles_full").fetchone()[0]
+        _fy_row = con.execute("SELECT min(extract('year' FROM purchase_date))::INT FROM bottles_full").fetchone()
+        first_year = _fy_row[0] if _fy_row else None
         if first_year is None:
             return "*No bottles in the cellar.*"
         range_start = _dt.date(first_year, 1, 1)
@@ -1029,6 +1062,8 @@ def _single_period_churn(
             ), 0) / 1000.0 AS end_vol
         FROM bottles_full
     """).fetchone()
+    if row is None:
+        return "No data available."
 
     (
         beg_w,
@@ -1059,7 +1094,7 @@ def _single_period_churn(
         lines.append(f"− Consumed: {con_w} wines, {con_b} bottles, {curr} {_fmt_chf(con_v)}, {_fmt_litres(con_l)}L")
         lines.append(f"= Ending: {end_w} wines, {end_b} bottles, {curr} {_fmt_chf(end_v)}, {_fmt_litres(end_l)}L")
     else:
-        lines: list[str] = [f"## Cellar Churn — {title}\n"]
+        lines = [f"## Cellar Churn — {title}\n"]
         lines.append(f"|               |   wines |   bottles | value ({curr})   | volume (L)   |")
         lines.append("|:--------------|--------:|----------:|:--------------|:-------------|")
         lines.append(f"| Beginning     | {beg_w:7d} | {beg_b:9d} | {_fmt_chf(beg_v):13s} | {_fmt_litres(beg_l):12s} |")
@@ -1179,7 +1214,7 @@ def _multi_period_churn(
     if fmt == "plain":
         lines: list[str] = [f"📊 CELLAR CHURN — {title}\n"]
     else:
-        lines: list[str] = [f"## Cellar Churn — {title}\n"]
+        lines = [f"## Cellar Churn — {title}\n"]
     lines.append(_format_df(bt, fmt, style="compact"))
     lines.append("")
 
@@ -1199,6 +1234,251 @@ def _multi_period_churn(
 
     lines.append(f"### Value ({curr})\n" if fmt == "markdown" else f"Value ({curr}):\n")
     lines.append(_format_df(vt, fmt, style="compact"))
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Cellar report (monthly portfolio snapshot with fluctuation)
+# ---------------------------------------------------------------------------
+
+_VALID_COMPARE_TO = {"prior_month", "prior_year", "year_start"}
+
+
+def _resolve_cutoff(cutoff: str | None) -> _dt.date:
+    """Parse cutoff parameter into a date object."""
+    import datetime as _dt
+
+    today = _dt.date.today()
+    if cutoff is None or cutoff in ("today", "current_month"):
+        return today
+    try:
+        return _dt.date.fromisoformat(cutoff)
+    except ValueError:
+        raise ValueError(
+            f"Invalid cutoff: {cutoff!r}. Use ISO date (YYYY-MM-DD), 'today', or 'current_month'."
+        ) from None
+
+
+def _compute_compare_date(cutoff_date: _dt.date, compare_to: str) -> _dt.date:
+    """Compute the comparison date from cutoff and compare_to mode."""
+    import datetime as _dt
+
+    if compare_to == "prior_month":
+        first_of_month = cutoff_date.replace(day=1)
+        prev_last = first_of_month - _dt.timedelta(days=1)
+        return prev_last
+    elif compare_to == "prior_year":
+        try:
+            return cutoff_date.replace(year=cutoff_date.year - 1)
+        except ValueError:
+            return cutoff_date.replace(year=cutoff_date.year - 1, day=28)
+    elif compare_to == "year_start":
+        return _dt.date(cutoff_date.year - 1, 12, 31)
+    raise ValueError(f"Invalid compare_to: {compare_to!r}. Must be one of: {', '.join(sorted(_VALID_COMPARE_TO))}")
+
+
+def _snapshot_at(con: duckdb.DuckDBPyConnection, cutoff_date: _dt.date) -> dict:
+    """Return snapshot {segment: (value, bottles, liters)} at a point in time."""
+    rows = con.execute(f"""
+        SELECT
+            CASE WHEN is_in_transit THEN 'on_order' ELSE 'stored' END AS segment,
+            count(*) AS bottles,
+            COALESCE(sum(price), 0) AS value_chf,
+            COALESCE(sum(volume_ml), 0) / 1000.0 AS liters
+        FROM bottles_full
+        WHERE status = 'stored'
+          AND purchase_date <= '{cutoff_date}'
+          AND (output_date IS NULL OR output_date > '{cutoff_date}')
+        GROUP BY is_in_transit
+    """).fetchall()
+    result: dict = {"stored": (0.0, 0, 0.0), "on_order": (0.0, 0, 0.0)}
+    for segment, bottles, value, liters in rows:
+        result[segment] = (float(value), bottles, float(liters))
+    return result
+
+
+def _fluctuation_between(con: duckdb.DuckDBPyConnection, start_date: _dt.date, end_date: _dt.date) -> dict:
+    """Return fluctuation per segment between two dates."""
+    # "in" = purchased during (start_date, end_date], segmented by current transit status
+    in_rows = con.execute(f"""
+        SELECT
+            CASE WHEN is_in_transit THEN 'on_order' ELSE 'stored' END AS segment,
+            count(*) AS bottles,
+            COALESCE(sum(price), 0) AS value_chf,
+            COALESCE(sum(volume_ml), 0) / 1000.0 AS liters
+        FROM bottles_full
+        WHERE purchase_date > '{start_date}' AND purchase_date <= '{end_date}'
+        GROUP BY is_in_transit
+    """).fetchall()
+
+    # "out" = consumed/output during (start_date, end_date]
+    # Consumed bottles were always physically present (stored segment)
+    out_row = con.execute(f"""
+        SELECT
+            count(*) AS bottles,
+            COALESCE(sum(price), 0) AS value_chf,
+            COALESCE(sum(volume_ml), 0) / 1000.0 AS liters
+        FROM bottles_full
+        WHERE output_date > '{start_date}' AND output_date <= '{end_date}'
+    """).fetchone()
+
+    result: dict = {
+        "stored": (0.0, 0, 0.0, 0.0, 0, 0.0),
+        "on_order": (0.0, 0, 0.0, 0.0, 0, 0.0),
+    }
+
+    for segment, bottles, value, liters in in_rows:
+        result[segment] = (float(value), bottles, float(liters), 0.0, 0, 0.0)
+
+    out_bottles, out_val, out_liters = out_row if out_row else (0, 0.0, 0.0)
+    out_val = float(out_val)
+    out_liters = float(out_liters)
+    s_in = result["stored"]
+    result["stored"] = (s_in[0], s_in[1], s_in[2], out_val, out_bottles, out_liters)
+
+    return result
+
+
+def cellar_report(
+    con: duckdb.DuckDBPyConnection,
+    cutoff: str | None = None,
+    compare_to: str = "prior_month",
+    currency: str = "CHF",
+    fmt: str = "markdown",
+) -> str:
+    """Generate a structured cellar portfolio report with snapshot and fluctuation.
+
+    Returns current and prior period snapshots (stored/on-order/all) with
+    value, bottles, and volume, plus a fluctuation breakdown (in/out/net).
+
+    Note: on-order classification uses current transit status as a proxy.
+    Bottles that arrived during the reporting period appear in the 'stored'
+    segment for both the current snapshot and the 'in' fluctuation.
+
+    Raises ValueError for invalid cutoff or compare_to values.
+    """
+    if compare_to not in _VALID_COMPARE_TO:
+        raise ValueError(f"Invalid compare_to: {compare_to!r}. Must be one of: {', '.join(sorted(_VALID_COMPARE_TO))}")
+
+    cutoff_date = _resolve_cutoff(cutoff)
+    compare_date = _compute_compare_date(cutoff_date, compare_to)
+
+    current = _snapshot_at(con, cutoff_date)
+    prior = _snapshot_at(con, compare_date)
+    flux = _fluctuation_between(con, compare_date, cutoff_date)
+
+    curr = currency
+    try:
+        cutoff_label = cutoff_date.strftime("%d %B %Y").lstrip("0")
+    except (ValueError, AttributeError):
+        cutoff_label = str(cutoff_date)
+
+    try:
+        compare_label = compare_date.strftime("%d %B %Y").lstrip("0")
+    except (ValueError, AttributeError):
+        compare_label = str(compare_date)
+
+    if compare_to == "prior_month":
+        compare_title = f"Prior Month \u2014 {compare_label}"
+    elif compare_to == "prior_year":
+        compare_title = f"Prior Year \u2014 {compare_label}"
+    else:
+        compare_title = f"Year Start \u2014 {compare_label}"
+
+    lines: list[str] = []
+
+    def _snapshot_table(data: dict, title: str) -> None:
+        stored_val, stored_bot, stored_lit = data["stored"]
+        order_val, order_bot, order_lit = data["on_order"]
+        all_val = stored_val + order_val
+        all_bot = stored_bot + order_bot
+        all_lit = stored_lit + order_lit
+
+        if fmt == "markdown":
+            lines.append(f"## {title}\n")
+            lines.append(f"|           | value ({curr}) | bottles | volume (L) |")
+            lines.append("|:----------|------------:|--------:|-----------:|")
+            lines.append(f"| stored    | {_fmt_chf(stored_val)} | {stored_bot} | {_fmt_litres(stored_lit)} |")
+            lines.append(f"| on order  | {_fmt_chf(order_val)} | {order_bot} | {_fmt_litres(order_lit)} |")
+            lines.append(f"| **all**   | **{_fmt_chf(all_val)}** | **{all_bot}** | **{_fmt_litres(all_lit)}** |")
+        else:
+            lines.append(f"\U0001f4ca {title}\n")
+            lines.append(
+                f"  stored:   {curr} {_fmt_chf(stored_val)}  ({stored_bot} bottles, {_fmt_litres(stored_lit)}L)"
+            )
+            lines.append(f"  on order: {curr} {_fmt_chf(order_val)}  ({order_bot} bottles, {_fmt_litres(order_lit)}L)")
+            lines.append(f"  all:      {curr} {_fmt_chf(all_val)}  ({all_bot} bottles, {_fmt_litres(all_lit)}L)")
+        lines.append("")
+
+    def _flux_table(
+        segment: str,
+        in_val: float,
+        in_bot: int,
+        in_lit: float,
+        out_val: float,
+        out_bot: int,
+        out_lit: float,
+    ) -> None:
+        net_val = in_val - out_val
+        net_bot = in_bot - out_bot
+        net_lit = in_lit - out_lit
+
+        def _signed_val(v: float) -> str:
+            return f"+{_fmt_chf(v)}" if v >= 0 else f"-{_fmt_chf(abs(v))}"
+
+        def _signed_int(n: int) -> str:
+            return f"+{n}" if n >= 0 else str(n)
+
+        def _signed_lit(v: float) -> str:
+            return f"+{_fmt_litres(v)}" if v >= 0 else f"-{_fmt_litres(abs(v))}"
+
+        if segment == "all":
+            label = "All"
+        elif segment == "on_order":
+            label = "On Order"
+        else:
+            label = "Stored"
+
+        if fmt == "markdown":
+            lines.append(f"**{label}:**")
+            lines.append(f"| direction | value ({curr}) | bottles | volume (L) |")
+            lines.append("|:----------|------------:|--------:|-----------:|")
+            lines.append(f"| in        | {_fmt_chf(in_val)} | {in_bot} | {_fmt_litres(in_lit)} |")
+            lines.append(f"| out       | -{_fmt_chf(out_val)} | -{out_bot} | -{_fmt_litres(out_lit)} |")
+            lines.append(
+                f"| **net**   | **{_signed_val(net_val)}** | **{_signed_int(net_bot)}** | **{_signed_lit(net_lit)}** |"
+            )
+        else:
+            lines.append(f"  {label}:")
+            lines.append(f"    > in:  {curr} {_fmt_chf(in_val)}  ({in_bot} bottles, {_fmt_litres(in_lit)}L)")
+            lines.append(f"    > out: {curr} -{_fmt_chf(out_val)}  (-{out_bot} bottles, -{_fmt_litres(out_lit)}L)")
+            lines.append(
+                f"    > net: {curr} {_signed_val(net_val)}  ({_signed_int(net_bot)} bottles, {_signed_lit(net_lit)}L)"
+            )
+        lines.append("")
+
+    _snapshot_table(current, f"Cellar Report \u2014 {cutoff_label}")
+    _snapshot_table(prior, compare_title)
+
+    if fmt == "markdown":
+        lines.append(f"### Fluctuation since {compare_label}\n")
+    else:
+        lines.append(f"Fluctuation since {compare_label}:\n")
+
+    for segment in ("stored", "on_order"):
+        in_val, in_bot, in_lit, out_val, out_bot, out_lit = flux[segment]
+        _flux_table(segment, in_val, in_bot, in_lit, out_val, out_bot, out_lit)
+
+    s = flux["stored"]
+    o = flux["on_order"]
+    all_in_val = s[0] + o[0]
+    all_in_bot = s[1] + o[1]
+    all_in_lit = s[2] + o[2]
+    all_out_val = s[3] + o[3]
+    all_out_bot = s[4] + o[4]
+    all_out_lit = s[5] + o[5]
+    _flux_table("all", all_in_val, all_in_bot, all_in_lit, all_out_val, all_out_bot, all_out_lit)
 
     return "\n".join(lines)
 
@@ -1275,9 +1555,8 @@ def consumption_velocity(
     net_growth = round(avg_acquired - avg_consumed, 1)
 
     # Current cellar size (stored, not in transit)
-    current_bottles = con.execute(
-        "SELECT count(*) FROM bottles_full WHERE status = 'stored' AND NOT is_in_transit"
-    ).fetchone()[0]
+    _cb_row = con.execute("SELECT count(*) FROM bottles_full WHERE status = 'stored' AND NOT is_in_transit").fetchone()
+    current_bottles = _cb_row[0] if _cb_row else 0
 
     projected_12m = int(current_bottles + round(net_growth * 12))
 
@@ -1297,10 +1576,10 @@ def consumption_velocity(
     lines: list[str] = [f"## Consumption Velocity — Last {num_months} Months\n"]
     lines.append("| month | acquired | consumed | net |")
     lines.append("|:------|--------:|---------:|----:|")
-    for m in month_data:
-        n = m["acquired"] - m["consumed"]
+    for md in month_data:
+        n = md["acquired"] - md["consumed"]
         ns = f"+{n}" if n >= 0 else str(n)
-        lines.append(f"| {m['month']} | {m['acquired']} | {m['consumed']} | {ns} |")
+        lines.append(f"| {md['month']} | {md['acquired']} | {md['consumed']} | {ns} |")
     lines.append("")
     lines.append(
         f"**Averages (per month):** acquired {avg_acquired}, consumed {avg_consumed}, net {net_sign}{net_growth}"

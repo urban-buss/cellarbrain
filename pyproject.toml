@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellarbrain"
-version = "0.3.2"
+version = "0.3.6"
 description = "AI sommelier for your wine cellar — ETL pipeline, DuckDB query layer, Markdown dossiers, and MCP server for wine cellar CSV exports"
 requires-python = ">=3.11"
 license = "MIT"
@@ -58,8 +58,10 @@ ingest = []
 promotions = []
 search = []
 dev = [
-    "pytest",
+    "pytest>=8",
+    "pytest-cov",
     "ruff>=0.8",
+    "mypy>=1.10",
 ]
 
 [project.urls]
@@ -135,3 +137,24 @@ known-first-party = ["cellarbrain"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "mcp.*",
+    "imapclient.*",
+    "jellyfish.*",
+    "lxml.*",
+    "sentence_transformers.*",
+    "torch.*",
+    "faiss.*",
+    "markdown.*",
+    "yaml.*",
+    "pandas.*",
+    "tabulate.*",
+]
+ignore_missing_imports = true
