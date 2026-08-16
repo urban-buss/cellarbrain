@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dashboard Smoke"
+  short_description: "Smoke test the isolated Cellarbrain dashboard"
+  default_prompt: "Use $dashboard-smoke to start and verify the Cellarbrain development dashboard on port 8081."
