@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/ruedi/dev/brains/.codex/hooks/prod_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

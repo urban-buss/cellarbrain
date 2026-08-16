@@ -1,0 +1,4 @@
+interface:
+  display_name: "Schema Change"
+  short_description: "Safely evolve Cellarbrain Parquet schemas and views"
+  default_prompt: "Use $schema-change to plan or implement this Cellarbrain schema change safely."

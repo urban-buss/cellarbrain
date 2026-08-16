@@ -1,0 +1,4 @@
+interface:
+  display_name: "MCP Contract Check"
+  short_description: "Check MCP imports, registrations, and compatibility"
+  default_prompt: "Use $mcp-contract-check to validate Cellarbrain MCP compatibility and public contracts."

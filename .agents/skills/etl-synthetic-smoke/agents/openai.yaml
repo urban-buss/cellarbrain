@@ -1,0 +1,4 @@
+interface:
+  display_name: "ETL Synthetic Smoke"
+  short_description: "Validate Cellarbrain ETL safely with synthetic data"
+  default_prompt: "Use $etl-synthetic-smoke to validate the Cellarbrain ETL and sync workflow using synthetic data only."

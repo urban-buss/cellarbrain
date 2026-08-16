@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Impact Testing"
+  short_description: "Plan and run tests based on the Cellarbrain diff"
+  default_prompt: "Use $change-impact-testing to build and execute a test plan for the current Cellarbrain changes."
