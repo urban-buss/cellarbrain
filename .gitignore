@@ -89,3 +89,9 @@ local/
 .local/
 *.local.*
 scripts/
+
+# Development-only local state
+.env.dev
+data/dev/
+output_dev/
+docker-compose.override.yml

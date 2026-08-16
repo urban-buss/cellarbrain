@@ -1,0 +1,20 @@
+name: cellarbrain-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cellarbrain-dev-postgres
+    restart: "no"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: cellarbrain_dev
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./data/dev/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cellarbrain_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
