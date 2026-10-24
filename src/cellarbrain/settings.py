@@ -117,6 +117,15 @@ class EtlConfig:
 
 
 @dataclass(frozen=True)
+class NotificationsConfig:
+    enabled: bool = False
+    target: str = ""
+    command: str = "openclaw"
+    timeout_seconds: int = 15
+    strict: bool = False
+
+
+@dataclass(frozen=True)
 class IdentityConfig:
     enable_fuzzy_match: bool = True
     rename_threshold: float = 0.85
@@ -726,6 +735,7 @@ class Settings:
     cellar_rules: tuple[CellarRule, ...] = ()
     currency: CurrencyConfig = field(default_factory=CurrencyConfig)
     etl: EtlConfig = field(default_factory=EtlConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     wishlist: WishlistConfig = field(default_factory=WishlistConfig)
@@ -1043,6 +1053,7 @@ def load_settings(
     dw_raw = raw.get("drinking_window", {})
     dossier_raw = raw.get("dossier", {})
     etl_raw = raw.get("etl", {})
+    notifications_raw = raw.get("notifications", {})
     identity_raw = raw.get("identity", {})
     logging_raw = raw.get("logging", {})
     wishlist_raw = raw.get("wishlist", {})
@@ -1062,6 +1073,8 @@ def load_settings(
         _validate_keys("dossier", dossier_raw, DossierConfig)
     if etl_raw:
         _validate_keys("etl", etl_raw, EtlConfig)
+    if notifications_raw:
+        _validate_keys("notifications", notifications_raw, NotificationsConfig)
     if identity_raw:
         _validate_keys("identity", identity_raw, IdentityConfig)
     if logging_raw:
@@ -1080,6 +1093,9 @@ def load_settings(
     drinking_window = DrinkingWindowConfig(**dw_raw) if dw_raw else DrinkingWindowConfig()
     dossier = DossierConfig(**dossier_raw) if dossier_raw else DossierConfig()
     etl = EtlConfig(**etl_raw) if etl_raw else EtlConfig()
+    notifications = NotificationsConfig(**notifications_raw) if notifications_raw else NotificationsConfig()
+    if notifications.timeout_seconds < 1:
+        raise ValueError("Config error: notifications.timeout_seconds must be at least 1")
     identity = IdentityConfig(**identity_raw) if identity_raw else IdentityConfig()
     logging_cfg = LoggingConfig(**logging_raw) if logging_raw else LoggingConfig()
     if wishlist_raw:
@@ -1266,6 +1282,7 @@ def load_settings(
         cellar_rules=cellar_rules,
         currency=currency,
         etl=etl,
+        notifications=notifications,
         identity=identity,
         logging=logging_cfg,
         wishlist=wishlist,

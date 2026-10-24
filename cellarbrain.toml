@@ -262,6 +262,16 @@ default_mode = "full"
 etl_fence_start = "<!-- source: etl — do not edit below this line -->"
 etl_fence_end = "<!-- source: etl — end -->"
 
+# --- Optional OpenClaw iMessage Notifications -------------------------------
+# Notifications are sent only when enabled. Set your recipient in this local
+# config file; avoid committing a personal phone number to a shared repository.
+[notifications]
+enabled = false
+# target = "+417XXXXXXXX"          # iMessage phone number, in international format
+# command = "openclaw"             # executable name or absolute path
+# timeout_seconds = 15
+# strict = false                   # fail the ETL command if a success alert cannot be sent
+
 # --- Search Synonyms --------------------------------------------------------
 # Maps query tokens to stored-data equivalents for multi-language search.
 # Built-in defaults cover ~82 DE→EN/stored mappings (countries, grapes, etc.).

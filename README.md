@@ -233,6 +233,23 @@ the full skill integration design.
 
 ---
 
+## Optional OpenClaw iMessage notifications
+
+Cellarbrain can ask OpenClaw to send a short iMessage after each successful ETL, including runs with no detected changes. When notifications are enabled, failed ETL runs also send a best-effort failure alert. Notifications are disabled by default.
+
+Add this to your local `cellarbrain.toml` (keep personal recipient details out of shared config files):
+
+```toml
+[notifications]
+enabled = true
+target = "+417XXXXXXXX" # replace with your iMessage number in international format
+# command = "openclaw"            # or an absolute path if launchd cannot find it
+# timeout_seconds = 15
+# strict = false                  # success-alert delivery failure does not fail ETL
+```
+
+The recipient is passed to OpenClaw's documented `openclaw message send --channel imessage` command. OpenClaw and its iMessage channel must already be configured on the local Mac. Cellarbrain uses a shell-free subprocess call and does not expose the Gateway. Successful sends are recorded in `.cellarbrain-notifications.json` inside the ETL output directory to suppress duplicate sends for the same run. Failure messages contain no exception text or source data.
+
 ## Data model
 
 The ETL produces 12 normalised Parquet tables:

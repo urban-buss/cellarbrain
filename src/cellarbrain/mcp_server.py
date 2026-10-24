@@ -1527,7 +1527,7 @@ def reload_data(mode: str = "sync", meta: dict | None = None) -> str:
                 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-        ok = _cli.run(
+        ok = _cli._run_etl_command(
             wines_csv,
             bottles_csv,
             data_dir,
