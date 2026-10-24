@@ -64,14 +64,11 @@ class TestSkillsPackageData:
                 assert tool_name in tools, f"{skill_name} references unknown MCP tool {tool_name}"
                 supplied = set(named_argument.findall(arguments))
                 assert supplied <= tools[tool_name], (
-                    f"{skill_name} passes unsupported arguments to {tool_name}: "
-                    f"{sorted(supplied - tools[tool_name])}"
+                    f"{skill_name} passes unsupported arguments to {tool_name}: {sorted(supplied - tools[tool_name])}"
                 )
 
     def test_skills_do_not_contain_known_stale_api_examples(self) -> None:
-        combined = "\n".join(
-            (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8") for name in SKILL_NAMES
-        )
+        combined = "\n".join((SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8") for name in SKILL_NAMES)
         stale_fragments = (
             'Always pass `format="plain"` to every tool call',
             "pair_wine(wine_id",
@@ -164,11 +161,7 @@ class TestSyncWithOpenclaw:
         if not openclaw_dir.is_dir():
             pytest.skip(".openclaw/ directory not found (running from installed package)")
 
-        source_names = {
-            path.parent.name
-            for path in openclaw_dir.glob("*/SKILL.md")
-            if path.parent.name != "_archive"
-        }
+        source_names = {path.parent.name for path in openclaw_dir.glob("*/SKILL.md") if path.parent.name != "_archive"}
         assert source_names == set(SKILL_NAMES)
 
         for skill_name in SKILL_NAMES:
