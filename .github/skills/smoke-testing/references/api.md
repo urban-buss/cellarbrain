@@ -131,9 +131,15 @@ from tests.smoke_helpers import SmokeConfig, RunResult, CheckResult
 from tests.smoke_helpers.discover import discover_raw_folders, get_environment
 from tests.smoke_helpers.runner import run_etl, run_pytest, rebuild_server, clean_output
 from tests.smoke_helpers.verify import (
-    check_parquet_files, check_etl_runs, check_entity_counts,
-    check_wine_schema, check_dossiers, run_validation,
-    check_cross_run, check_fk_integrity, check_dossier_integrity,
+    check_parquet_files,
+    check_etl_runs,
+    check_entity_counts,
+    check_wine_schema,
+    check_dossiers,
+    run_validation,
+    check_cross_run,
+    check_fk_integrity,
+    check_dossier_integrity,
 )
 from tests.smoke_helpers.mcp_checks import run_mcp_checks
 from tests.smoke_helpers.report import generate_report, write_report

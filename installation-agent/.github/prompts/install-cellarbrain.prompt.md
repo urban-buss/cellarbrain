@@ -48,14 +48,16 @@ import asyncio
 from mcp.client.sse import sse_client
 from mcp import ClientSession
 
+
 async def main():
-    async with sse_client('http://127.0.0.1:8000/sse') as (r, w):
+    async with sse_client("http://127.0.0.1:8000/sse") as (r, w):
         async with ClientSession(r, w) as s:
             await s.initialize()
             tools = await s.list_tools()
             for t in tools.tools:
-                print(f'  {t.name}')
-            print(f'\nTotal tools: {len(tools.tools)}')
+                print(f"  {t.name}")
+            print(f"\nTotal tools: {len(tools.tools)}")
+
 
 asyncio.run(main())
 ```

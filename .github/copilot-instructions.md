@@ -42,8 +42,8 @@ Detailed documentation lives in `docs/`. Consult these pages for architecture, d
 ### Type Aliases
 
 ```python
-Lookup = dict[str, int]              # display_value → id
-CompositeLookup = dict[tuple, int]   # composite_key → id
+Lookup = dict[str, int]  # display_value → id
+CompositeLookup = dict[tuple, int]  # composite_key → id
 ```
 
 ### Error Patterns
