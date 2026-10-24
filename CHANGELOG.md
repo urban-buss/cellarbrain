@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - **Optional OpenClaw iMessage ETL notifications** — summarize existing per-run change-log rows after successful validation, report no-change completions and best-effort failures, and deduplicate confirmed sends locally.
 
+## [0.3.7] — 2026-10-24
+
+### Changed
+- **Structured cellar report data** — restructure `cellar_report` to return snapshot and fluctuation data.
+
 ## [0.3.6] — 2026-05-25
 
 ### Fixed
