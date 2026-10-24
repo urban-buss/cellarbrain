@@ -1,8 +1,9 @@
 ---
+name: new-branch
 description: "Create a new local dev branch from latest main, named with the next version. Use when: 'new branch', 'start new version', 'fresh branch', 'next version branch'."
-agent: "agent"
+user-invocable: true
+disable-model-invocation: true
 ---
-
 Create a new local development branch from the latest `main`, named after the next patch version.
 
 ## Steps

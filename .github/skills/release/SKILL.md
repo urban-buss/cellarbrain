@@ -1,9 +1,10 @@
 ---
+name: release
 description: "Prepare a release branch with a squash commit. Use when: 'release', 'cut a release', 'publish version', 'bump version', 'tag release'."
 argument-hint: "Optional: version bump type (patch, minor, major) or explicit version"
-agent: "agent"
+user-invocable: true
+disable-model-invocation: true
 ---
-
 Prepare a cellarbrain release: bump version, create a feature branch from main,
 and squash-merge all local branch changes into a single meaningful commit.
 
@@ -28,7 +29,7 @@ session, skip them and note "pre-flight already passed this session".
    files in ignored directories are OK). If there are uncommitted changes,
    stop and ask the user to commit or stash first.
 2. **Lint passes**: `ruff check . && ruff format --check .`
-3. **Import smoke**: verify key modules import cleanly (same as ci.prompt.md §3).
+3. **Import smoke**: verify key modules import cleanly (same as ci skill §3).
 4. **Tests pass**: `pytest --tb=short -q`
 
 If any check fails, diagnose, suggest a fix, and stop — do not continue.
@@ -52,8 +53,7 @@ git show main:pyproject.toml | grep -m1 'version'
 When bumping, update:
 - `version` in `pyproject.toml`.
 - Rename the `[Unreleased]` section in `CHANGELOG.md` to
-  `[X.Y.Z] — YYYY-MM-DD` (today's date) and add a fresh empty
-  `[Unreleased]` section above it.
+  `[X.Y.Z] — YYYY-MM-DD` (today's date) and add a fresh empty `[Unreleased]` section above it.
 
 Commit the version bump on the local branch:
 
@@ -143,4 +143,4 @@ Do **not** push — the user will handle push and PR creation separately.
 - Do not include internal issue IDs or analysis doc references in commit
   messages or branch names.
 
-{{input}}
+$ARGUMENTS

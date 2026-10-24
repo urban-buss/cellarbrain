@@ -1,8 +1,9 @@
 ---
+name: dream
 description: "Consolidate agent memories into learned rules — the dream cycle"
-agent: agent
+user-invocable: true
+disable-model-invocation: true
 ---
-
 <!-- GENERATED FROM .github/_shared/prompts/dream.prompt.md -->
 <!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 

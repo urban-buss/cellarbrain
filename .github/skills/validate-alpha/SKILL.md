@@ -1,6 +1,9 @@
 ---
+name: validate-alpha
 description: "Validate an alpha release installed from PyPI in a clean venv with data in a separate folder. Use when: 'validate alpha', 'test pypi install', 'validate release'."
 argument-hint: "Version to validate, e.g. 0.3.0a1"
+user-invocable: true
+disable-model-invocation: true
 ---
 Validate a PyPI-published alpha release of cellarbrain in an isolated
 environment. The source checkout provides test files; the installed package
@@ -8,7 +11,7 @@ comes from PyPI (NOT an editable install).
 
 ## Version
 
-Install: `cellarbrain=={{input}}`
+Install: `cellarbrain==$ARGUMENTS`
 
 ## Setup Instructions
 
@@ -18,7 +21,7 @@ Create a **separate venv** (not the dev `.venv`) and install the alpha:
 # Windows — from the repo root
 python -m venv .venv-alpha
 .venv-alpha\Scripts\Activate.ps1
-pip install "cellarbrain=={{input}}"
+pip install "cellarbrain==$ARGUMENTS"
 pip install pytest pyarrow duckdb   # test dependencies
 ```
 
