@@ -149,6 +149,8 @@ module = [
     "imapclient.*",
     "jellyfish.*",
     "lxml.*",
+    "pyarrow",
+    "pyarrow.*",
     "sentence_transformers.*",
     "torch.*",
     "faiss.*",
@@ -158,3 +160,9 @@ module = [
     "tabulate.*",
 ]
 ignore_missing_imports = true
+
+# NumPy 2.4's stubs use Python 3.12 type-alias syntax.  Keep checking the
+# project against its Python 3.11 minimum without parsing NumPy's internals.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"

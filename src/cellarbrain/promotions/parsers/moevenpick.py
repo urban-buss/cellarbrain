@@ -81,7 +81,7 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
         return None
 
     # Find wine name <b> tag with year prefix
-    b_tag = table.find("b", string=_WINE_NAME_RE)  # type: ignore[call-overload]
+    b_tag = table.find("b", string=_WINE_NAME_RE)
     if not b_tag:
         return None
 
@@ -107,7 +107,9 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
     # Product URL
     product_url = ""
     if link:
-        product_url = link.get("href", "")
+        href = link.get("href")
+        if isinstance(href, str):
+            product_url = href
 
     # Region: span with pipe separator (first line typically)
     region = ""
@@ -170,8 +172,10 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
     # Discount percentage from image
     discount_pct: float | None = None
     for img in table.find_all("img"):
-        src = img.get("src", "")
-        disc_match = _DISCOUNT_IMG_RE.search(src)  # type: ignore[arg-type]
+        src = img.get("src")
+        if not isinstance(src, str):
+            continue
+        disc_match = _DISCOUNT_IMG_RE.search(src)
         if disc_match:
             discount_pct = float(disc_match.group(1))
             break
@@ -190,8 +194,8 @@ def _extract_product_from_table(table: Tag) -> ExtractedPromotion | None:
         vintage=vintage,
         bottle_size_ml=bottle_size_ml,
         product_url=product_url,
-        rating_score=rating_score,  # type: ignore[arg-type]
-        rating_source=rating_source,  # type: ignore[arg-type]
+        rating_score=rating_score,
+        rating_source=rating_source,
         appellation=appellation,
         category=region,
     )
@@ -235,7 +239,7 @@ class MoevenpickParser(NewsletterParser):
         seen: set[tuple[str, Decimal]] = set()
 
         # Find all <b> tags with year-prefixed wine names
-        wine_bolds = soup.find_all("b", string=_WINE_NAME_RE)  # type: ignore[call-overload]
+        wine_bolds = soup.find_all("b", string=_WINE_NAME_RE)
 
         for b_tag in wine_bolds:
             # Walk up to find the product table container
