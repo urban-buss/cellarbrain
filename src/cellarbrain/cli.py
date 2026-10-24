@@ -486,12 +486,13 @@ def _legacy_main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     ok = _run_handler(
-        lambda: run(
+        lambda: _run_etl_command(
             args.wines_csv,
             args.bottles_csv,
             args.output,
             sync_mode=args.sync,
             bottles_gone_csv=args.bottles_gone_csv,
+            settings=load_settings(),
         )
     )
     sys.exit(0 if ok else 1)
@@ -900,7 +901,7 @@ def _subcommand_main(argv: list[str]) -> None:
 
 def _cmd_etl(args: argparse.Namespace, settings: Settings) -> None:
     output = args.output or settings.paths.data_dir
-    ok = run(
+    ok = _run_etl_command(
         args.wines_csv,
         args.bottles_csv,
         output,
@@ -912,6 +913,49 @@ def _cmd_etl(args: argparse.Namespace, settings: Settings) -> None:
     if ok:
         _prune_dashboard_sidecars(output)
     sys.exit(0 if ok else 1)
+
+
+def _run_etl_command(
+    wines_csv: str,
+    bottles_csv: str,
+    output: str,
+    *,
+    sync_mode: bool,
+    bottles_gone_csv: str,
+    settings: Settings,
+    no_migrate: bool = False,
+) -> bool:
+    """Run ETL and notify only after its output work and validation finish."""
+    from . import notifications
+
+    expected_run_id = None
+    try:
+        expected_run_id = incremental.next_run_id(pathlib.Path(output))
+        ok = run(
+            wines_csv,
+            bottles_csv,
+            output,
+            sync_mode=sync_mode,
+            bottles_gone_csv=bottles_gone_csv,
+            settings=settings,
+            no_migrate=no_migrate,
+        )
+    except Exception:
+        notifications.notify_failure(settings.notifications, output, expected_run_id)
+        raise
+
+    if not ok:
+        notifications.notify_failure(settings.notifications, output, expected_run_id)
+        return False
+    if settings.notifications.enabled:
+        changes = incremental.load_change_log(pathlib.Path(output))
+        notifications.notify_success(
+            settings.notifications,
+            output,
+            expected_run_id,
+            changes,
+        )
+    return True
 
 
 def _prune_dashboard_sidecars(data_dir: str) -> None:

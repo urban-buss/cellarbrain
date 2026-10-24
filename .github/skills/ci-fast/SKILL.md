@@ -1,9 +1,10 @@
 ---
+name: ci-fast
 description: "Fast CI check: lint + pytest only. Use when: 'quick check', 'fast CI', 'lint and test', 'ci fast', 'pre-commit check'."
 argument-hint: "Optional: 'fix' to auto-fix lint/format issues"
-agent: "agent"
+user-invocable: true
+disable-model-invocation: true
 ---
-
 Run only lint and tests — skip build, import smoke, and platform checks.
 
 ## 1. Lint
@@ -22,4 +23,4 @@ Run `pytest --tb=short -q` and report the summary line.
 - On failure: show relevant output, diagnose, and suggest a fix.
 - On success: confirm with `CI-fast passed: lint ✓, test ✓ (N passed, M skipped)`.
 
-{{input}}
+$ARGUMENTS

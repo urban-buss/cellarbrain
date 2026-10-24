@@ -39,12 +39,12 @@ If any field does not match → skip. Never log a "close enough" wine.
 
 ## Workflow: Full Scan
 
-1. `query_cellar("SELECT tracked_wine_id, winery_name, wine_name, latest_vintage FROM tracked_wines WHERE is_active")` — discover targets
+1. `query_cellar("SELECT tracked_wine_id, winery_name, wine_name, vintages FROM tracked_wines")` — discover targets; the view already excludes deleted tracked wines
 2. For each tracked wine:
    - `tracked_wine_prices(tracked_wine_id)` — check existing data
    - Search retailers for current price
    - Verify identity (3-field match)
-   - `log_price(tracked_wine_id, vintage, 750, retailer_name, price, currency, in_stock, retailer_url)`
+   - `log_price(tracked_wine_id=..., bottle_size_ml=750, retailer_name="...", price=..., currency="CHF", in_stock=true, vintage=..., retailer_url="...")`
 3. `wishlist_alerts()` — summarise alerts (price drops, new listings, back in stock)
 
 ## Workflow: Single Wine
@@ -71,4 +71,4 @@ If any field does not match → skip. Never log a "close enough" wine.
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

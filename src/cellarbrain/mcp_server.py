@@ -785,14 +785,16 @@ def cellar_report(
 
     try:
         con = _get_connection()
-        result = q.cellar_report(
+        result_text, result_data = q._cellar_report_structured(
             con,
             cutoff=cutoff,
             compare_to=compare_to or "prior_month",
             currency=_load_mcp_settings().currency.default,
             fmt=_effective_fmt(format),
         )
-        return ToolResponse(result, data={"cutoff": cutoff, "compare_to": compare_to or "prior_month"})
+        result_data["cutoff"] = result_data.get("cutoff", cutoff)
+        result_data["compare_to"] = compare_to or "prior_month"
+        return ToolResponse(result_text, data=result_data)
     except (ValueError, DataStaleError) as exc:
         return ToolResponse.error(str(exc))
 
@@ -1525,7 +1527,7 @@ def reload_data(mode: str = "sync", meta: dict | None = None) -> str:
                 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-        ok = _cli.run(
+        ok = _cli._run_etl_command(
             wines_csv,
             bottles_csv,
             data_dir,

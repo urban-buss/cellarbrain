@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import pathlib
+import re
 
 import pytest
+import yaml
 
 from cellarbrain.skills import SKILL_NAMES, SKILLS_DIR, install_skills, uninstall_skills
 
@@ -20,7 +23,66 @@ class TestSkillsPackageData:
         assert (SKILLS_DIR / skill_name / "SKILL.md").is_file()
 
     def test_skill_names_non_empty(self) -> None:
-        assert len(SKILL_NAMES) >= 8
+        assert len(SKILL_NAMES) == 17
+
+    def test_inventory_matches_packaged_directories(self) -> None:
+        directories = {p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md")}
+        assert directories == set(SKILL_NAMES)
+
+    @pytest.mark.parametrize("skill_name", SKILL_NAMES)
+    def test_skill_frontmatter_and_encoding(self, skill_name: str) -> None:
+        raw = (SKILLS_DIR / skill_name / "SKILL.md").read_bytes()
+        assert not raw.startswith(b"\xef\xbb\xbf"), f"{skill_name} has a UTF-8 BOM"
+        text = raw.decode("utf-8")
+        assert text.startswith("---\n")
+        _, frontmatter, _ = text.split("---", 2)
+        metadata = yaml.safe_load(frontmatter)
+        assert metadata["name"] == skill_name
+        assert metadata["description"]
+
+    def test_skill_tool_references_match_mcp_surface(self) -> None:
+        server_path = SKILLS_DIR.parent / "mcp_server.py"
+        tree = ast.parse(server_path.read_text(encoding="utf-8"))
+        tools: dict[str, set[str]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "_tool"
+                for decorator in node.decorator_list
+            ):
+                continue
+            tools[node.name] = {arg.arg for arg in node.args.args + node.args.kwonlyargs}
+
+        inline_call = re.compile(r"`([a-z][a-z0-9_]*)\(([^`\n]*)\)`")
+        named_argument = re.compile(r"\b([a-z][a-z0-9_]*)\s*=")
+        for skill_name in SKILL_NAMES:
+            text = (SKILLS_DIR / skill_name / "SKILL.md").read_text(encoding="utf-8")
+            for tool_name, arguments in inline_call.findall(text):
+                assert tool_name in tools, f"{skill_name} references unknown MCP tool {tool_name}"
+                supplied = set(named_argument.findall(arguments))
+                assert supplied <= tools[tool_name], (
+                    f"{skill_name} passes unsupported arguments to {tool_name}: {sorted(supplied - tools[tool_name])}"
+                )
+
+    def test_skills_do_not_contain_known_stale_api_examples(self) -> None:
+        combined = "\n".join((SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8") for name in SKILL_NAMES)
+        stale_fragments = (
+            'Always pass `format="plain"` to every tool call',
+            "pair_wine(wine_id",
+            "purchase_price_chf",
+            "date_added",
+            "latest_vintage",
+            "WHERE is_active",
+            "ingest_status()",
+            "ingest_start()",
+            "ingest_stop(",
+        )
+        for fragment in stale_fragments:
+            assert fragment not in combined
+        assert re.search(r"(?m)^`sql$", combined) is None
 
 
 class TestInstallSkills:
@@ -98,6 +160,9 @@ class TestSyncWithOpenclaw:
         openclaw_dir = repo_root / ".openclaw"
         if not openclaw_dir.is_dir():
             pytest.skip(".openclaw/ directory not found (running from installed package)")
+
+        source_names = {path.parent.name for path in openclaw_dir.glob("*/SKILL.md") if path.parent.name != "_archive"}
+        assert source_names == set(SKILL_NAMES)
 
         for skill_name in SKILL_NAMES:
             src = openclaw_dir / skill_name / "SKILL.md"

@@ -985,7 +985,7 @@ class TestFetchNewslettersFlagging:
         msg = MIMEMultipart("alternative")
         msg["From"] = f"Shop <{sender}>"
         msg["Subject"] = subject
-        msg["Date"] = format_datetime(datetime(2026, 5, 1, 10, 0, tzinfo=UTC))
+        msg["Date"] = format_datetime(datetime.now(UTC))
         msg.attach(MIMEText("plain body", "plain", "utf-8"))
         msg.attach(MIMEText("<b>html</b>", "html", "utf-8"))
         return msg.as_bytes()

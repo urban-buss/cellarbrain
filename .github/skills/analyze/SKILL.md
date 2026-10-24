@@ -1,8 +1,9 @@
 ---
+name: analyze
 description: "Research a feature or bug and produce a structured analysis document in analysis/. Use when: 'analyze', 'research feature', 'investigate bug', 'design document', 'write analysis'."
 argument-hint: "Describe the feature or bug to research"
-agent: agent
-model: "Claude Opus 4.6 (copilot)"
+user-invocable: true
+disable-model-invocation: true
 ---
 Research the topic described below thoroughly. Search the codebase, read relevant
 source files, docs, and tests to understand the current state. Then produce a
@@ -31,9 +32,8 @@ so the user can pick quickly rather than explain from scratch.
    deeper on specific aspects.
 4. **Evidence over opinion** — cite actual code paths, schemas, config keys,
    and test names. Show snippets for non-obvious behaviour.
-5. **Effort estimates** — tag each recommendation as Trivial / Small /
-   Medium / Large.
+5. **Effort estimates** — tag each recommendation as Trivial / Small / Medium / Large.
 
 ## Topic to research
 
-{{input}}
+$ARGUMENTS

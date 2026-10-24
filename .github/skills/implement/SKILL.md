@@ -1,7 +1,9 @@
 ---
+name: implement
 description: "Plan and implement all changes from an analysis document. Use when: 'implement analysis', 'implement plan', 'execute recommendations', 'fix issues from analysis'."
 argument-hint: "Link the analysis doc to implement"
-agent: Plan
+user-invocable: true
+disable-model-invocation: true
 ---
 Read the linked analysis document completely. Then:
 
@@ -28,4 +30,4 @@ Execute the plan item by item. After all changes:
 
 ## Analysis document
 
-{{input}}
+$ARGUMENTS

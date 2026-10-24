@@ -14,15 +14,22 @@ import shutil
 SKILLS_DIR = pathlib.Path(__file__).resolve().parent
 
 SKILL_NAMES: list[str] = [
-    "tonight",
-    "food-pairing",
-    "wine-info",
+    "cellar-gaps",
     "cellar-stats",
-    "research",
-    "drinking-window",
-    "price-scan",
-    "manage",
+    "consumption-velocity",
     "digest",
+    "dinner-party",
+    "drinking-window",
+    "food-pairing",
+    "hilfe",
+    "manage",
+    "monthly-report",
+    "price-scan",
+    "promotion-analysis",
+    "research",
+    "research-completeness",
+    "tonight",
+    "wine-info",
     "wine-of-the-day",
 ]
 

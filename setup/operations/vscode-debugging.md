@@ -120,14 +120,16 @@ settings.__dict__
 
 # Check Parquet table contents
 import pyarrow.parquet as pq
-pq.read_table('output/wine.parquet').num_rows
+
+pq.read_table("output/wine.parquet").num_rows
 
 # Check DuckDB connection
 con.execute("SELECT count(*) FROM wines").fetchone()
 
 # Inspect a dossier path
 from cellarbrain.dossier_ops import resolve_dossier_path
-resolve_dossier_path(42, 'output')
+
+resolve_dossier_path(42, "output")
 ```
 
 ## Next Steps

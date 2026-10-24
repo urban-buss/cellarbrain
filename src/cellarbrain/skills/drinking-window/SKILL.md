@@ -1,4 +1,4 @@
-﻿---
+---
 name: drinking-window
 description: "Find wines approaching or past their optimal drinking window. Urgency-sorted."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
@@ -20,27 +20,32 @@ Switzerland. Show storage location so user can find the bottle.
 
 ### 1. Past Optimal -- Drink Now
 
-`sql
-SELECT wine_id, winery_name, wine_name, vintage,
-       optimal_until, bottles_stored, cellar_name
-FROM wines_full
-WHERE drinking_status = 'past_optimal' AND bottles_stored > 0
+```sql
+SELECT wine_id, winery_name, wine_name, vintage, optimal_until,
+       COUNT(*) AS bottles_stored,
+       string_agg(DISTINCT cellar_name, ', ') AS locations
+FROM bottles_full
+WHERE status = 'stored' AND NOT is_in_transit
+  AND drinking_status = 'past_optimal'
+GROUP BY wine_id, winery_name, wine_name, vintage, optimal_until
 ORDER BY optimal_until ASC
 LIMIT 15
-`
+```
 
 ### 2. Approaching Peak -- Plan Ahead
 
-`sql
-SELECT wine_id, winery_name, wine_name, vintage,
-       optimal_from, optimal_until, bottles_stored, cellar_name
-FROM wines_full
-WHERE drinking_status = 'drinkable'
+```sql
+SELECT wine_id, winery_name, wine_name, vintage, optimal_from, optimal_until,
+       COUNT(*) AS bottles_stored,
+       string_agg(DISTINCT cellar_name, ', ') AS locations
+FROM bottles_full
+WHERE status = 'stored' AND NOT is_in_transit
+  AND drinking_status = 'drinkable'
   AND optimal_from <= EXTRACT(YEAR FROM CURRENT_DATE) + 1
-  AND bottles_stored > 0
+GROUP BY wine_id, winery_name, wine_name, vintage, optimal_from, optimal_until
 ORDER BY optimal_from ASC
 LIMIT 15
-`
+```
 
 ### 3. Present
 
@@ -62,5 +67,4 @@ Offer `read_dossier(wine_id)` for details or `similar_wines(wine_id)` for altern
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
-
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

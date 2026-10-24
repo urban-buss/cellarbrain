@@ -49,7 +49,7 @@ Weekly digests additionally show:
 
 Based on digest content, offer:
 - `recommend_tonight(occasion="casual")` for urgent wines
-- `pair_wine(wine_id, dish="...")` if user mentions dinner
+- `pair_wine(dish="...")` if the user mentions dinner; compare the returned matches with the urgent wines
 - `find_wine("ready to drink")` for broader exploration
 
 ## Presentation

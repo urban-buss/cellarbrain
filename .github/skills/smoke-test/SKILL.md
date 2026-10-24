@@ -1,7 +1,9 @@
 ---
+name: smoke-test
 description: "Run extended smoke tests for recent changes — validates new features and checks for regressions. Use when: 'smoke test', 'test changes', 'regression test', 'validate feature'."
 argument-hint: "Describe what changed or leave blank to auto-detect"
-agent: cellarbrain-extended-smoketest
+user-invocable: true
+disable-model-invocation: true
 ---
 Run the extended smoke-test pipeline against the current state. Focus on:
 
@@ -15,4 +17,4 @@ in addition to the standard pipeline.
 
 ## Changes to validate
 
-{{input}}
+$ARGUMENTS

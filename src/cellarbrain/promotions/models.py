@@ -24,8 +24,8 @@ class ExtractedPromotion:
     color: str = ""
     bottle_size_ml: int = 750
     per_bottle_price: Decimal | None = None
-    rating_score: str = ""
-    rating_source: str = ""
+    rating_score: str | None = ""
+    rating_source: str | None = ""
     product_url: str = ""
     image_url: str = ""
     category: str = ""

@@ -1,8 +1,9 @@
 ---
+name: fix-issues
 description: "Triage and fix all open issues in the issues/ folder, one by one"
-agent: agent
+user-invocable: true
+disable-model-invocation: true
 ---
-
 <!-- GENERATED FROM .github/_shared/prompts/fix-issues.prompt.md -->
 <!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 
@@ -41,7 +42,7 @@ Present the plan briefly, then proceed.
 
 ### 2c. Implement & test
 
-- Apply the fix following project conventions (see `implement.prompt.md` and
+- Apply the fix following project conventions (see the `implement` skill and
   `.github/copilot-instructions.md`).
 - Write or update tests in the matching `tests/test_<module>.py` file.
 - Run the relevant tests to confirm the fix:
@@ -83,8 +84,7 @@ Move to the next issue and repeat from 2a.
 
 ## 3. CI validation
 
-Once all issues are resolved, run the full CI pipeline (see
-`ci.prompt.md`):
+Once all issues are resolved, run the full CI pipeline (see the `ci` skill):
 
 ```
 ruff check .

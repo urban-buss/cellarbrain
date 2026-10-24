@@ -243,25 +243,25 @@ class TestMCPEndToEnd:
     # -- cellar_stats --
 
     def test_cellar_stats_default(self, server):
-        result = server.cellar_stats()
+        result = server.cellar_stats(format="markdown")
         assert "Cellar Summary" in result
         assert "| wines" in result
         assert "| bottles" in result
 
     def test_cellar_stats_by_country(self, server):
-        result = server.cellar_stats(group_by="country")
+        result = server.cellar_stats(group_by="country", format="markdown")
         assert "France" in result
         assert "Italy" in result
 
     # -- find_wine --
 
     def test_find_wine_by_region(self, server):
-        result = server.find_wine("Bordeaux")
+        result = server.find_wine("Bordeaux", format="markdown")
         assert "|" in result
         assert "Bordeaux" in result
 
     def test_find_wine_by_grape(self, server):
-        result = server.find_wine("Tempranillo")
+        result = server.find_wine("Tempranillo", format="markdown")
         assert "|" in result
 
     def test_find_wine_no_match(self, server):

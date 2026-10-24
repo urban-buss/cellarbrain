@@ -24,7 +24,7 @@ dependencies = [
     "duckdb>=0.10",
     "pandas>=2.0",
     "tabulate>=0.9",
-    "mcp[cli]>=1.2.0",
+    "mcp[cli]>=1.2.0,<2.0",
     # Previously optional — consolidated in 0.3.0 (lightweight, < 40 MB total)
     "httpx>=0.27",
     "starlette>=0.36",
@@ -60,7 +60,7 @@ search = []
 dev = [
     "pytest>=8",
     "pytest-cov",
-    "ruff>=0.8",
+    "ruff>=0.17.2,<0.18",
     "mypy>=1.10",
 ]
 
@@ -149,6 +149,8 @@ module = [
     "imapclient.*",
     "jellyfish.*",
     "lxml.*",
+    "pyarrow",
+    "pyarrow.*",
     "sentence_transformers.*",
     "torch.*",
     "faiss.*",
@@ -158,3 +160,9 @@ module = [
     "tabulate.*",
 ]
 ignore_missing_imports = true
+
+# NumPy 2.4's stubs use Python 3.12 type-alias syntax.  Keep checking the
+# project against its Python 3.11 minimum without parsing NumPy's internals.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"

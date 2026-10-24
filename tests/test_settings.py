@@ -11,6 +11,7 @@ from cellarbrain.settings import (
     CellarRule,
     DashboardConfig,
     IngestConfig,
+    NotificationsConfig,
     PathsConfig,
     PriceTier,
     SearchConfig,
@@ -132,6 +133,9 @@ class TestDefaults:
         assert s.etl.default_mode == "full"
         assert "do not edit" in s.etl.etl_fence_start
         assert "end" in s.etl.etl_fence_end
+
+    def test_notifications_disabled_by_default(self):
+        assert Settings().notifications == NotificationsConfig()
 
     def test_search_defaults(self):
         s = Settings()
@@ -1415,3 +1419,22 @@ class TestSommelierPathAnchoring:
         monkeypatch.setenv("CELLARBRAIN_DATA_DIR", str(env_dir))
         s = load_settings()
         assert s.sommelier.model_dir == str(env_dir / "models" / "sommelier" / "model")
+
+
+class TestNotificationsConfig:
+    def test_loads_notification_options(self, tmp_path):
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text(
+            '[notifications]\nenabled = true\ntarget = "+41788689840"\nstrict = true\n',
+            encoding="utf-8",
+        )
+        settings = load_settings(str(cfg))
+        assert settings.notifications.enabled
+        assert settings.notifications.target == "+41788689840"
+        assert settings.notifications.strict
+
+    def test_rejects_zero_timeout(self, tmp_path):
+        cfg = tmp_path / "cellarbrain.toml"
+        cfg.write_text("[notifications]\ntimeout_seconds = 0\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            load_settings(str(cfg))

@@ -1,4 +1,4 @@
-﻿---
+---
 name: cellar-stats
 description: "Cellar overview: bottle counts, value, regions, aging potential, anomalies."
 metadata: {"openclaw": {"requires": {"bins": ["cellarbrain"]}}}
@@ -22,40 +22,42 @@ Use these steps in order when asked for a cellar overview / monthly summary:
 
 ### 2. Bottle Counts by Category
 
-`sql
-SELECT category, COUNT(*) as bottles, SUM(purchase_price_chf) as total_chf
-FROM wines_full WHERE bottles_stored > 0
+```sql
+SELECT category, COUNT(*) AS bottles, ROUND(SUM(price), 2) AS total_chf
+FROM bottles_stored
 GROUP BY category ORDER BY bottles DESC
-`
+```
 
 ### 3. Regional Distribution
 
-`sql
+```sql
 SELECT country, region, COUNT(*) as bottles
-FROM wines_full WHERE bottles_stored > 0
+FROM bottles_stored
 GROUP BY country, region ORDER BY bottles DESC LIMIT 15
-`
+```
 
 ### 4. Aging Potential
 
-`sql
+```sql
 SELECT drinking_status, COUNT(*) as bottles
-FROM wines_full WHERE bottles_stored > 0
+FROM bottles_stored
 GROUP BY drinking_status
-`
+```
 
 ### 5. Recent Additions (last 30 days)
 
-`sql
-SELECT wine_id, winery_name, wine_name, vintage, purchase_price_chf, date_added
-FROM wines_full WHERE date_added >= CURRENT_DATE - INTERVAL 30 DAY
-  AND bottles_stored > 0
-ORDER BY date_added DESC LIMIT 10
-`
+```sql
+SELECT wine_id, winery_name, wine_name, vintage, price, purchase_date,
+       cellar_name, is_in_transit
+FROM bottles_full
+WHERE purchase_date >= CURRENT_DATE - INTERVAL 30 DAY
+  AND status = 'stored'
+ORDER BY purchase_date DESC LIMIT 10
+```
 
 ### 6. Anomaly Check
 
-`cellar_anomalies()` -- flags wines with missing data, unusual values, stale dossiers.
+`cellar_anomalies()` -- flags operational anomalies in MCP usage, latency, errors, and ETL output.
 
 ### 7. Health Check (optional, on request)
 
@@ -80,5 +82,4 @@ For specific questions ("how many Burgundy?", "total value of Pinot?"), build a 
 
 ## Output Format
 
-Always pass `format="plain"` to every tool call. The user receives responses via iMessage where Markdown tables and formatting are not supported. Plain format uses numbered lists, bullet points, and simple text separators instead.
-
+Pass `format="plain"` only when the tool schema exposes a `format` parameter. Never add unsupported arguments. Present the final answer as plain text for iMessage.

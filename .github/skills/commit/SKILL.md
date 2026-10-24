@@ -1,8 +1,9 @@
 ---
+name: commit
 description: "Stage changes and create a well-formed conventional commit"
-agent: agent
+user-invocable: true
+disable-model-invocation: true
 ---
-
 <!-- GENERATED FROM .github/_shared/prompts/commit.prompt.md -->
 <!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 

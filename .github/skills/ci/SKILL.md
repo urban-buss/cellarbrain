@@ -1,8 +1,9 @@
 ---
+name: ci
 description: "Run the full CI pipeline locally: lint, format, typecheck, tests, smoke-test"
-agent: agent
+user-invocable: true
+disable-model-invocation: true
 ---
-
 <!-- GENERATED FROM .github/_shared/prompts/ci.prompt.md -->
 <!-- DO NOT EDIT — run `python .github/tools/sync-shared-meta.py` at the parent root. -->
 

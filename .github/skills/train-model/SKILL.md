@@ -1,7 +1,9 @@
 ---
+name: train-model
 description: "Train or retrain the sommelier food-wine pairing model, rebuild indexes, and evaluate. Use when: 'train model', 'retrain', 'rebuild indexes', 'evaluate model'."
 argument-hint: "Optional: reason for retraining (e.g. 'updated pairing dataset')"
-agent: cellarbrain-trainer
+user-invocable: true
+disable-model-invocation: true
 ---
 Run the full sommelier model pipeline:
 
@@ -11,4 +13,4 @@ Run the full sommelier model pipeline:
 4. Evaluate against baselines and report metrics
 5. Run `pytest tests/test_sommelier.py` to validate
 
-{{input}}
+$ARGUMENTS

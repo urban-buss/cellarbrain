@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 
@@ -95,8 +96,13 @@ def train_model(
 
     # --- Eval data for EmbeddingSimilarityEvaluator -------------------------
 
-    eval_sentences1 = [ex.texts[0] for ex in eval_examples]
-    eval_sentences2 = [ex.texts[1] for ex in eval_examples]
+    eval_sentences1: list[str] = []
+    eval_sentences2: list[str] = []
+    for example in eval_examples:
+        if example.texts is None or len(example.texts) < 2:
+            raise ValueError("Each pairing example must contain food and wine text")
+        eval_sentences1.append(example.texts[0])
+        eval_sentences2.append(example.texts[1])
     eval_scores = [ex.label for ex in eval_examples]
 
     evaluator = EmbeddingSimilarityEvaluator(
@@ -111,7 +117,11 @@ def train_model(
     logger.info("Loading base model: %s", base_model)
     model = SentenceTransformer(base_model)
 
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=batch_size)
+    # A list implements the Dataset protocol at runtime, although PyTorch's
+    # annotation only accepts its nominal Dataset base class.
+    train_dataloader: DataLoader[InputExample] = DataLoader(
+        cast(Any, train_examples), shuffle=True, batch_size=batch_size
+    )
     train_loss = CosineSimilarityLoss(model)
 
     total_steps = math.ceil(len(train_examples) / batch_size) * epochs
@@ -137,8 +147,19 @@ def train_model(
 
     # --- Final evaluation ---------------------------------------------------
 
-    final_score = evaluator(model, str(output))
-    metrics = {"eval_cosine_similarity": final_score}
+    evaluation = evaluator(model, str(output))
+    if isinstance(evaluation, dict):
+        metrics = dict(evaluation)
+        primary_metric = getattr(evaluator, "primary_metric", None)
+        primary_score = metrics.get(primary_metric) if isinstance(primary_metric, str) else None
+        if primary_score is None:
+            primary_score = next(iter(metrics.values()), 0.0)
+        metrics.setdefault("eval_cosine_similarity", primary_score)
+    else:
+        # Compatibility with sentence-transformers versions that returned a
+        # single score instead of a metrics mapping.
+        primary_score = float(evaluation)
+        metrics = {"eval_cosine_similarity": primary_score}
 
-    logger.info("Training complete. Final eval cosine similarity: %.4f", final_score)
+    logger.info("Training complete. Final eval cosine similarity: %.4f", primary_score)
     return metrics
