@@ -114,34 +114,56 @@ def _print_process_output(label: str, output: str | bytes | None, *, file: TextI
 
 
 def summarize_changes(run_id: int, change_rows: list[dict]) -> str:
-    """Build a compact, count-only message from the existing change log."""
+    """Build a compact message grouped by entity and actual change action."""
     rows = [row for row in change_rows if row.get("run_id") == run_id]
-    wines: dict[str, int] = {kind: 0 for kind in ("insert", "update", "delete", "rename")}
-    bottles: dict[str, int] = {kind: 0 for kind in ("insert", "update", "delete", "rename")}
-    other = 0
+    labels = {"insert": "added", "update": "updated", "delete": "removed", "rename": "renamed"}
+    wine_counts: dict[str, int] = {}
+    bottle_counts: dict[str, int] = {}
+    other_counts: dict[tuple[str, str], int] = {}
     for row in rows:
         entity = row.get("entity_type")
         change_type = row.get("change_type")
-        if entity == "wine" and change_type in wines:
-            wines[change_type] += 1
-        elif entity == "bottle" and change_type in bottles:
-            bottles[change_type] += 1
+        if not isinstance(change_type, str):
+            continue
+        if entity == "wine":
+            wine_counts[change_type] = wine_counts.get(change_type, 0) + 1
+        elif entity == "bottle":
+            bottle_counts[change_type] = bottle_counts.get(change_type, 0) + 1
         else:
-            other += 1
+            key = (str(entity or "other"), change_type)
+            other_counts[key] = other_counts.get(key, 0) + 1
 
     lines = [f"Cellarbrain ETL completed (run {run_id})."]
-    wine_parts = []
-    for kind, label in (("insert", "added"), ("update", "updated"), ("delete", "deleted"), ("rename", "renamed")):
-        if wines[kind]:
-            wine_parts.append(f"{wines[kind]} {label}")
-    lines.append("Wines: " + (", ".join(wine_parts) if wine_parts else "no changes"))
-    bottle_count = sum(bottles.values())
-    if bottle_count:
-        lines.append(f"Inventory: {bottle_count} change record(s)")
-    if other:
-        lines.append(f"Other cellar records: {other} change record(s)")
-    if not rows:
-        lines.append("No changes detected.")
+
+    def _actions(counts: dict[str, int]) -> str:
+        order = ("insert", "update", "delete", "rename")
+        known = [f"{counts[kind]} {labels[kind]}" for kind in order if counts.get(kind)]
+        known.extend(f"{count} {kind}" for kind, count in sorted(counts.items()) if kind not in labels)
+        return ", ".join(known)
+
+    if wine_counts:
+        lines.append(f"Wines: {_actions(wine_counts)}")
+    if bottle_counts:
+        lines.append(f"Bottles: {_actions(bottle_counts)}")
+    if other_counts:
+        entity_names = {
+            "winery": ("winery", "wineries"),
+            "appellation": ("appellation", "appellations"),
+            "grape": ("grape", "grapes"),
+            "cellar": ("cellar", "cellars"),
+            "provider": ("provider", "providers"),
+            "tracked_wine": ("tracked wine", "tracked wines"),
+            "wine_grape": ("wine/grape link", "wine/grape links"),
+            "tasting": ("tasting", "tastings"),
+            "pro_rating": ("professional rating", "professional ratings"),
+        }
+        other_parts = []
+        for (entity, action), count in sorted(other_counts.items()):
+            singular, plural = entity_names.get(entity, (entity.replace("_", " "), entity.replace("_", " ") + "s"))
+            other_parts.append(f"{count} {singular if count == 1 else plural} {labels.get(action, action)}")
+        lines.append("Other: " + ", ".join(other_parts))
+    if not wine_counts and not bottle_counts and not other_counts:
+        lines.append("No data changes detected.")
     return "\n".join(lines)
 
 

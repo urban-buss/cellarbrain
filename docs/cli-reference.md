@@ -31,7 +31,7 @@ cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bo
 | `bottles_csv` | Yes | Path to `export-bottles-stored.csv` |
 | `bottles_gone_csv` | Yes | Path to `export-bottles-gone.csv` |
 | `-o`, `--output` | No | Output directory (default from config) |
-| `--sync` | No | Incremental sync mode (default: full load). Wine IDs are stable in both modes via slug-based pre-matching; `--sync` affects non-wine entity stabilisation and change detection. |
+| `--sync` | No | Incremental output mode (default: full rebuild). Both modes stabilise non-wine IDs and detect actual changes; `--sync` regenerates only affected dossiers, while a full rebuild regenerates all dossiers. |
 
 ---
 

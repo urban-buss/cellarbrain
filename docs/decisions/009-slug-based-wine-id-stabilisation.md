@@ -54,5 +54,5 @@ Four new columns added to `wine.parquet`:
 - External references (ratings files, tracked wines) survive re-runs.
 - Rename detection preserves wine_id when winery name or wine name changes (6 renames across 3 test exports, zero false positives).
 - ADR-001's 4-level NK stabilisation remains in effect for all non-wine entities.
-- The `--sync` flag continues to exist but only affects non-wine entity stabilisation.
+- Follow-up in v0.3.9: both full and sync ETL modes run non-wine stabilisation and change detection. The flag controls incremental dossier regeneration versus a full dossier rebuild; it no longer determines whether actual non-wine differences are detected.
 - Future work: apply slug-based stabilisation to tracked wines; expose `wine_slug` in DuckDB views.

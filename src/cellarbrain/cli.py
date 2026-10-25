@@ -260,15 +260,18 @@ def run(
         )
         run_type = "incremental"
     else:
-        print("\nAnnotating full load...")
-        entities, change_log = incremental.annotate_full_load(
+        print("\nReconciling full load against existing data...")
+        # A full ETL still rebuilds every entity from the source exports, but
+        # its change log must describe differences from the previous output,
+        # not label every rebuilt row as a new insert.
+        entities, change_log, fk_remappings = incremental.sync(
             entities,
             out,
             run_id,
             now,
+            identity_config=settings.identity,
             skip_entities=skip,
         )
-        fk_remappings = {}
         run_type = "full"
 
     # --- Annotate wines via slug-based classification ---

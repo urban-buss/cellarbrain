@@ -159,7 +159,7 @@ See [settings-reference.md](settings-reference.md) for the full list of configur
 cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output
 ```
 
-This creates:
+This creates or refreshes:
 - **12 Parquet tables** in `output/` (wine, bottle, winery, appellation, etc.)
 - **Per-wine Markdown dossiers** in `output/wines/cellar/` and `output/wines/archive/`
 
@@ -171,7 +171,7 @@ After re-exporting from cellarbrain with updated data:
 cellarbrain etl raw/export-wines.csv raw/export-bottles-stored.csv raw/export-bottles-gone.csv -o output --sync
 ```
 
-Sync mode preserves stable IDs, detects changes (inserts, updates, deletes, renames), and only regenerates affected dossiers.
+Both full and sync runs preserve stable IDs and detect actual changes (inserts, updates, deletes, renames). Sync mode only regenerates affected dossiers; a full run rebuilds all dossiers.
 
 ### Validate output
 

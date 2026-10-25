@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
 
 from cellarbrain.cli import main, run
+from cellarbrain.notifications import summarize_changes
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "raw"
 WINES_CSV = RAW_DIR / "export-wines.csv"
@@ -77,6 +79,37 @@ class TestIntegration:
         # No dossiers should have been rewritten (zero changes)
         wines_dir = tmp_path / "wines"
         assert wines_dir.is_dir()
+
+    def test_repeated_full_load_reports_only_real_changes(self, tmp_path):
+        """Full rebuilds compare with prior data instead of reporting every row as new."""
+        run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path), bottles_gone_csv=str(BOTTLES_GONE_CSV))
+        run(str(WINES_CSV), str(BOTTLES_CSV), str(tmp_path), bottles_gone_csv=str(BOTTLES_GONE_CSV))
+
+        changes = pq.read_table(tmp_path / "change_log.parquet").to_pylist()
+        second_run = [row for row in changes if row["run_id"] == 2]
+        assert second_run == []
+        assert summarize_changes(2, changes).endswith("No data changes detected.")
+
+        edited_bottles = tmp_path / "bottles-edited.csv"
+        with BOTTLES_CSV.open(encoding="utf-16", newline="") as source:
+            reader = csv.DictReader(source, delimiter="\t")
+            fieldnames = reader.fieldnames
+            rows = list(reader)
+        assert fieldnames and rows
+        rows[0]["Input comment"] = ((rows[0].get("Input comment") or "") + " minor test edit").strip()
+        with edited_bottles.open("w", encoding="utf-16", newline="") as target:
+            writer = csv.DictWriter(target, fieldnames=fieldnames, delimiter="\t", lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+
+        run(str(WINES_CSV), str(edited_bottles), str(tmp_path), bottles_gone_csv=str(BOTTLES_GONE_CSV))
+        changes = pq.read_table(tmp_path / "change_log.parquet").to_pylist()
+        third_run = [row for row in changes if row["run_id"] == 3]
+        assert [(row["entity_type"], row["change_type"]) for row in third_run] == [("bottle", "update")]
+        message = summarize_changes(3, changes)
+        assert "Bottles: 1 updated" in message
+        assert "Wines: 503 added" not in message
+        assert "Other:" not in message
 
 
 # ---------------------------------------------------------------------------
