@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-10-25
+
+### Fixed
+- **Report schedule boundaries** — weekly reports run only on the configured weekday and monthly reports only at month-end; missed boundary days are skipped rather than caught up midweek or midmonth.
+- **Duplicate OpenClaw notifications** — persist per-key in-flight, sent, retryable, and uncertain states under a cross-process lock; ambiguous sends are suppressed across polls and restarts, with explicit operator reconciliation.
+
 ## [0.3.9] — 2026-10-25
 
 ### Added

@@ -1108,8 +1108,9 @@ def load_settings(
     etl = EtlConfig(**etl_raw) if etl_raw else EtlConfig()
     notifications = NotificationsConfig(**notifications_raw) if notifications_raw else NotificationsConfig()
     reports = ReportsConfig(**reports_raw) if reports_raw else ReportsConfig()
-    if reports.weekly_day.lower() != "sunday":
-        raise ValueError("Config error: reports.weekly_day currently supports only 'sunday'")
+    weekdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+    if reports.weekly_day.lower() not in weekdays:
+        raise ValueError("Config error: reports.weekly_day must be a weekday name (for example, 'sunday')")
     if len(reports.send_time) != 5 or reports.send_time[2] != ":":
         raise ValueError("Config error: reports.send_time must use HH:MM")
     try:

@@ -13,7 +13,7 @@ import tempfile
 import time
 from zoneinfo import ZoneInfo
 
-from .notifications import Notification, NotificationSender, SendResult, deliver
+from .notifications import Notification, NotificationSender, SendResult, deliver_report_once
 from .settings import NotificationsConfig, ReportsConfig
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,12 @@ def deliver_report(
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".cellar-report-delivery.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return deliver(notifications, root, Notification(f"cellar-{kind}:{end.isoformat()}", message), sender=sender)
+        return deliver_report_once(
+            notifications,
+            root,
+            Notification(f"cellar-{kind}:{end.isoformat()}", message),
+            sender=sender,
+        )
 
 
 def due_reports(now: dt.datetime, config: ReportsConfig) -> list[str]:
@@ -166,11 +171,19 @@ def due_reports(now: dt.datetime, config: ReportsConfig) -> list[str]:
     if (local.hour, local.minute) < (hour, minute):
         return []
     due = []
-    # If the process was down at the scheduled instant, deliver the most
-    # recent completed period after restart. Delivery keys make this safe.
-    if config.weekly_enabled and local.weekday() <= 6:
+    weekday = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
+    scheduled_weekday = weekday.get(config.weekly_day.lower())
+    if config.weekly_enabled and scheduled_weekday is not None and local.weekday() == scheduled_weekday:
         due.append("weekly")
-    if config.monthly_enabled:
+    if config.monthly_enabled and local.day == calendar.monthrange(local.year, local.month)[1]:
         due.append("monthly")
     return due
 
@@ -183,7 +196,7 @@ def scheduler(
     sender: NotificationSender | None = None,
     poll_seconds: float = 30,
 ) -> None:
-    """Run the local scheduler continuously; delivery keys make restarts idempotent."""
+    """Run reports only on their configured local calendar boundary days."""
     lock_path = pathlib.Path(data_dir) / ".cellar-reports-scheduler.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w") as lock:
@@ -198,9 +211,6 @@ def scheduler(
             for kind in kinds:
                 try:
                     end = period_bounds(kind, now.date())[1]
-                    if kind == "monthly" and now.date().day != calendar.monthrange(now.year, now.month)[1]:
-                        previous_month = now.date().replace(day=1) - dt.timedelta(days=1)
-                        end = previous_month
                     deliver_report(kind, data_dir, notifications, reports, sender=sender, now=now, period_end=end)
                 except Exception:
                     logger.exception("Scheduled %s cellar report failed", kind)
