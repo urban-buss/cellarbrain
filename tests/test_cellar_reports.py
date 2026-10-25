@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import datetime as dt
+
+from cellarbrain.cellar_reports import (
+    deliver_report,
+    due_reports,
+    period_bounds,
+    record_snapshot,
+    render_report,
+)
+from cellarbrain.cli import main
+from cellarbrain.settings import NotificationsConfig, ReportsConfig, load_settings
+
+
+def test_period_bounds_handles_month_lengths_and_sunday_weeks():
+    assert period_bounds("monthly", dt.date(2025, 2, 4)) == (dt.date(2025, 2, 1), dt.date(2025, 2, 28))
+    assert period_bounds("monthly", dt.date(2024, 2, 4))[1] == dt.date(2024, 2, 29)
+    assert period_bounds("weekly", dt.date(2025, 3, 9)) == (dt.date(2025, 3, 3), dt.date(2025, 3, 9))
+
+
+def test_monthly_counts_and_transit_transition(tmp_path):
+    record_snapshot(
+        tmp_path,
+        [
+            {"bottle_id": 1, "status": "stored", "is_in_transit": True, "purchase_price": 50},
+            {"bottle_id": 2, "status": "stored", "is_in_transit": False, "purchase_price": 20},
+        ],
+        dt.datetime(2025, 1, 31, 12),
+    )
+    record_snapshot(
+        tmp_path,
+        [
+            {"bottle_id": 1, "status": "stored", "is_in_transit": False, "purchase_price": 50},
+            {"bottle_id": 2, "status": "stored", "is_in_transit": False, "purchase_price": 20},
+            {"bottle_id": 3, "status": "stored", "is_in_transit": True, "purchase_price": 30},
+        ],
+        dt.datetime(2025, 2, 10, 12),
+    )
+    record_snapshot(
+        tmp_path,
+        [
+            {"bottle_id": 1, "status": "stored", "is_in_transit": False, "purchase_price": 50},
+            {"bottle_id": 3, "status": "stored", "is_in_transit": True, "purchase_price": 30},
+        ],
+        dt.datetime(2025, 2, 20, 12),
+    )
+    text = render_report("monthly", tmp_path, dt.datetime(2025, 2, 28, 18, tzinfo=dt.UTC))
+    assert "Stored at period end: 1 bottles · CHF 50.00" in text
+    assert "On Order at period end: 1 bottles · CHF 30.00" in text
+    assert "Stored at period end" in text and "  in: 1 bottles · CHF 50.00" in text
+    assert "On Order at period end" in text and "  out: 1 bottles · CHF 50.00" in text
+
+
+def test_weekly_shows_last_refresh_and_stays_short(tmp_path):
+    record_snapshot(tmp_path, [{"bottle_id": 1, "status": "stored", "price": 9}], dt.datetime(2025, 3, 8, 10))
+    text = render_report("weekly", tmp_path, dt.datetime(2025, 3, 9, 18, tzinfo=dt.UTC))
+    assert "Last successful ETL refresh: 2025-03-08 11:00 CET" in text
+    assert "Stored: 1 bottles" in text
+    assert "Fluctuation" not in text
+
+
+def test_toml_enable_disable_and_validation(tmp_path):
+    config = tmp_path / "cellarbrain.toml"
+    config.write_text('[reports]\nweekly_enabled = true\nmonthly_enabled = false\ntimezone = "Europe/Zurich"\n')
+    assert load_settings(config).reports.weekly_enabled
+    assert not load_settings(config).reports.monthly_enabled
+    config.write_text('[reports]\nsend_time = "25:00"\n')
+    try:
+        load_settings(config)
+    except ValueError as exc:
+        assert "HH:MM" in str(exc)
+    else:
+        raise AssertionError("invalid time accepted")
+
+
+def test_cli_preview_prints_without_delivery(tmp_path, capsys):
+    record_snapshot(tmp_path, [{"bottle_id": 1, "status": "stored", "price": 9}], dt.datetime(2025, 3, 8, 10))
+    config = tmp_path / "cellarbrain.toml"
+    config.write_text(f'[paths]\ndata_dir = "{tmp_path}"\n', encoding="utf-8")
+    main(["-c", str(config), "reports", "preview", "weekly"])
+    assert "Cellar weekly report" in capsys.readouterr().out
+
+
+def test_scheduler_due_and_delivery_idempotency_and_failure(tmp_path):
+    cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=True)
+    sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    assert due_reports(sunday, cfg) == ["weekly", "monthly"]
+    assert due_reports(sunday.replace(hour=16), cfg) == []
+    assert due_reports(dt.datetime(2025, 3, 31, 17, 5, tzinfo=sunday.tzinfo), cfg) == ["weekly", "monthly"]
+
+    class Sender:
+        def __init__(self, result):
+            self.result = result
+            self.calls = 0
+
+        def send(self, notification):
+            self.calls += 1
+            self.message = notification.message
+            return self.result
+
+    success = Sender(type("Result", (), {"sent": True, "error": None})())
+    notif_cfg = NotificationsConfig(enabled=True, target="fake")
+    assert deliver_report("weekly", tmp_path, notif_cfg, cfg, sender=success, now=sunday).sent
+    assert deliver_report("weekly", tmp_path, notif_cfg, cfg, sender=success, now=sunday).sent
+    assert success.calls == 1
+    assert "Last successful ETL refresh" in success.message
+    failed = Sender(type("Result", (), {"sent": False, "error": "mock failure"})())
+    assert not deliver_report("monthly", tmp_path, notif_cfg, cfg, sender=failed, now=sunday).sent
+    assert failed.calls == 1
+
+
+def test_disabled_report_never_calls_sender(tmp_path):
+    class Sender:
+        def send(self, notification):
+            raise AssertionError("disabled report must not send")
+
+    result = deliver_report("monthly", tmp_path, NotificationsConfig(enabled=True), ReportsConfig(), sender=Sender())
+    assert not result.sent
+    assert result.error == "disabled"

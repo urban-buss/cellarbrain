@@ -21,6 +21,7 @@ Reference documentation for the Cellarbrain wine-cellar toolkit. Each page is st
 | Error reference | [error-reference.md](error-reference.md) | Every error message, its cause, and how to fix it |
 | Computed properties | [computed-properties.md](computed-properties.md) | Understanding derived fields: full_name, drinking_status, etc. |
 | Settings reference | [settings-reference.md](settings-reference.md) | Configuring cellarbrain.toml, checking defaults & precedence |
+| Scheduled cellar reports | [cellar-reports.md](cellar-reports.md) | Weekly/monthly OpenClaw reports, scheduler, inventory history |
 | Design decisions | [decisions/](decisions/) | Understanding *why* things are built a certain way |
 
 ## Design Decisions (ADRs)

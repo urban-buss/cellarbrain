@@ -126,6 +126,15 @@ class NotificationsConfig:
 
 
 @dataclass(frozen=True)
+class ReportsConfig:
+    weekly_enabled: bool = False
+    monthly_enabled: bool = False
+    weekly_day: str = "sunday"
+    send_time: str = "17:00"
+    timezone: str = "Europe/Zurich"
+
+
+@dataclass(frozen=True)
 class IdentityConfig:
     enable_fuzzy_match: bool = True
     rename_threshold: float = 0.85
@@ -736,6 +745,7 @@ class Settings:
     currency: CurrencyConfig = field(default_factory=CurrencyConfig)
     etl: EtlConfig = field(default_factory=EtlConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    reports: ReportsConfig = field(default_factory=ReportsConfig)
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     wishlist: WishlistConfig = field(default_factory=WishlistConfig)
@@ -1054,6 +1064,7 @@ def load_settings(
     dossier_raw = raw.get("dossier", {})
     etl_raw = raw.get("etl", {})
     notifications_raw = raw.get("notifications", {})
+    reports_raw = raw.get("reports", {})
     identity_raw = raw.get("identity", {})
     logging_raw = raw.get("logging", {})
     wishlist_raw = raw.get("wishlist", {})
@@ -1075,6 +1086,8 @@ def load_settings(
         _validate_keys("etl", etl_raw, EtlConfig)
     if notifications_raw:
         _validate_keys("notifications", notifications_raw, NotificationsConfig)
+    if reports_raw:
+        _validate_keys("reports", reports_raw, ReportsConfig)
     if identity_raw:
         _validate_keys("identity", identity_raw, IdentityConfig)
     if logging_raw:
@@ -1094,6 +1107,23 @@ def load_settings(
     dossier = DossierConfig(**dossier_raw) if dossier_raw else DossierConfig()
     etl = EtlConfig(**etl_raw) if etl_raw else EtlConfig()
     notifications = NotificationsConfig(**notifications_raw) if notifications_raw else NotificationsConfig()
+    reports = ReportsConfig(**reports_raw) if reports_raw else ReportsConfig()
+    if reports.weekly_day.lower() != "sunday":
+        raise ValueError("Config error: reports.weekly_day currently supports only 'sunday'")
+    if len(reports.send_time) != 5 or reports.send_time[2] != ":":
+        raise ValueError("Config error: reports.send_time must use HH:MM")
+    try:
+        hour, minute = map(int, reports.send_time.split(":"))
+    except ValueError as exc:
+        raise ValueError("Config error: reports.send_time must use a valid HH:MM time") from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("Config error: reports.send_time must use a valid HH:MM time")
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        ZoneInfo(reports.timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Config error: invalid reports.timezone {reports.timezone!r}") from exc
     if notifications.timeout_seconds < 1:
         raise ValueError("Config error: notifications.timeout_seconds must be at least 1")
     identity = IdentityConfig(**identity_raw) if identity_raw else IdentityConfig()
@@ -1283,6 +1313,7 @@ def load_settings(
         currency=currency,
         etl=etl,
         notifications=notifications,
+        reports=reports,
         identity=identity,
         logging=logging_cfg,
         wishlist=wishlist,
