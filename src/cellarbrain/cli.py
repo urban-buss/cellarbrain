@@ -582,6 +582,16 @@ def _subcommand_main(argv: list[str]) -> None:
     report_send = reports_sub.add_parser("send", help="Send a report through configured OpenClaw/iMessage")
     report_send.add_argument("kind", choices=["weekly", "monthly"])
     reports_sub.add_parser("scheduler", help="Run the local report scheduler continuously")
+    report_reconcile = reports_sub.add_parser("reconcile", help="Resolve an uncertain scheduled report delivery")
+    report_reconcile.add_argument("key", help="Stable report key, for example cellar-weekly:2025-03-09")
+    reconcile_action = report_reconcile.add_mutually_exclusive_group(required=True)
+    reconcile_action.add_argument("--delivered", action="store_true", help="Mark the report as delivered")
+    reconcile_action.add_argument("--retry", action="store_true", help="Allow a future scheduler poll to retry")
+    report_reconcile.add_argument(
+        "--confirm-not-delivered",
+        action="store_true",
+        help="Required with --retry after confirming the report was not delivered",
+    )
 
     # --- validate ---
     sub.add_parser("validate", help="Validate Parquet output")
@@ -983,6 +993,15 @@ def _cmd_reports(args: argparse.Namespace, settings: Settings) -> None:
         print("Report delivered or already delivered for this period.")
     elif args.reports_command == "scheduler":
         cellar_reports.scheduler(output, settings.notifications, settings.reports)
+    elif args.reports_command == "reconcile":
+        if args.retry and not args.confirm_not_delivered:
+            print("Error: --retry requires --confirm-not-delivered.", file=sys.stderr)
+            sys.exit(2)
+        action = "retry" if args.retry else "delivered"
+        from .notifications import reconcile_report_delivery
+
+        reconcile_report_delivery(output, args.key, action)
+        print(f"Report delivery key {args.key} reconciled as {action}.")
     else:
         print("Error: provide reports preview, send, or scheduler", file=sys.stderr)
         sys.exit(1)

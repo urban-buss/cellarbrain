@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import subprocess
 
 from cellarbrain.cellar_reports import (
     deliver_report,
@@ -10,6 +12,7 @@ from cellarbrain.cellar_reports import (
     render_report,
 )
 from cellarbrain.cli import main
+from cellarbrain.notifications import reconcile_report_delivery
 from cellarbrain.settings import NotificationsConfig, ReportsConfig, load_settings
 
 
@@ -108,6 +111,129 @@ def test_scheduler_due_and_delivery_idempotency_and_failure(tmp_path):
     failed = Sender(type("Result", (), {"sent": False, "error": "mock failure"})())
     assert not deliver_report("monthly", tmp_path, notif_cfg, cfg, sender=failed, now=sunday).sent
     assert failed.calls == 1
+
+
+def test_ambiguous_timeout_is_suppressed_across_polls_and_restart(tmp_path):
+    cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=False)
+    notif_cfg = NotificationsConfig(enabled=True, target="fake")
+    sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    accepted = []
+
+    def accepted_then_timeout(*args, **kwargs):
+        accepted.append("cellar-weekly:2025-03-30")
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    from unittest.mock import patch
+
+    with patch("cellarbrain.notifications.subprocess.run", side_effect=accepted_then_timeout) as run:
+        first = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
+        assert not first.sent
+        second_poll = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
+        # A fresh call after a simulated process restart reads the same durable state.
+        restarted = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
+
+    assert len(accepted) == 1
+    assert run.call_count == 1
+    assert second_poll.error == "uncertain"
+    assert restarted.error == "uncertain"
+    state = json.loads((tmp_path / ".cellarbrain-notifications.json").read_text())
+    assert state["report_deliveries"]["cellar-weekly:2025-03-30"]["state"] == "uncertain"
+
+
+def test_report_success_deduplicates_and_stores_openclaw_message_id(tmp_path):
+    cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=False)
+    notif_cfg = NotificationsConfig(enabled=True, target="fake")
+    sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+
+    class Sender:
+        calls = 0
+
+        def send(self, notification):
+            self.calls += 1
+            return type("Result", (), {"sent": True, "error": None, "message_id": "msg-123"})()
+
+    sender = Sender()
+    assert deliver_report("weekly", tmp_path, notif_cfg, cfg, sender=sender, now=sunday).sent
+    assert deliver_report("weekly", tmp_path, notif_cfg, cfg, sender=sender, now=sunday).sent
+    assert sender.calls == 1
+    state = json.loads((tmp_path / ".cellarbrain-notifications.json").read_text())
+    record = state["report_deliveries"]["cellar-weekly:2025-03-30"]
+    assert record["state"] == "sent"
+    assert record["message_id"] == "msg-123"
+
+
+def test_report_retries_only_failure_proven_before_dispatch(tmp_path):
+    cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=False)
+    notif_cfg = NotificationsConfig(enabled=True, target="fake")
+    sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    from unittest.mock import patch
+
+    with patch(
+        "cellarbrain.notifications.subprocess.run",
+        side_effect=[FileNotFoundError("missing executable"), subprocess.CompletedProcess([], 0, '{"messageId":"m2"}', "")],
+    ) as run:
+        first = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
+        second = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
+    assert not first.sent and first.retryable
+    assert second.sent
+    assert run.call_count == 2
+
+
+def test_legacy_notification_state_and_uncertain_reconciliation(tmp_path):
+    state_path = tmp_path / ".cellarbrain-notifications.json"
+    state_path.write_text('["cellar-weekly:2025-03-30", "etl:7"]')
+
+    class Sender:
+        calls = 0
+
+        def send(self, notification):
+            self.calls += 1
+            raise AssertionError("legacy sent key must be preserved")
+
+    sender = Sender()
+    cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=False)
+    sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    assert deliver_report("weekly", tmp_path, NotificationsConfig(enabled=True), cfg, sender=sender, now=sunday).sent
+    assert sender.calls == 0
+
+    state_path.write_text('{"sent":["etl:7"],"report_deliveries":{"cellar-weekly:2025-03-30":{"state":"uncertain"}}}')
+    reconcile_report_delivery(tmp_path, "cellar-weekly:2025-03-30", "delivered")
+    state = json.loads(state_path.read_text())
+    assert state["report_deliveries"]["cellar-weekly:2025-03-30"]["state"] == "sent"
+    reconcile_report_delivery(tmp_path, "cellar-weekly:2025-03-30", "retry")
+    state = json.loads(state_path.read_text())
+    assert "cellar-weekly:2025-03-30" not in state["report_deliveries"]
+    assert "cellar-weekly:2025-03-30" not in state["sent"]
+
+
+def test_reconcile_cli_requires_explicit_non_delivery_confirmation(tmp_path, capsys):
+    config = tmp_path / "cellarbrain.toml"
+    config.write_text(f'[paths]\ndata_dir = "{tmp_path}"\n')
+    state_path = tmp_path / ".cellarbrain-notifications.json"
+    state_path.write_text(
+        '{"sent":[],"report_deliveries":{"cellar-weekly:2025-03-30":{"state":"uncertain"}}}'
+    )
+    try:
+        main(["-c", str(config), "reports", "reconcile", "cellar-weekly:2025-03-30", "--retry"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("retry without confirmation should fail")
+    assert json.loads(state_path.read_text())["report_deliveries"]["cellar-weekly:2025-03-30"]["state"] == "uncertain"
+
+    main(
+        [
+            "-c",
+            str(config),
+            "reports",
+            "reconcile",
+            "cellar-weekly:2025-03-30",
+            "--retry",
+            "--confirm-not-delivered",
+        ]
+    )
+    assert "reconciled as retry" in capsys.readouterr().out
+    assert "cellar-weekly:2025-03-30" not in json.loads(state_path.read_text())["report_deliveries"]
 
 
 def test_disabled_report_never_calls_sender(tmp_path):

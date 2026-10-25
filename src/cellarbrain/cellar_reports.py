@@ -13,7 +13,7 @@ import tempfile
 import time
 from zoneinfo import ZoneInfo
 
-from .notifications import Notification, NotificationSender, SendResult, deliver
+from .notifications import Notification, NotificationSender, SendResult, deliver_report_once
 from .settings import NotificationsConfig, ReportsConfig
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,12 @@ def deliver_report(
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".cellar-report-delivery.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return deliver(notifications, root, Notification(f"cellar-{kind}:{end.isoformat()}", message), sender=sender)
+        return deliver_report_once(
+            notifications,
+            root,
+            Notification(f"cellar-{kind}:{end.isoformat()}", message),
+            sender=sender,
+        )
 
 
 def due_reports(now: dt.datetime, config: ReportsConfig) -> list[str]:

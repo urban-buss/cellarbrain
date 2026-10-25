@@ -65,6 +65,7 @@ class TestOpenClawSender:
             "send",
             "--channel",
             "imessage",
+            "--json",
             "--target",
             "+41788689840",
             "--message",
@@ -75,14 +76,14 @@ class TestOpenClawSender:
 
     @patch("cellarbrain.notifications.time.sleep")
     @patch("cellarbrain.notifications.subprocess.run")
-    def test_retries_then_returns_failure_without_output_text(self, run, sleep):
+    def test_nonzero_exit_is_not_retried_and_does_not_expose_output(self, run, sleep):
         run.return_value = subprocess.CompletedProcess([], 1, "private output", "secret token")
         config = NotificationsConfig(enabled=True, target="+41788689840")
         result = notifications.OpenClawSender(config).send(notifications.Notification("k", "hello"))
         assert not result.sent
         assert result.error == "OpenClaw exited with status 1"
-        assert run.call_count == 3
-        assert sleep.call_count == 2
+        assert run.call_count == 1
+        sleep.assert_not_called()
 
     def test_verbose_send_prints_openclaw_output(self, capsys):
         completed = subprocess.CompletedProcess([], 0, "sent\n", "connected\n")
@@ -95,7 +96,7 @@ class TestOpenClawSender:
         captured = capsys.readouterr()
         assert result.sent
         assert "OpenClaw stdout:\nsent" in captured.out
-        assert "attempt 1/3 succeeded" in captured.out
+        assert "send succeeded" in captured.out
         assert "OpenClaw stderr:\nconnected" in captured.err
 
     def test_verbose_send_reports_startup_errors(self, capsys):

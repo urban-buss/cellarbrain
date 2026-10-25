@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -35,6 +36,9 @@ class Notification:
 class SendResult:
     sent: bool
     error: str | None = None
+    # True only when the sender can prove the request never reached dispatch.
+    retryable: bool = False
+    message_id: str | None = None
 
 
 class NotificationSender(Protocol):
@@ -49,7 +53,7 @@ class OpenClawSender:
 
     def send(self, notification: Notification, *, verbose: bool = False) -> SendResult:
         if not self.config.target.strip():
-            return SendResult(False, "notifications.target is empty")
+            return SendResult(False, "notifications.target is empty", retryable=True)
         executable = shutil.which(self.config.command) or self.config.command
         if verbose:
             print(f"OpenClaw executable: {executable}")
@@ -59,48 +63,69 @@ class OpenClawSender:
             "send",
             "--channel",
             "imessage",
+            "--json",
             "--target",
             self.config.target,
             "--message",
             notification.message,
         ]
-        for attempt in range(3):
-            try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.config.timeout_seconds,
-                    check=False,
-                    shell=False,
-                )
-                if verbose:
-                    _print_process_output("stdout", result.stdout)
-                    _print_process_output("stderr", result.stderr, file=sys.stderr)
-                if result.returncode == 0:
-                    if verbose:
-                        print(f"OpenClaw iMessage attempt {attempt + 1}/3 succeeded.")
-                    return SendResult(True)
-                error = f"OpenClaw exited with status {result.returncode}"
-                if verbose:
-                    print(f"OpenClaw iMessage attempt {attempt + 1}/3 failed: {error}", file=sys.stderr)
-            except subprocess.TimeoutExpired as exc:
-                error = type(exc).__name__
-                if verbose:
-                    _print_process_output("stdout", exc.stdout)
-                    _print_process_output("stderr", exc.stderr, file=sys.stderr)
-                    print(
-                        f"OpenClaw iMessage attempt {attempt + 1}/3 timed out "
-                        f"after {self.config.timeout_seconds} seconds.",
-                        file=sys.stderr,
-                    )
-            except OSError as exc:
-                error = type(exc).__name__
-                if verbose:
-                    print(f"OpenClaw iMessage attempt {attempt + 1}/3 could not start: {exc}", file=sys.stderr)
-            if attempt < 2:
-                time.sleep(0.25 * (attempt + 1))
-        return SendResult(False, error)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_seconds,
+                check=False,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if verbose:
+                _print_process_output("stdout", exc.stdout)
+                _print_process_output("stderr", exc.stderr, file=sys.stderr)
+                print(f"OpenClaw iMessage send timed out after {self.config.timeout_seconds} seconds.", file=sys.stderr)
+            return SendResult(False, "TimeoutExpired")
+        except OSError as exc:
+            if verbose:
+                print(f"OpenClaw iMessage send could not start: {exc}", file=sys.stderr)
+            return SendResult(False, type(exc).__name__, retryable=True)
+        if verbose:
+            _print_process_output("stdout", result.stdout)
+            _print_process_output("stderr", result.stderr, file=sys.stderr)
+        if result.returncode != 0:
+            error = f"OpenClaw exited with status {result.returncode}"
+            if verbose:
+                print(f"OpenClaw iMessage send failed: {error}", file=sys.stderr)
+            return SendResult(False, error)
+        if verbose:
+            print("OpenClaw iMessage send succeeded.")
+        return SendResult(True, message_id=_message_id(result.stdout))
+
+
+def _message_id(output: str | bytes | None) -> str | None:
+    """Extract a message identifier when OpenClaw's JSON result includes one."""
+    if not output:
+        return None
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    try:
+        payload = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(payload, dict):
+        for key in ("messageId", "message_id"):
+            value = payload.get(key)
+            if isinstance(value, (str, int)):
+                return str(value)
+        for key in ("result", "data"):
+            found = _message_id(json.dumps(payload.get(key))) if key in payload else None
+            if found is not None:
+                return found
+    if isinstance(payload, list):
+        for item in payload:
+            found = _message_id(json.dumps(item))
+            if found is not None:
+                return found
+    return None
 
 
 def _print_process_output(label: str, output: str | bytes | None, *, file: TextIO | None = None) -> None:
@@ -167,28 +192,134 @@ def summarize_changes(run_id: int, change_rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _load_state(path: pathlib.Path) -> list[str]:
+def _load_document(path: pathlib.Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return [str(item) for item in value if isinstance(item, str)] if isinstance(value, list) else []
+        if isinstance(value, list):  # legacy notifications state format
+            return {"sent": [item for item in value if isinstance(item, str)], "report_deliveries": {}}
+        if isinstance(value, dict):
+            return {
+                "sent": [item for item in value.get("sent", []) if isinstance(item, str)],
+                "report_deliveries": value.get("report_deliveries", {})
+                if isinstance(value.get("report_deliveries", {}), dict)
+                else {},
+            }
     except (OSError, json.JSONDecodeError):
-        return []
+        pass
+    return {"sent": [], "report_deliveries": {}}
 
 
-def _record_sent(path: pathlib.Path, key: str) -> None:
+def _load_state(path: pathlib.Path) -> list[str]:
+    document = _load_document(path)
+    sent = list(document["sent"])
+    for key, value in document["report_deliveries"].items():
+        if isinstance(value, dict) and value.get("state") == "sent" and key not in sent:
+            sent.append(key)
+    return sent
+
+
+def _write_document(path: pathlib.Path, document: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    sent = [item for item in _load_state(path) if item != key]
-    sent.append(key)
     fd, temporary = tempfile.mkstemp(prefix=f"{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(sent[-_MAX_SENT_KEYS:], stream)
+            json.dump(document, stream, separators=(",", ":"))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _record_sent(path: pathlib.Path, key: str) -> None:
+    document = _load_document(path)
+    sent = [item for item in _load_state(path) if item != key]
+    sent.append(key)
+    document["sent"] = sent[-_MAX_SENT_KEYS:]
+    _write_document(path, document)
+
+
+def _state_lock(path: pathlib.Path):
+    lock = path.with_suffix(path.suffix + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    return lock.open("a")
+
+
+def deliver_report_once(
+    config: NotificationsConfig,
+    output_dir: str | pathlib.Path,
+    notification: Notification,
+    *,
+    sender: NotificationSender | None = None,
+) -> SendResult:
+    """Durably dispatch a report key at most once unless an operator reconciles it."""
+    if not config.enabled:
+        return SendResult(False, "disabled")
+    state_path = pathlib.Path(output_dir) / _STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with _state_lock(state_path) as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        document = _load_document(state_path)
+        record = document["report_deliveries"].get(notification.key)
+        if notification.key in document["sent"] or (isinstance(record, dict) and record.get("state") == "sent"):
+            logger.info("Report delivery key=%s state=sent", notification.key)
+            return SendResult(True, message_id=record.get("message_id") if isinstance(record, dict) else None)
+        if isinstance(record, dict) and record.get("state") in {"in_flight", "uncertain"}:
+            state = record["state"]
+            logger.info("Report delivery key=%s state=%s; suppressing dispatch", notification.key, state)
+            return SendResult(False, state)
+
+        document["report_deliveries"][notification.key] = {"state": "in_flight", "updated_at": time.time()}
+        _write_document(state_path, document)
+        logger.info("Report delivery key=%s state=in_flight", notification.key)
+        try:
+            result = (sender or OpenClawSender(config)).send(notification)
+        except Exception as exc:
+            result = SendResult(False, type(exc).__name__)
+
+        if result.sent:
+            state = {"state": "sent", "updated_at": time.time()}
+            message_id = getattr(result, "message_id", None)
+            if message_id is not None:
+                state["message_id"] = message_id
+            document["report_deliveries"][notification.key] = state
+            document["sent"] = [key for key in document["sent"] if key != notification.key]
+            document["sent"] = (document["sent"] + [notification.key])[-_MAX_SENT_KEYS:]
+            _write_document(state_path, document)
+            logger.info("Report delivery key=%s state=sent", notification.key)
+            return result
+        if getattr(result, "retryable", False):
+            document["report_deliveries"][notification.key] = {"state": "retryable", "updated_at": time.time()}
+            _write_document(state_path, document)
+            logger.info("Report delivery key=%s state=retryable", notification.key)
+            return result
+        document["report_deliveries"][notification.key] = {"state": "uncertain", "updated_at": time.time()}
+        _write_document(state_path, document)
+        logger.info("Report delivery key=%s state=uncertain", notification.key)
+        return result
+
+
+def reconcile_report_delivery(output_dir: str | pathlib.Path, key: str, action: str) -> None:
+    """Mark an uncertain report sent, or clear it after confirming non-delivery."""
+    if action not in {"delivered", "retry"}:
+        raise ValueError("action must be delivered or retry")
+    state_path = pathlib.Path(output_dir) / _STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with _state_lock(state_path) as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        document = _load_document(state_path)
+        if action == "delivered":
+            document["report_deliveries"][key] = {"state": "sent", "updated_at": time.time(), "reconciled": True}
+            document["sent"] = [item for item in document["sent"] if item != key]
+            document["sent"] = (document["sent"] + [key])[-_MAX_SENT_KEYS:]
+            state = "sent"
+        else:
+            document["report_deliveries"].pop(key, None)
+            document["sent"] = [item for item in document["sent"] if item != key]
+            state = "retry"
+        _write_document(state_path, document)
+    logger.info("Report delivery key=%s state=%s (operator reconciliation)", key, state)
 
 
 def deliver(
