@@ -188,7 +188,10 @@ def test_report_retries_only_failure_proven_before_dispatch(tmp_path):
 
     with patch(
         "cellarbrain.notifications.subprocess.run",
-        side_effect=[FileNotFoundError("missing executable"), subprocess.CompletedProcess([], 0, '{"messageId":"m2"}', "")],
+        side_effect=[
+            FileNotFoundError("missing executable"),
+            subprocess.CompletedProcess([], 0, '{"messageId":"m2"}', ""),
+        ],
     ) as run:
         first = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
         second = deliver_report("weekly", tmp_path, notif_cfg, cfg, now=sunday)
@@ -228,9 +231,7 @@ def test_reconcile_cli_requires_explicit_non_delivery_confirmation(tmp_path, cap
     config = tmp_path / "cellarbrain.toml"
     config.write_text(f'[paths]\ndata_dir = "{tmp_path}"\n')
     state_path = tmp_path / ".cellarbrain-notifications.json"
-    state_path.write_text(
-        '{"sent":[],"report_deliveries":{"cellar-weekly:2025-03-30":{"state":"uncertain"}}}'
-    )
+    state_path.write_text('{"sent":[],"report_deliveries":{"cellar-weekly:2025-03-30":{"state":"uncertain"}}}')
     try:
         main(["-c", str(config), "reports", "reconcile", "cellar-weekly:2025-03-30", "--retry"])
     except SystemExit as exc:

@@ -242,8 +242,7 @@ class TestDelivery:
         barrier = context.Barrier(2)
         calls = context.Value("i", 0)
         processes = [
-            context.Process(target=_concurrent_delivery_worker, args=(str(tmp_path), barrier, calls))
-            for _ in range(2)
+            context.Process(target=_concurrent_delivery_worker, args=(str(tmp_path), barrier, calls)) for _ in range(2)
         ]
         for process in processes:
             process.start()
