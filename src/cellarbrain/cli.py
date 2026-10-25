@@ -260,15 +260,18 @@ def run(
         )
         run_type = "incremental"
     else:
-        print("\nAnnotating full load...")
-        entities, change_log = incremental.annotate_full_load(
+        print("\nReconciling full load against existing data...")
+        # A full ETL still rebuilds every entity from the source exports, but
+        # its change log must describe differences from the previous output,
+        # not label every rebuilt row as a new insert.
+        entities, change_log, fk_remappings = incremental.sync(
             entities,
             out,
             run_id,
             now,
+            identity_config=settings.identity,
             skip_entities=skip,
         )
-        fk_remappings = {}
         run_type = "full"
 
     # --- Annotate wines via slug-based classification ---
@@ -411,6 +414,11 @@ def run(
     print("\nRunning validation...")
     result = val.validate(out)
     print(result.summary())
+
+    if result.ok:
+        from .cellar_reports import record_snapshot
+
+        record_snapshot(out, entities["bottle"], finished_at.replace(tzinfo=UTC))
 
     return result.ok
 
@@ -566,6 +574,14 @@ def _subcommand_main(argv: list[str]) -> None:
         default="Cellarbrain OpenClaw iMessage integration test.",
         help="Message to send (default: a short diagnostic message)",
     )
+
+    reports = sub.add_parser("reports", help="Preview, send, or run scheduled cellar reports")
+    reports_sub = reports.add_subparsers(dest="reports_command")
+    report_preview = reports_sub.add_parser("preview", help="Print a report without sending it")
+    report_preview.add_argument("kind", choices=["weekly", "monthly"])
+    report_send = reports_sub.add_parser("send", help="Send a report through configured OpenClaw/iMessage")
+    report_send.add_argument("kind", choices=["weekly", "monthly"])
+    reports_sub.add_parser("scheduler", help="Run the local report scheduler continuously")
 
     # --- validate ---
     sub.add_parser("validate", help="Validate Parquet output")
@@ -877,6 +893,7 @@ def _subcommand_main(argv: list[str]) -> None:
     handlers = {
         "etl": _cmd_etl,
         "notifications": _cmd_notifications,
+        "reports": _cmd_reports,
         "validate": _cmd_validate,
         "query": _cmd_query,
         "stats": _cmd_stats,
@@ -950,6 +967,25 @@ def _cmd_notifications(args: argparse.Namespace, settings: Settings) -> None:
         print(f"Error: OpenClaw iMessage test failed ({result.error}).", file=sys.stderr)
         sys.exit(1)
     print("Diagnostic iMessage sent successfully.")
+
+
+def _cmd_reports(args: argparse.Namespace, settings: Settings) -> None:
+    from . import cellar_reports
+
+    output = settings.paths.data_dir
+    if args.reports_command == "preview":
+        print(cellar_reports.render_report(args.kind, output, timezone=settings.reports.timezone))
+    elif args.reports_command == "send":
+        result = cellar_reports.deliver_report(args.kind, output, settings.notifications, settings.reports)
+        if not result.sent:
+            print(f"Report not sent ({result.error}).", file=sys.stderr)
+            sys.exit(1)
+        print("Report delivered or already delivered for this period.")
+    elif args.reports_command == "scheduler":
+        cellar_reports.scheduler(output, settings.notifications, settings.reports)
+    else:
+        print("Error: provide reports preview, send, or scheduler", file=sys.stderr)
+        sys.exit(1)
 
 
 def _run_etl_command(

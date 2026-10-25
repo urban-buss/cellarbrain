@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-10-25
+
+### Added
+- **Scheduled weekly and monthly cellar reports** through the configured OpenClaw/iMessage sender, with independent TOML switches, preview/send CLI commands, and a local scheduler service command.
+- **ETL inventory snapshots** for reliable forward-looking stored/on-order movement accounting, including on-order-to-stored transfers.
+
+### Fixed
+- **ETL iMessage change summaries** — full rebuilds now compare against prior output, and notifications report bottle actions and other entity changes instead of counting every rebuilt row as an insert.
+
 ## [0.3.8] — 2026-10-25
 
 ### Added

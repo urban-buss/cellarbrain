@@ -26,15 +26,27 @@ class TestSummarizeChanges:
         summary = notifications.summarize_changes(7, rows)
         assert "run 7" in summary
         assert "1 added, 1 updated, 1 renamed" in summary
-        assert "Inventory: 1 change record(s)" in summary
-        assert "Other cellar records: 1" in summary
+        assert "Bottles: 1 removed" in summary
+        assert "Other: 1 winery updated" in summary
         assert "No changes" not in summary
+
+    def test_summarizes_bottle_actions_separately_and_ignores_other_runs(self):
+        rows = [
+            {"run_id": 8, "entity_type": "bottle", "change_type": "insert"},
+            {"run_id": 8, "entity_type": "bottle", "change_type": "update"},
+            {"run_id": 8, "entity_type": "bottle", "change_type": "delete"},
+            {"run_id": 7, "entity_type": "bottle", "change_type": "insert"},
+            {"run_id": 8, "entity_type": "grape", "change_type": "insert"},
+        ]
+        summary = notifications.summarize_changes(8, rows)
+        assert "Bottles: 1 added, 1 updated, 1 removed" in summary
+        assert "Other: 1 grape added" in summary
+        assert "3 added" not in summary
 
     def test_always_reports_no_changes(self):
         summary = notifications.summarize_changes(3, [])
         assert "ETL completed" in summary
-        assert "Wines: no changes" in summary
-        assert "No changes detected." in summary
+        assert "No data changes detected." in summary
 
 
 class TestOpenClawSender:

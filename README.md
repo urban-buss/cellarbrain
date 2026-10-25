@@ -235,7 +235,7 @@ the full skill integration design.
 
 ## Optional OpenClaw iMessage notifications
 
-Cellarbrain can ask OpenClaw to send a short iMessage after each successful ETL, including runs with no detected changes. When notifications are enabled, failed ETL runs also send a best-effort failure alert. Notifications are disabled by default.
+Cellarbrain can ask OpenClaw to send a short iMessage after each successful ETL, including runs with no detected changes. Summaries count actual additions, updates, removals, and renames by wines, bottles, and other record types. Full rebuilds compare against existing output too, so unchanged rows are not reported as new additions. When notifications are enabled, failed ETL runs also send a best-effort failure alert. Notifications are disabled by default.
 
 Add this to your local `cellarbrain.toml` (keep personal recipient details out of shared config files):
 
