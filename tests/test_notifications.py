@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import multiprocessing
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +14,23 @@ import pytest
 from cellarbrain import notifications
 from cellarbrain.cli import _run_etl_command, main
 from cellarbrain.settings import NotificationsConfig, Settings
+
+
+def _concurrent_delivery_worker(output_dir, barrier, calls):
+    class Sender:
+        def send(self, notification):
+            with calls.get_lock():
+                calls.value += 1
+            time.sleep(0.1)
+            return notifications.SendResult(True)
+
+    barrier.wait()
+    notifications.deliver(
+        NotificationsConfig(enabled=True, target="test-only"),
+        output_dir,
+        notifications.Notification("concurrent:key", "test message"),
+        sender=Sender(),
+    )
 
 
 class TestSummarizeChanges:
@@ -192,14 +212,46 @@ class TestDelivery:
         sender.send.assert_called_once_with(event)
         assert (Path(tmp_path) / ".cellarbrain-notifications.json").exists()
 
-    def test_failed_send_is_not_recorded_for_future_retry(self, tmp_path):
+    def test_ambiguous_failed_send_is_suppressed_for_future_retry(self, tmp_path):
         sender = MagicMock()
         sender.send.return_value = notifications.SendResult(False, "not available")
         config = NotificationsConfig(enabled=True, target="dest")
         event = notifications.Notification("success:1", "hello")
         notifications.deliver(config, tmp_path, event, sender=sender)
         notifications.deliver(config, tmp_path, event, sender=sender)
-        assert sender.send.call_count == 2
+        assert sender.send.call_count == 1
+
+    def test_stale_in_flight_key_is_recovered_as_uncertain(self, tmp_path):
+        state_path = Path(tmp_path) / ".cellarbrain-notifications.json"
+        state_path.write_text('{"sent":[],"deliveries":{"success:2":{"state":"in_flight"}}}')
+        sender = MagicMock()
+        result = notifications.deliver(
+            NotificationsConfig(enabled=True, target="dest"),
+            tmp_path,
+            notifications.Notification("success:2", "hello"),
+            sender=sender,
+        )
+        assert not result.sent
+        assert result.error == "uncertain"
+        sender.send.assert_not_called()
+        state = json.loads(state_path.read_text())
+        assert state["deliveries"]["success:2"]["state"] == "uncertain"
+
+    def test_concurrent_processes_dispatch_a_key_once(self, tmp_path):
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        calls = context.Value("i", 0)
+        processes = [
+            context.Process(target=_concurrent_delivery_worker, args=(str(tmp_path), barrier, calls))
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=10)
+        for process in processes:
+            assert process.exitcode == 0
+        assert calls.value == 1
 
     def test_strict_success_delivery_raises(self, tmp_path):
         with patch.object(notifications, "deliver", return_value=notifications.SendResult(False, "missing")):

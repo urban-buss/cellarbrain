@@ -196,23 +196,26 @@ def _load_document(path: pathlib.Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(value, list):  # legacy notifications state format
-            return {"sent": [item for item in value if isinstance(item, str)], "report_deliveries": {}}
+            return {"sent": [item for item in value if isinstance(item, str)], "deliveries": {}}
         if isinstance(value, dict):
+            deliveries = {}
+            for field in ("deliveries", "report_deliveries", "notification_deliveries"):
+                records = value.get(field, {})
+                if isinstance(records, dict):
+                    deliveries.update(records)
             return {
                 "sent": [item for item in value.get("sent", []) if isinstance(item, str)],
-                "report_deliveries": value.get("report_deliveries", {})
-                if isinstance(value.get("report_deliveries", {}), dict)
-                else {},
+                "deliveries": deliveries,
             }
     except (OSError, json.JSONDecodeError):
         pass
-    return {"sent": [], "report_deliveries": {}}
+    return {"sent": [], "deliveries": {}}
 
 
 def _load_state(path: pathlib.Path) -> list[str]:
     document = _load_document(path)
     sent = list(document["sent"])
-    for key, value in document["report_deliveries"].items():
+    for key, value in document["deliveries"].items():
         if isinstance(value, dict) and value.get("state") == "sent" and key not in sent:
             sent.append(key)
     return sent
@@ -232,28 +235,20 @@ def _write_document(path: pathlib.Path, document: dict) -> None:
             os.unlink(temporary)
 
 
-def _record_sent(path: pathlib.Path, key: str) -> None:
-    document = _load_document(path)
-    sent = [item for item in _load_state(path) if item != key]
-    sent.append(key)
-    document["sent"] = sent[-_MAX_SENT_KEYS:]
-    _write_document(path, document)
-
-
 def _state_lock(path: pathlib.Path):
     lock = path.with_suffix(path.suffix + ".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     return lock.open("a")
 
 
-def deliver_report_once(
+def _deliver_once(
     config: NotificationsConfig,
     output_dir: str | pathlib.Path,
     notification: Notification,
     *,
     sender: NotificationSender | None = None,
 ) -> SendResult:
-    """Durably dispatch a report key at most once unless an operator reconciles it."""
+    """Durably dispatch a notification key at most once unless reconciled."""
     if not config.enabled:
         return SendResult(False, "disabled")
     state_path = pathlib.Path(output_dir) / _STATE_FILE
@@ -261,18 +256,26 @@ def deliver_report_once(
     with _state_lock(state_path) as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         document = _load_document(state_path)
-        record = document["report_deliveries"].get(notification.key)
+        record = document["deliveries"].get(notification.key)
         if notification.key in document["sent"] or (isinstance(record, dict) and record.get("state") == "sent"):
-            logger.info("Report delivery key=%s state=sent", notification.key)
+            logger.info("Notification delivery key=%s state=sent", notification.key)
             return SendResult(True, message_id=record.get("message_id") if isinstance(record, dict) else None)
-        if isinstance(record, dict) and record.get("state") in {"in_flight", "uncertain"}:
+        if isinstance(record, dict) and record.get("state") == "in_flight":
+            # We hold the file lock, so no other process can still be dispatching.
+            # A persisted in_flight record here belongs to a process that exited
+            # before it could record the outcome.
+            document["deliveries"][notification.key] = {"state": "uncertain", "updated_at": time.time()}
+            _write_document(state_path, document)
+            logger.info("Notification delivery key=%s state=uncertain; recovered stale in_flight", notification.key)
+            return SendResult(False, "uncertain")
+        if isinstance(record, dict) and record.get("state") == "uncertain":
             state = record["state"]
-            logger.info("Report delivery key=%s state=%s; suppressing dispatch", notification.key, state)
+            logger.info("Notification delivery key=%s state=%s; suppressing dispatch", notification.key, state)
             return SendResult(False, state)
 
-        document["report_deliveries"][notification.key] = {"state": "in_flight", "updated_at": time.time()}
+        document["deliveries"][notification.key] = {"state": "in_flight", "updated_at": time.time()}
         _write_document(state_path, document)
-        logger.info("Report delivery key=%s state=in_flight", notification.key)
+        logger.info("Notification delivery key=%s state=in_flight", notification.key)
         try:
             result = (sender or OpenClawSender(config)).send(notification)
         except Exception as exc:
@@ -283,25 +286,45 @@ def deliver_report_once(
             message_id = getattr(result, "message_id", None)
             if message_id is not None:
                 state["message_id"] = message_id
-            document["report_deliveries"][notification.key] = state
+            document["deliveries"][notification.key] = state
             document["sent"] = [key for key in document["sent"] if key != notification.key]
             document["sent"] = (document["sent"] + [notification.key])[-_MAX_SENT_KEYS:]
-            _write_document(state_path, document)
-            logger.info("Report delivery key=%s state=sent", notification.key)
+            try:
+                _write_document(state_path, document)
+            except OSError as exc:
+                # The durable in_flight record still suppresses another dispatch.
+                logger.warning(
+                    "Notification delivery key=%s state=in_flight; sent state update failed (%s)",
+                    notification.key,
+                    type(exc).__name__,
+                )
+            else:
+                logger.info("Notification delivery key=%s state=sent", notification.key)
             return result
         if getattr(result, "retryable", False):
-            document["report_deliveries"][notification.key] = {"state": "retryable", "updated_at": time.time()}
+            document["deliveries"][notification.key] = {"state": "retryable", "updated_at": time.time()}
             _write_document(state_path, document)
-            logger.info("Report delivery key=%s state=retryable", notification.key)
+            logger.info("Notification delivery key=%s state=retryable", notification.key)
             return result
-        document["report_deliveries"][notification.key] = {"state": "uncertain", "updated_at": time.time()}
+        document["deliveries"][notification.key] = {"state": "uncertain", "updated_at": time.time()}
         _write_document(state_path, document)
-        logger.info("Report delivery key=%s state=uncertain", notification.key)
+        logger.info("Notification delivery key=%s state=uncertain", notification.key)
         return result
 
 
+def deliver_report_once(
+    config: NotificationsConfig,
+    output_dir: str | pathlib.Path,
+    notification: Notification,
+    *,
+    sender: NotificationSender | None = None,
+) -> SendResult:
+    """Durably dispatch a report key at most once unless reconciled."""
+    return _deliver_once(config, output_dir, notification, sender=sender)
+
+
 def reconcile_report_delivery(output_dir: str | pathlib.Path, key: str, action: str) -> None:
-    """Mark an uncertain report sent, or clear it after confirming non-delivery."""
+    """Mark an uncertain notification sent, or clear it after confirming non-delivery."""
     if action not in {"delivered", "retry"}:
         raise ValueError("action must be delivered or retry")
     state_path = pathlib.Path(output_dir) / _STATE_FILE
@@ -310,16 +333,16 @@ def reconcile_report_delivery(output_dir: str | pathlib.Path, key: str, action: 
         fcntl.flock(lock, fcntl.LOCK_EX)
         document = _load_document(state_path)
         if action == "delivered":
-            document["report_deliveries"][key] = {"state": "sent", "updated_at": time.time(), "reconciled": True}
+            document["deliveries"][key] = {"state": "sent", "updated_at": time.time(), "reconciled": True}
             document["sent"] = [item for item in document["sent"] if item != key]
             document["sent"] = (document["sent"] + [key])[-_MAX_SENT_KEYS:]
             state = "sent"
         else:
-            document["report_deliveries"].pop(key, None)
+            document["deliveries"].pop(key, None)
             document["sent"] = [item for item in document["sent"] if item != key]
             state = "retry"
         _write_document(state_path, document)
-    logger.info("Report delivery key=%s state=%s (operator reconciliation)", key, state)
+    logger.info("Notification delivery key=%s state=%s (operator reconciliation)", key, state)
 
 
 def deliver(
@@ -329,19 +352,8 @@ def deliver(
     *,
     sender: NotificationSender | None = None,
 ) -> SendResult:
-    """Deliver once per key, persisting success only after confirmed delivery."""
-    if not config.enabled:
-        return SendResult(False, "disabled")
-    state_path = pathlib.Path(output_dir) / _STATE_FILE
-    if notification.key in _load_state(state_path):
-        return SendResult(True)
-    result = (sender or OpenClawSender(config)).send(notification)
-    if result.sent:
-        try:
-            _record_sent(state_path, notification.key)
-        except OSError as exc:
-            logger.warning("Notification sent but delivery state could not be saved (%s).", type(exc).__name__)
-    return result
+    """Deliver once per stable key with durable protection from ambiguous retries."""
+    return _deliver_once(config, output_dir, notification, sender=sender)
 
 
 def notify_success(

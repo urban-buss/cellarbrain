@@ -88,9 +88,10 @@ def test_cli_preview_prints_without_delivery(tmp_path, capsys):
 def test_scheduler_due_and_delivery_idempotency_and_failure(tmp_path):
     cfg = ReportsConfig(weekly_enabled=True, monthly_enabled=True)
     sunday = dt.datetime(2025, 3, 30, 17, 5, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-    assert due_reports(sunday, cfg) == ["weekly", "monthly"]
+    assert due_reports(sunday, cfg) == ["weekly"]
     assert due_reports(sunday.replace(hour=16), cfg) == []
-    assert due_reports(dt.datetime(2025, 3, 31, 17, 5, tzinfo=sunday.tzinfo), cfg) == ["weekly", "monthly"]
+    assert due_reports(dt.datetime(2025, 3, 31, 17, 5, tzinfo=sunday.tzinfo), cfg) == ["monthly"]
+    assert due_reports(dt.datetime(2025, 3, 24, 17, 5, tzinfo=sunday.tzinfo), cfg) == []
 
     class Sender:
         def __init__(self, result):
@@ -111,6 +112,23 @@ def test_scheduler_due_and_delivery_idempotency_and_failure(tmp_path):
     failed = Sender(type("Result", (), {"sent": False, "error": "mock failure"})())
     assert not deliver_report("monthly", tmp_path, notif_cfg, cfg, sender=failed, now=sunday).sent
     assert failed.calls == 1
+
+
+def test_reports_are_due_only_on_local_calendar_boundaries():
+    weekly = ReportsConfig(weekly_enabled=True, monthly_enabled=False, send_time="17:00", timezone="Europe/Zurich")
+    monthly = ReportsConfig(weekly_enabled=False, monthly_enabled=True, send_time="17:00", timezone="Europe/Zurich")
+
+    # Sunday 17:00 Zurich is the boundary even when supplied as a UTC instant.
+    assert due_reports(dt.datetime(2025, 3, 30, 15, 0, tzinfo=dt.UTC), weekly) == ["weekly"]
+    assert due_reports(dt.datetime(2025, 3, 30, 14, 59, tzinfo=dt.UTC), weekly) == []
+    assert due_reports(dt.datetime(2025, 3, 31, 17, 30, tzinfo=dt.UTC), weekly) == []
+    tuesday = ReportsConfig(weekly_enabled=True, monthly_enabled=False, weekly_day="tuesday")
+    assert due_reports(dt.datetime(2025, 3, 25, 16, 0, tzinfo=dt.UTC), tuesday) == ["weekly"]
+
+    # October 25 is not month end; no previous-month report is caught up.
+    assert due_reports(dt.datetime(2025, 10, 25, 18, 0, tzinfo=dt.UTC), monthly) == []
+    assert due_reports(dt.datetime(2025, 10, 31, 15, 59, tzinfo=dt.UTC), monthly) == []
+    assert due_reports(dt.datetime(2025, 10, 31, 16, 0, tzinfo=dt.UTC), monthly) == ["monthly"]
 
 
 def test_ambiguous_timeout_is_suppressed_across_polls_and_restart(tmp_path):
@@ -137,7 +155,7 @@ def test_ambiguous_timeout_is_suppressed_across_polls_and_restart(tmp_path):
     assert second_poll.error == "uncertain"
     assert restarted.error == "uncertain"
     state = json.loads((tmp_path / ".cellarbrain-notifications.json").read_text())
-    assert state["report_deliveries"]["cellar-weekly:2025-03-30"]["state"] == "uncertain"
+    assert state["deliveries"]["cellar-weekly:2025-03-30"]["state"] == "uncertain"
 
 
 def test_report_success_deduplicates_and_stores_openclaw_message_id(tmp_path):
@@ -157,7 +175,7 @@ def test_report_success_deduplicates_and_stores_openclaw_message_id(tmp_path):
     assert deliver_report("weekly", tmp_path, notif_cfg, cfg, sender=sender, now=sunday).sent
     assert sender.calls == 1
     state = json.loads((tmp_path / ".cellarbrain-notifications.json").read_text())
-    record = state["report_deliveries"]["cellar-weekly:2025-03-30"]
+    record = state["deliveries"]["cellar-weekly:2025-03-30"]
     assert record["state"] == "sent"
     assert record["message_id"] == "msg-123"
 
@@ -199,10 +217,10 @@ def test_legacy_notification_state_and_uncertain_reconciliation(tmp_path):
     state_path.write_text('{"sent":["etl:7"],"report_deliveries":{"cellar-weekly:2025-03-30":{"state":"uncertain"}}}')
     reconcile_report_delivery(tmp_path, "cellar-weekly:2025-03-30", "delivered")
     state = json.loads(state_path.read_text())
-    assert state["report_deliveries"]["cellar-weekly:2025-03-30"]["state"] == "sent"
+    assert state["deliveries"]["cellar-weekly:2025-03-30"]["state"] == "sent"
     reconcile_report_delivery(tmp_path, "cellar-weekly:2025-03-30", "retry")
     state = json.loads(state_path.read_text())
-    assert "cellar-weekly:2025-03-30" not in state["report_deliveries"]
+    assert "cellar-weekly:2025-03-30" not in state["deliveries"]
     assert "cellar-weekly:2025-03-30" not in state["sent"]
 
 
@@ -233,7 +251,7 @@ def test_reconcile_cli_requires_explicit_non_delivery_confirmation(tmp_path, cap
         ]
     )
     assert "reconciled as retry" in capsys.readouterr().out
-    assert "cellar-weekly:2025-03-30" not in json.loads(state_path.read_text())["report_deliveries"]
+    assert "cellar-weekly:2025-03-30" not in json.loads(state_path.read_text())["deliveries"]
 
 
 def test_disabled_report_never_calls_sender(tmp_path):
