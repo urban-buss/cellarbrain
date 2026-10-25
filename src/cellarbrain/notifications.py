@@ -8,10 +8,11 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TextIO
 
 from .settings import NotificationsConfig
 
@@ -46,10 +47,12 @@ class OpenClawSender:
     def __init__(self, config: NotificationsConfig) -> None:
         self.config = config
 
-    def send(self, notification: Notification) -> SendResult:
+    def send(self, notification: Notification, *, verbose: bool = False) -> SendResult:
         if not self.config.target.strip():
             return SendResult(False, "notifications.target is empty")
         executable = shutil.which(self.config.command) or self.config.command
+        if verbose:
+            print(f"OpenClaw executable: {executable}")
         command = [
             executable,
             "message",
@@ -71,14 +74,43 @@ class OpenClawSender:
                     check=False,
                     shell=False,
                 )
+                if verbose:
+                    _print_process_output("stdout", result.stdout)
+                    _print_process_output("stderr", result.stderr, file=sys.stderr)
                 if result.returncode == 0:
+                    if verbose:
+                        print(f"OpenClaw iMessage attempt {attempt + 1}/3 succeeded.")
                     return SendResult(True)
                 error = f"OpenClaw exited with status {result.returncode}"
-            except (OSError, subprocess.TimeoutExpired) as exc:
+                if verbose:
+                    print(f"OpenClaw iMessage attempt {attempt + 1}/3 failed: {error}", file=sys.stderr)
+            except subprocess.TimeoutExpired as exc:
                 error = type(exc).__name__
+                if verbose:
+                    _print_process_output("stdout", exc.stdout)
+                    _print_process_output("stderr", exc.stderr, file=sys.stderr)
+                    print(
+                        f"OpenClaw iMessage attempt {attempt + 1}/3 timed out "
+                        f"after {self.config.timeout_seconds} seconds.",
+                        file=sys.stderr,
+                    )
+            except OSError as exc:
+                error = type(exc).__name__
+                if verbose:
+                    print(f"OpenClaw iMessage attempt {attempt + 1}/3 could not start: {exc}", file=sys.stderr)
             if attempt < 2:
                 time.sleep(0.25 * (attempt + 1))
         return SendResult(False, error)
+
+
+def _print_process_output(label: str, output: str | bytes | None, *, file: TextIO | None = None) -> None:
+    if not output:
+        return
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    output_stream = sys.stdout if file is None else file
+    print(f"OpenClaw {label}:", file=output_stream)
+    print(output, end="" if output.endswith("\n") else "\n", file=output_stream)
 
 
 def summarize_changes(run_id: int, change_rows: list[dict]) -> str:

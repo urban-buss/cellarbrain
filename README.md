@@ -250,6 +250,14 @@ target = "+417XXXXXXXX" # replace with your iMessage number in international for
 
 The recipient is passed to OpenClaw's documented `openclaw message send --channel imessage` command. OpenClaw and its iMessage channel must already be configured on the local Mac. Cellarbrain uses a shell-free subprocess call and does not expose the Gateway. Successful sends are recorded in `.cellarbrain-notifications.json` inside the ETL output directory to suppress duplicate sends for the same run. Failure messages contain no exception text or source data.
 
+To verify the local OpenClaw/iMessage setup independently of ETL, run:
+
+```bash
+cellarbrain notifications test
+```
+
+This sends a real test message using the configured target and command, even if automatic notifications are disabled. It prints OpenClaw's captured stdout/stderr and retries, and exits with status 1 on failure. You can supply `--target` and `--message` to override the configured target and default test text. Manual tests do not write ETL delivery state.
+
 ## Data model
 
 The ETL produces 12 normalised Parquet tables:

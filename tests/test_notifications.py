@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cellarbrain import notifications
-from cellarbrain.cli import _run_etl_command
+from cellarbrain.cli import _run_etl_command, main
 from cellarbrain.settings import NotificationsConfig, Settings
 
 
@@ -71,6 +71,93 @@ class TestOpenClawSender:
         assert result.error == "OpenClaw exited with status 1"
         assert run.call_count == 3
         assert sleep.call_count == 2
+
+    def test_verbose_send_prints_openclaw_output(self, capsys):
+        completed = subprocess.CompletedProcess([], 0, "sent\n", "connected\n")
+        config = NotificationsConfig(enabled=True, target="dest")
+        with patch("cellarbrain.notifications.subprocess.run", return_value=completed):
+            result = notifications.OpenClawSender(config).send(
+                notifications.Notification("test", "hello"),
+                verbose=True,
+            )
+        captured = capsys.readouterr()
+        assert result.sent
+        assert "OpenClaw stdout:\nsent" in captured.out
+        assert "attempt 1/3 succeeded" in captured.out
+        assert "OpenClaw stderr:\nconnected" in captured.err
+
+    def test_verbose_send_reports_startup_errors(self, capsys):
+        config = NotificationsConfig(enabled=True, target="dest")
+        with (
+            patch("cellarbrain.notifications.subprocess.run", side_effect=FileNotFoundError("openclaw missing")),
+            patch("cellarbrain.notifications.time.sleep"),
+        ):
+            result = notifications.OpenClawSender(config).send(
+                notifications.Notification("test", "hello"),
+                verbose=True,
+            )
+        captured = capsys.readouterr()
+        assert not result.sent
+        assert result.error == "FileNotFoundError"
+        assert "could not start: openclaw missing" in captured.err
+
+
+class TestNotificationsCli:
+    def test_test_command_sends_even_if_automatic_notifications_are_disabled(self, tmp_path, capsys):
+        config_path = tmp_path / "cellarbrain.toml"
+        config_path.write_text('[notifications]\ntarget = "configured-target"\n', encoding="utf-8")
+        completed = subprocess.CompletedProcess([], 0, "message accepted\n", "")
+        with (
+            patch("cellarbrain.notifications.subprocess.run", return_value=completed) as run,
+            patch("cellarbrain.notifications.shutil.which", return_value=None),
+        ):
+            main(["-c", str(config_path), "notifications", "test"])
+        captured = capsys.readouterr()
+        assert "Diagnostic iMessage sent successfully." in captured.out
+        assert "message accepted" in captured.out
+        assert run.call_args.args[0][-4:] == [
+            "--target",
+            "configured-target",
+            "--message",
+            "Cellarbrain OpenClaw iMessage integration test.",
+        ]
+
+    def test_test_command_overrides_target_and_fails_with_openclaw_details(self, tmp_path, capsys):
+        config_path = tmp_path / "cellarbrain.toml"
+        config_path.write_text("[notifications]\nenabled = false\n", encoding="utf-8")
+        failed = subprocess.CompletedProcess([], 1, "request started\n", "channel unavailable\n")
+        with (
+            patch("cellarbrain.notifications.subprocess.run", return_value=failed) as run,
+            patch("cellarbrain.notifications.shutil.which", return_value=None),
+            patch("cellarbrain.notifications.time.sleep"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main(
+                [
+                    "-c",
+                    str(config_path),
+                    "notifications",
+                    "test",
+                    "--target",
+                    "override-target",
+                    "--message",
+                    "custom test",
+                ]
+            )
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert "channel unavailable" in captured.err
+        assert "OpenClaw exited with status 1" in captured.err
+        assert run.call_args.args[0][-4:] == ["--target", "override-target", "--message", "custom test"]
+
+    def test_test_command_requires_a_target(self, tmp_path, capsys):
+        config_path = tmp_path / "cellarbrain.toml"
+        config_path.write_text("[notifications]\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            main(["-c", str(config_path), "notifications", "test"])
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert "notifications.target is empty" in captured.err
 
 
 class TestDelivery:

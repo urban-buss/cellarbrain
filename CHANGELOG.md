@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-10-25
+
 ### Added
 - **Optional OpenClaw iMessage ETL notifications** — summarize existing per-run change-log rows after successful validation, report no-change completions and best-effort failures, and deduplicate confirmed sends locally.
+- **OpenClaw iMessage diagnostic command** — test notification delivery from the CLI and print OpenClaw output and errors.
 
 ## [0.3.7] — 2026-10-24
 

@@ -556,6 +556,17 @@ def _subcommand_main(argv: list[str]) -> None:
         help="Skip automatic schema migrations before ETL",
     )
 
+    # --- notifications ---
+    notifications = sub.add_parser("notifications", help="Test notification integrations")
+    notifications_sub = notifications.add_subparsers(dest="notifications_command")
+    notification_test = notifications_sub.add_parser("test", help="Send a diagnostic iMessage through OpenClaw")
+    notification_test.add_argument("--target", default=None, help="Override the configured iMessage target")
+    notification_test.add_argument(
+        "--message",
+        default="Cellarbrain OpenClaw iMessage integration test.",
+        help="Message to send (default: a short diagnostic message)",
+    )
+
     # --- validate ---
     sub.add_parser("validate", help="Validate Parquet output")
 
@@ -865,6 +876,7 @@ def _subcommand_main(argv: list[str]) -> None:
 
     handlers = {
         "etl": _cmd_etl,
+        "notifications": _cmd_notifications,
         "validate": _cmd_validate,
         "query": _cmd_query,
         "stats": _cmd_stats,
@@ -913,6 +925,31 @@ def _cmd_etl(args: argparse.Namespace, settings: Settings) -> None:
     if ok:
         _prune_dashboard_sidecars(output)
     sys.exit(0 if ok else 1)
+
+
+def _cmd_notifications(args: argparse.Namespace, settings: Settings) -> None:
+    """Send a diagnostic iMessage without changing ETL notification state."""
+    if args.notifications_command != "test":
+        print("Error: provide a notifications subcommand (test)", file=sys.stderr)
+        sys.exit(1)
+
+    from dataclasses import replace
+
+    from .notifications import Notification, OpenClawSender
+
+    config = settings.notifications
+    if args.target is not None:
+        config = replace(config, target=args.target)
+
+    print("Sending a diagnostic iMessage (this does not affect ETL notification settings or delivery state).")
+    result = OpenClawSender(config).send(
+        Notification("manual-test", args.message),
+        verbose=True,
+    )
+    if not result.sent:
+        print(f"Error: OpenClaw iMessage test failed ({result.error}).", file=sys.stderr)
+        sys.exit(1)
+    print("Diagnostic iMessage sent successfully.")
 
 
 def _run_etl_command(
